@@ -94,6 +94,14 @@ def test_mem0_caller_preserves_submodule_checkout_and_publish_paths() -> None:
     assert "openmemory/**" in rendered  # nosec B101
 
 
+def test_caller_paths_include_shared_boilerplate_surfaces() -> None:
+    rendered = _render("sure-aio")
+
+    assert ".github/**" in rendered  # nosec B101
+    assert "docs/**" in rendered  # nosec B101
+    assert "SECURITY.md" in rendered  # nosec B101
+
+
 def test_dify_caller_exposes_manual_extended_integration_input() -> None:
     rendered = _render("dify-aio")
 

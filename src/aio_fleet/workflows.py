@@ -42,7 +42,12 @@ def _workflow_paths(repo: RepoConfig) -> list[str]:
         "cliff.toml",
         "pyproject.toml",
         "requirements-dev.txt",
+        "README.md",
+        "SECURITY.md",
+        "SUPPORT.md",
+        "AGENTS.md",
         "docs/upstream/**",
+        "docs/**",
         "rootfs/**",
         "scripts/**",
         "tests/**",
@@ -52,6 +57,7 @@ def _workflow_paths(repo: RepoConfig) -> list[str]:
         "components/**",
         "assets/**",
         "renovate.json",
+        ".github/**",
         ".github/workflows/**",
     ]
     paths.extend(repo.list_value("xml_paths"))
