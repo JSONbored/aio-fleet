@@ -134,7 +134,7 @@ repos:
   dify-aio:
     path: /Users/shadowbook/Documents/dify-aio
     public: true
-    catalog_published: false
+    catalog_published: true
     workflow_name: CI / Dify AIO
     app_slug: dify-aio
     image_name: jsonbored/dify-aio
