@@ -7,4 +7,9 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-
+infra/github/.terraform/
+infra/github/*.tfplan
+infra/github/*.tfstate
+infra/github/*.tfstate.*
+infra/github/*.tfvars
+!infra/github/repos.tfvars.example

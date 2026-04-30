@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Support
-    url: https://github.com/JSONbored
-    about: Use the app repo issue tracker or support thread linked from the Unraid template.
+  - name: Security reports
+    url: https://github.com/{{ github_repo }}/security/policy
+    about: Do not open public issues for vulnerabilities. Use GitHub private vulnerability reporting instead.

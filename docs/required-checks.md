@@ -53,3 +53,14 @@ agent lane is fully settled as a required check for agent-affecting PRs.
 
 Dify extended integration remains a manual launch/pre-release gate, not a
 required status check for every PR.
+
+## Selected Actions
+
+Active repos should keep GitHub Actions restricted to selected actions with SHA
+pinning required. The reusable fleet workflows are allowlisted with:
+
+- `JSONbored/aio-fleet/.github/workflows/aio-*.yml@*`
+
+Because SHA pinning is required, app repos still call each reusable workflow at
+a full commit SHA. The wildcard only removes the repetitive GitHub settings
+update that would otherwise be needed after every `aio-fleet` commit.

@@ -97,6 +97,7 @@ def test_mem0_caller_preserves_submodule_checkout_and_publish_paths() -> None:
 def test_dify_caller_exposes_manual_extended_integration_input() -> None:
     rendered = _render("dify-aio")
 
+    assert "catalog_published: false" in rendered  # nosec B101
     assert "run_extended_integration:" in rendered  # nosec B101
     assert "type: boolean" in rendered  # nosec B101
     assert "run_extended_integration: ${{ github.event_name == 'workflow_dispatch'" in rendered  # nosec B101

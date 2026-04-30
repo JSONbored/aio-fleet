@@ -21,10 +21,11 @@ The first layer is reusable GitHub Actions:
 6. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
 7. Shared policy checks live in `aio-fleet` validators: caller drift, pinned actions, declared catalog assets, template metadata, publish-platform sanity, and catalog readiness.
 
-Later layers are deliberately separate:
+Current and later layers are deliberately separate:
 
-- Terraform/OpenTofu should manage GitHub-owned state: repository settings, rulesets, branch protections, topics, descriptions, Actions variables/secrets names, and environments.
+- OpenTofu manages public GitHub-owned state: repository settings, branch protections, topics, descriptions, selected action allowlists, vulnerability alerts, and declared Actions variables/secrets names. v1 uses local state and keeps `unraid-aio-template` documented/manual because private-repo branch protection access is blocked by current API access.
 - `sync-boilerplate` and later Copier should manage reusable repo boilerplate: docs patterns, tests, issue templates, support-thread templates, and shared helper scripts.
+- `sync-catalog` moves manifest-declared XML/icon assets into `awesome-unraid`, refuses unpublished XML, and supports icon-only staged launches.
 - App runtime surfaces stay app-local until there is a proven shared abstraction.
 
 ## Why This Shape

@@ -1,102 +1,171 @@
 repositories = {
   "awesome-unraid" = {
-    description = "Community Apps catalog for JSONbored Unraid AIO templates"
+    description = "Production-grade Unraid CA templates for self-hosters tired of half-baked XML files — every env var documented, sane defaults, working init scripts, and actually maintained."
     topics = [
-      "unraid",
-      "community-applications",
+      "awesome",
+      "awesome-list",
+      "community-app",
       "docker",
-      "self-hosted",
+      "homelab",
+      "open-source",
+      "privacy",
+      "self-hosting",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker-template",
+      "unraid-server",
+      "unraid-templates",
+      "awesome-unraid",
     ]
     required_checks = [
       "validate-catalog",
       "CodeQL",
       "Analyze (actions)",
     ]
+    required_secrets = [
+      "AIO_FLEET_BOT_TOKEN",
+    ]
   }
 
   "sure-aio" = {
-    description = "Unraid-first AIO wrapper image for Sure"
+    description = "The absolute easiest way to deploy Sure (Maybe Finance fork) on Unraid. A 100% self-contained mega-container with automated PostgreSQL, Redis, Rails, and Sidekiq orchestration. No external databases required."
     topics = [
-      "unraid",
-      "community-applications",
+      "ai-finance",
+      "budgeting",
       "docker",
+      "finance-app",
+      "finance-tracker",
+      "fire",
+      "homelab",
+      "maybe-finance",
+      "open-source-finance",
+      "personal-finance",
+      "postgresql",
+      "redis",
+      "ruby-on-rails",
+      "s6-overlay",
       "self-hosted",
-      "aio",
+      "sure-finance",
+      "unraid",
+      "unraid-docker-template",
+      "unraid-templates",
+      "sure-aio",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
   }
 
   "simplelogin-aio" = {
-    description = "Unraid-first AIO wrapper image for SimpleLogin"
+    description = "SimpleLogin All-in-One Docker image for Unraid — self-host your own email alias service with automatic DKIM, database migrations, and s6-overlay process supervision"
     topics = [
-      "unraid",
-      "community-applications",
+      "dkim",
       "docker",
+      "docker-compose",
+      "email-alias",
+      "email-forwarding",
+      "email-privacy",
+      "email-security",
+      "homelab",
+      "open-source",
+      "postfix",
+      "privacy",
+      "protonmail",
+      "s6-overlay",
       "self-hosted",
-      "aio",
+      "self-hosting",
+      "simplelogin",
+      "tailscale",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-templates",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
   }
 
   "khoj-aio" = {
-    description = "Unraid-first AIO wrapper image for Khoj"
+    description = "Beginner-friendly All-in-One Unraid container for Khoj, a self-hosted AI second brain. Bundles the Khoj web app with an internal PostgreSQL database in a single container, while still supporting local or hosted LLMs, external search backends, reverse proxies, and advanced power-user overrides."
     topics = [
-      "unraid",
-      "community-applications",
-      "docker",
-      "self-hosted",
       "ai",
+      "anthropic",
+      "assistant",
+      "container",
+      "docker",
+      "gemini",
+      "homelab",
       "khoj",
-      "aio",
+      "knowledge-base",
+      "llm",
+      "ollama",
+      "openai",
+      "pgvector",
+      "postgresql",
+      "rag",
+      "search",
+      "second-brain",
+      "self-hosted",
+      "unraid",
+      "unraid-template",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
   }
 
   "mem0-aio" = {
-    description = "Unraid-first AIO wrapper image for Mem0"
+    description = "Unraid CA template and Docker build for Mem0 (OpenMemory). This mega-container utilizes s6-overlay to seamlessly bundle the pre-compiled Qdrant Vector Database, the Python FastAPI/MCP server, and the Next.js Dashboard UI into a single, click-and-play local AI memory layer. Built for homelabs, privacy, and true agentic AI memory retention."
     topics = [
-      "unraid",
-      "community-applications",
-      "docker",
-      "self-hosted",
       "ai",
+      "container",
+      "docker",
+      "fastapi",
+      "homelab",
+      "llm",
+      "long-term-memory",
+      "mcp",
       "mem0",
-      "aio",
+      "mem0-memory",
+      "mem0ai",
+      "memory",
+      "ollama",
+      "openai",
+      "openmemory",
+      "qdrant",
+      "self-hosted",
+      "unraid",
+      "vector-database",
+      "unraid-template",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
       "Analyze (javascript-typescript)",
@@ -104,69 +173,108 @@ repositories = {
   }
 
   "infisical-aio" = {
-    description = "Unraid-first AIO wrapper image for Infisical"
+    description = "An Unraid-first AIO wrapper for Infisical secrets manager: one container, bundled PostgreSQL, Redis, and Mailpit, fast first boot, and sane escape hatches when you outgrow the all-in-one path. Secrets management without the day-one dependency spaghetti."
     topics = [
-      "unraid",
-      "community-applications",
+      "developer-tools",
       "docker",
-      "self-hosted",
-      "security",
+      "infisical",
+      "secrets",
       "secrets-management",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-templates",
       "aio",
+      "community-applications",
+      "devops",
+      "devsecops",
+      "docker-image",
+      "homelab",
+      "mailpit",
+      "postgresql",
+      "redis",
+      "s6-overlay",
+      "self-hosted",
+      "unraid-ca",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
   }
 
   "dify-aio" = {
-    description = "Unraid-first AIO wrapper image for Dify"
+    description = "Dify for Unraid, bottled up as an AIO container: agents, RAG, workflows, plugins, sandboxing, Postgres/pgvector, Redis, and sane homelab defaults without the compose-file maze."
     topics = [
-      "unraid",
-      "community-applications",
-      "docker",
-      "self-hosted",
       "ai",
+      "ai-agents",
+      "ai-workflows",
+      "chatbot",
       "dify",
-      "aio",
+      "docker",
+      "homelab",
+      "knowledge-base",
+      "llm",
+      "mcp",
+      "ollama",
+      "pgvector",
+      "postgres",
+      "rag",
+      "self-hosted",
+      "self-hosting",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker",
+      "unraid-template",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
   }
 
   "signoz-aio" = {
-    description = "Unraid-first AIO wrapper images for SigNoz"
+    description = "All-in-one SigNoz for Unraid: a single self-hosted container bundling SigNoz UI/API, OpenTelemetry collector, ClickHouse, and ZooKeeper, with optional built-in local host monitoring for metrics, logs, Docker stats, and OTLP ingestion."
     topics = [
-      "unraid",
-      "community-applications",
-      "docker",
-      "self-hosted",
-      "observability",
-      "signoz",
       "aio",
+      "clickhouse",
+      "containers",
+      "devops",
+      "docker",
+      "homelab",
+      "logging",
+      "metrics",
+      "monitoring",
+      "observability",
+      "opentelemetry",
+      "otlp",
+      "prometheus",
+      "self-hosted",
+      "signoz",
+      "telemetry",
+      "tracking",
+      "unraid",
+      "zookeeper",
+      "unraid-ca",
     ]
     required_checks = [
+      "CodeQL",
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
       "aio-build / integration-tests",
       "aio-build / dependency-review",
-      "CodeQL",
       "Analyze (actions)",
       "Analyze (python)",
     ]
