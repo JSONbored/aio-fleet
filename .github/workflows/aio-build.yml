@@ -64,6 +64,10 @@ on:
         required: false
         default: ""
         type: string
+      manual_publish_target:
+        required: false
+        default: none
+        type: string
       generator_check_command:
         required: false
         default: ""
@@ -198,6 +202,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GITHUB_SHA_VALUE: ${{ github.sha }}
           GITHUB_REF_VALUE: ${{ github.ref }}
+          MANUAL_PUBLISH_TARGET: ${{ inputs.manual_publish_target }}
           PUBLISH_PROFILE: ${{ inputs.publish_profile }}
           XML_PATHS: ${{ inputs.xml_paths }}
           EXTRA_PUBLISH_PATHS: ${{ inputs.extra_publish_paths }}
@@ -212,9 +217,13 @@ jobs:
               } >> "${GITHUB_OUTPUT}"
               ;;
             pull_request:*|workflow_dispatch:*)
+              publish_requested=false
+              if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${MANUAL_PUBLISH_TARGET}" != "none" && -n "${MANUAL_PUBLISH_TARGET}" ]]; then
+                publish_requested=true
+              fi
               {
                 echo "run_tests_requested=true"
-                echo "publish_requested=false"
+                echo "publish_requested=${publish_requested}"
               } >> "${GITHUB_OUTPUT}"
               ;;
             *)
@@ -277,6 +286,7 @@ jobs:
 
           profile = os.environ["PUBLISH_PROFILE"]
           status = os.environ["CLASSIFY_STATUS"]
+          manual_target = os.environ.get("MANUAL_PUBLISH_TARGET", "none") or "none"
           changed = [line for line in os.environ.get("CHANGED_FILES", "").splitlines() if line]
 
           outputs = {
@@ -293,14 +303,23 @@ jobs:
           }
 
           if status == "manual":
+              if manual_target not in {"none", "aio", "agent", "all"}:
+                  raise SystemExit(f"Unsupported manual_publish_target: {manual_target}")
+              manual_aio_publish = manual_target in {"aio", "all"}
+              manual_agent_publish = profile == "signoz-suite" and manual_target in {"agent", "all"}
+              if manual_target == "agent" and profile != "signoz-suite":
+                  raise SystemExit("manual_publish_target=agent requires publish_profile=signoz-suite")
               outputs.update(
                   build_related=True,
-                  aio_related=True,
-                  agent_related=profile == "signoz-suite",
+                  aio_related=manual_target in {"none", "aio", "all"},
+                  agent_related=(profile == "signoz-suite" and manual_target in {"none", "agent", "all"}),
                   xml_related=True,
                   renovate_related=True,
                   tooling_related=True,
                   workflow_related=True,
+                  publish_related=manual_aio_publish and profile != "signoz-suite",
+                  aio_publish_related=manual_aio_publish,
+                  agent_publish_related=manual_agent_publish,
               )
               emit(outputs)
               raise SystemExit
@@ -927,7 +946,7 @@ jobs:
           docker images
 
   publish:
-    if: ${{ inputs.publish_profile != 'signoz-suite' && needs.detect-changes.outputs.aio_publish_related == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.integration-tests.result == 'success' }}
+    if: ${{ needs.detect-changes.outputs.aio_publish_related == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.integration-tests.result == 'success' }}
     needs:
       - detect-changes
       - validate-template
@@ -1162,7 +1181,7 @@ jobs:
           done <<< "${DOCKERHUB_TAGS}"
 
   publish-agent:
-    if: ${{ inputs.publish_profile == 'signoz-suite' && needs.detect-changes.outputs.agent_publish_related == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.agent-integration-tests.result == 'success' }}
+    if: ${{ inputs.publish_profile == 'signoz-suite' && needs.detect-changes.outputs.agent_publish_related == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.agent-integration-tests.result == 'success' }}
     needs:
       - detect-changes
       - validate-template

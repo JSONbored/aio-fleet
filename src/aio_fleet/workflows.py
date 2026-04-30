@@ -110,15 +110,26 @@ def render_caller_workflow(
     paths = _yaml_list(_workflow_paths(repo), indent=6)
     extra_inputs = ""
     extended = repo.extended_integration
-    dispatch = "  workflow_dispatch:"
+    publish_options = ["none", "aio"]
+    if repo.is_signoz_suite:
+        publish_options.extend(["agent", "all"])
+    publish_options_block = _yaml_list(publish_options, indent=10)
+    dispatch = f"""  #checkov:skip=CKV_GHA_7: manual dispatch inputs are constrained maintainer controls.
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: Optional maintainer image publish target
+        required: false
+        default: none
+        type: choice
+        options:
+{publish_options_block}"""
     run_extended = "false"
     extended_pytest_args = ""
     if extended:
         input_name = str(extended.get("input_name", "run_extended_integration"))
         description = str(extended.get("description", "Run extended integration tests"))
-        dispatch = f"""  #checkov:skip=CKV_GHA_7: input only toggles optional extended tests.
-  workflow_dispatch:
-    inputs:
+        dispatch += f"""
       {input_name}:
         description: {description}
         required: false
@@ -183,6 +194,7 @@ jobs:
       integration_pytest_args: {repo.get('integration_pytest_args')}
       run_extended_integration: {run_extended}
       extended_integration_pytest_args: {_empty_safe(extended_pytest_args)}
+      manual_publish_target: ${{{{ github.event_name == 'workflow_dispatch' && inputs.publish_target || 'none' }}}}
       generator_check_command: {_empty_safe(repo.get('generator_check_command', ''))}
       upstream_digest_arg: {repo.get('upstream_digest_arg', 'UPSTREAM_IMAGE_DIGEST')}
       catalog_published: {_bool_literal(repo.raw.get('catalog_published', True))}
