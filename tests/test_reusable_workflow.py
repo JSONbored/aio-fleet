@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
+
+from aio_fleet.validators import pinned_action_failures
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/aio-build.yml"
@@ -65,6 +66,14 @@ def test_reusable_build_workflow_validates_caller_drift_centrally() -> None:
     assert "--repo-path ." in text  # nosec B101
 
 
+def test_reusable_build_workflow_runs_fleet_policy_validator() -> None:
+    text = _workflow_text()
+
+    assert "Validate fleet repo policy" in text  # nosec B101
+    assert "validate-repo" in text  # nosec B101
+    assert "validate-actions --repo-path ." in text  # nosec B101
+
+
 def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> None:
     text = _workflow_text()
 
@@ -104,18 +113,7 @@ def test_reusable_workflow_mirrors_docker_hub_from_ghcr() -> None:
 
 
 def test_nonlocal_actions_are_pinned_to_full_commit_shas() -> None:
-    action_ref = re.compile(r"^\s*uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
-    failures = []
-
-    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
-        for match in action_ref.finditer(path.read_text()):
-            target, ref = match.groups()
-            if target.startswith("./"):
-                continue
-            if not re.fullmatch(r"[0-9a-f]{40}", ref):
-                failures.append(f"{path.relative_to(ROOT)}: {target}@{ref}")
-
-    assert failures == []  # nosec B101
+    assert pinned_action_failures(ROOT) == []  # nosec B101
 
 
 def test_release_and_upstream_reusable_workflows_exist() -> None:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aio_fleet.cli import _catalog_asset_failures
 from aio_fleet.manifest import RepoConfig
+from aio_fleet.validators import catalog_asset_failures
 
 
 def _repo(tmp_path: Path, catalog_assets: list[dict[str, str]]) -> RepoConfig:
@@ -33,7 +33,7 @@ def test_catalog_asset_check_accepts_matching_icon_source(tmp_path: Path) -> Non
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "mem0.jpeg").write_bytes(b"icon")
 
-    failures = _catalog_asset_failures(
+    failures = catalog_asset_failures(
         _repo(
             tmp_path,
             [
@@ -51,7 +51,7 @@ def test_catalog_asset_check_rejects_missing_and_mismatched_icon(tmp_path: Path)
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "mem0.jpeg").write_bytes(b"icon")
 
-    failures = _catalog_asset_failures(
+    failures = catalog_asset_failures(
         _repo(
             tmp_path,
             [

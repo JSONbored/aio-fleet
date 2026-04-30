@@ -1,0 +1,43 @@
+repositories = {
+  "sure-aio" = {
+    description = "Unraid-first AIO wrapper image for Sure"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+
+  "dify-aio" = {
+    description = "Unraid-first AIO wrapper image for Dify"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "ai",
+      "dify",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+}

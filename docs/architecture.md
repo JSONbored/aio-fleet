@@ -19,11 +19,12 @@ The first layer is reusable GitHub Actions:
 4. Repo-specific behavior is passed as explicit inputs from `fleet.yml`.
 5. The reusable workflow checks the caller files against the manifest-rendered output, so workflow drift is caught centrally instead of through duplicated app-local unit tests.
 6. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
+7. Shared policy checks live in `aio-fleet` validators: caller drift, pinned actions, declared catalog assets, template metadata, publish-platform sanity, and catalog readiness.
 
 Later layers are deliberately separate:
 
 - Terraform/OpenTofu should manage GitHub-owned state: repository settings, rulesets, branch protections, topics, descriptions, Actions variables/secrets names, and environments.
-- Copier should manage reusable repo boilerplate: docs patterns, tests, issue templates, support-thread templates, and shared helper scripts.
+- `sync-boilerplate` and later Copier should manage reusable repo boilerplate: docs patterns, tests, issue templates, support-thread templates, and shared helper scripts.
 - App runtime surfaces stay app-local until there is a proven shared abstraction.
 
 ## Why This Shape

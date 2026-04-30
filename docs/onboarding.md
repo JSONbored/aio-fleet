@@ -34,6 +34,7 @@ After editing `fleet.yml`:
 python -m aio_fleet render-workflow <repo> --ref <aio-fleet-commit-sha>
 python -m aio_fleet sync-workflows --repo <repo> --ref <aio-fleet-commit-sha>
 python -m aio_fleet verify-caller --repo <repo> --repo-path ../<repo> --ref <aio-fleet-commit-sha>
+python -m aio_fleet validate-repo --repo <repo> --repo-path ../<repo>
 python -m aio_fleet doctor
 ```
 
