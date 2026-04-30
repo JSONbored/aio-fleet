@@ -175,6 +175,9 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
 
     for repo in manifest.repos.values():
         if repo.raw.get("catalog_published") is False:
+            for _source, target in _catalog_xml_assets(repo):
+                if (catalog_path / target).exists():
+                    failures.append(f"{repo.name}: catalog target exists while catalog_published is false: {target}")
             continue
         for source, target in _catalog_xml_assets(repo):
             xml_path = catalog_path / target
