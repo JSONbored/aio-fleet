@@ -5,12 +5,12 @@
 - workflow consolidation, which can merge with the rest of the fleet;
 - Community Apps XML launch, which stays gated until source/runtime validation is clean.
 
-`fleet.yml` marks `dify-aio` as `catalog_published: false` so catalog validation
-does not require `dify-aio.xml` in `awesome-unraid` yet. `aio-fleet
-sync-catalog` refuses unpublished XML and only allows icon-only staged syncs
-until that flag changes.
+`fleet.yml` now marks `dify-aio` as `catalog_published: true` because the
+source/template/runtime launch gate passed. This means `aio-fleet
+sync-catalog` may sync `dify-aio.xml` into `awesome-unraid`, and catalog
+validation expects that XML to exist in the catalog repo.
 
-Before syncing `dify-aio.xml` into `awesome-unraid`, run:
+Before changing or re-syncing `dify-aio.xml` into `awesome-unraid`, run:
 
 ```bash
 python scripts/validate-template.py --all
@@ -29,5 +29,5 @@ Then confirm:
 - generated defaults do not include upstream placeholders;
 - advanced vector, storage, database, cache, mail, and security fields still match the intended source surface;
 - `TemplateURL` and `Icon` point to `awesome-unraid`;
-- `python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run` refuses XML while `catalog_published: false`;
-- the catalog PR only syncs the XML once the source repo is ready and the manifest flag is flipped to `true`.
+- `python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run` reports the exact catalog XML/icon changes;
+- catalog PRs sync Dify XML only after the source repo is ready and the manifest flag remains `true`.

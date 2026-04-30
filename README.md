@@ -18,7 +18,8 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   protection, selected action allowlists, required checks, vulnerability alerts,
   and declared automation secret names.
 - `sync-catalog` stages manifest-declared XML/icon assets into
-  `awesome-unraid`, with icon-only support for staged launches such as Dify.
+  `awesome-unraid`, with icon-only support for staged launches before XML
+  publication.
 - Docs describe the architecture, repo onboarding, release model, GitHub IaC,
   and the future GitHub App automation track.
 
@@ -34,7 +35,7 @@ python -m aio_fleet validate --all
 python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
 python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
 python -m aio_fleet validate-github --check-secrets
-python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --icon-only --dry-run
+python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run
 python -m aio_fleet sync-boilerplate --repo sure-aio --dry-run
 python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>
 ```
