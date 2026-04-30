@@ -1,0 +1,36 @@
+# Repository Onboarding
+
+Use `unraid-aio-template` to create the new app repo first. Then add it to `fleet.yml`.
+
+Required manifest fields:
+
+- `path`: local checkout path used by operator commands.
+- `app_slug`: stable fleet slug.
+- `workflow_name`: user-facing GitHub Actions workflow name.
+- `image_name`: image path without registry, for example `jsonbored/example-aio`.
+- `docker_cache_scope`: GitHub Actions cache scope for the main image.
+- `pytest_image_tag`: local image tag used by integration tests.
+- `publish_profile`: one of `template`, `upstream-aio-track`, `changelog-version`, `dify`, or `signoz-suite`.
+- `upstream_name` and `image_description`: OCI metadata labels.
+- `xml_paths`: XML/template paths watched by CI.
+- `catalog_assets`: source-to-target copy rules for `awesome-unraid` sync.
+
+Optional fields:
+
+- `generated_template`: marks repos whose XML is generated from source data.
+- `generator_check_command`: command run before XML validation.
+- `checkout_submodules`: required for repos like `mem0-aio`.
+- `extra_publish_paths`: paths that should trigger image publishing.
+- `extended_integration`: manual extended integration test input and pytest args.
+- `components`: component-aware publish lanes, currently used by `signoz-aio`.
+
+After editing `fleet.yml`:
+
+```bash
+python -m aio_fleet render-workflow <repo> --ref <aio-fleet-commit-sha>
+python -m aio_fleet sync-workflows --repo <repo> --ref <aio-fleet-commit-sha>
+python -m aio_fleet doctor
+```
+
+Callers should pin the reusable workflow to a full commit SHA. Use `main` only for local experimentation.
+

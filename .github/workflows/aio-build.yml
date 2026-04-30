@@ -1,0 +1,1083 @@
+name: Reusable AIO Build
+
+on:
+  workflow_call:
+    inputs:
+      app_slug:
+        required: true
+        type: string
+      image_name:
+        required: true
+        type: string
+      workflow_title:
+        required: false
+        default: AIO Build
+        type: string
+      docker_cache_scope:
+        required: true
+        type: string
+      pytest_image_tag:
+        required: true
+        type: string
+      publish_profile:
+        required: true
+        type: string
+      upstream_name:
+        required: true
+        type: string
+      image_description:
+        required: true
+        type: string
+      python_version:
+        required: false
+        default: "3.13"
+        type: string
+      trunk_org_slug:
+        required: false
+        default: aethereal
+        type: string
+      registry:
+        required: false
+        default: ghcr.io
+        type: string
+      publish_platforms:
+        required: false
+        default: linux/amd64,linux/arm64
+        type: string
+      checkout_submodules:
+        required: false
+        default: false
+        type: boolean
+      integration_pytest_args:
+        required: false
+        default: tests/integration -m integration
+        type: string
+      unit_pytest_args:
+        required: false
+        default: tests/unit tests/template
+        type: string
+      run_extended_integration:
+        required: false
+        default: false
+        type: boolean
+      extended_integration_pytest_args:
+        required: false
+        default: ""
+        type: string
+      generator_check_command:
+        required: false
+        default: ""
+        type: string
+      xml_paths:
+        required: false
+        default: ""
+        type: string
+      extra_publish_paths:
+        required: false
+        default: ""
+        type: string
+      catalog_assets:
+        required: false
+        default: ""
+        type: string
+      upstream_digest_arg:
+        required: false
+        default: UPSTREAM_IMAGE_DIGEST
+        type: string
+      agent_image_name:
+        required: false
+        default: ""
+        type: string
+      agent_docker_cache_scope:
+        required: false
+        default: ""
+        type: string
+      agent_pytest_image_tag:
+        required: false
+        default: ""
+        type: string
+      agent_integration_pytest_args:
+        required: false
+        default: ""
+        type: string
+      agent_context:
+        required: false
+        default: ""
+        type: string
+      agent_dockerfile:
+        required: false
+        default: ""
+        type: string
+      agent_upstream_name:
+        required: false
+        default: ""
+        type: string
+      agent_image_description:
+        required: false
+        default: ""
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REGISTRY: ${{ inputs.registry }}
+  IMAGE_NAME: ${{ inputs.image_name }}
+  AGENT_IMAGE_NAME: ${{ inputs.agent_image_name }}
+  PYTHON_VERSION: ${{ inputs.python_version }}
+  TRUNK_ORG_URL_SLUG: ${{ inputs.trunk_org_slug }}
+  DOCKER_CACHE_SCOPE: ${{ inputs.docker_cache_scope }}
+  AGENT_DOCKER_CACHE_SCOPE: ${{ inputs.agent_docker_cache_scope }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build_related: ${{ steps.filter.outputs.build_related }}
+      aio_related: ${{ steps.filter.outputs.aio_related }}
+      agent_related: ${{ steps.filter.outputs.agent_related }}
+      xml_related: ${{ steps.filter.outputs.xml_related }}
+      renovate_related: ${{ steps.filter.outputs.renovate_related }}
+      tooling_related: ${{ steps.filter.outputs.tooling_related }}
+      workflow_related: ${{ steps.filter.outputs.workflow_related }}
+      publish_related: ${{ steps.filter.outputs.publish_related }}
+      aio_publish_related: ${{ steps.filter.outputs.aio_publish_related }}
+      agent_publish_related: ${{ steps.filter.outputs.agent_publish_related }}
+      run_tests_requested: ${{ steps.filter.outputs.run_tests_requested }}
+      publish_requested: ${{ steps.filter.outputs.publish_requested }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.checkout_submodules }}
+
+      - name: Classify changed files
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+          GITHUB_REF_VALUE: ${{ github.ref }}
+          PUBLISH_PROFILE: ${{ inputs.publish_profile }}
+          XML_PATHS: ${{ inputs.xml_paths }}
+          EXTRA_PUBLISH_PATHS: ${{ inputs.extra_publish_paths }}
+        run: |
+          set -euo pipefail
+
+          case "${EVENT_NAME}:${GITHUB_REF_VALUE}" in
+            push:refs/heads/main)
+              {
+                echo "run_tests_requested=true"
+                echo "publish_requested=true"
+              } >> "${GITHUB_OUTPUT}"
+              ;;
+            pull_request:*|workflow_dispatch:*)
+              {
+                echo "run_tests_requested=true"
+                echo "publish_requested=false"
+              } >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              {
+                echo "run_tests_requested=false"
+                echo "publish_requested=false"
+              } >> "${GITHUB_OUTPUT}"
+              ;;
+          esac
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base="${BASE_SHA}"
+            head="${HEAD_SHA}"
+          else
+            base="${BEFORE_SHA}"
+            head="${GITHUB_SHA_VALUE}"
+          fi
+
+          status="ok"
+          changed_files=""
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            status="manual"
+          elif ! git rev-parse --git-dir >/dev/null 2>&1; then
+            status="fallback"
+          elif [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            changed_files="$(git show --pretty='' --name-only "${head}" 2>/dev/null)" || status="fallback"
+          else
+            changed_files="$(git diff --name-only "${base}" "${head}" 2>/dev/null)" || status="fallback"
+          fi
+
+          if [[ -n "${changed_files}" ]]; then
+            printf 'Changed files:\n%s\n' "${changed_files}"
+          fi
+
+          CLASSIFY_STATUS="${status}" CHANGED_FILES="${changed_files}" python3 - <<'PY'
+          from __future__ import annotations
+
+          import fnmatch
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def lines(name: str) -> list[str]:
+              value = os.environ.get(name, "")
+              return [line.strip() for line in value.splitlines() if line.strip()]
+
+          def emit(values: dict[str, bool]) -> None:
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                  for key, value in values.items():
+                      output.write(f"{key}={str(value).lower()}\n")
+
+          def match(path: str, patterns: list[str]) -> bool:
+              return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+          def run_text(command: list[str]) -> str:
+              try:
+                  return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL).strip()
+              except Exception:
+                  return ""
+
+          profile = os.environ["PUBLISH_PROFILE"]
+          status = os.environ["CLASSIFY_STATUS"]
+          changed = [line for line in os.environ.get("CHANGED_FILES", "").splitlines() if line]
+
+          outputs = {
+              "build_related": False,
+              "aio_related": False,
+              "agent_related": False,
+              "xml_related": False,
+              "renovate_related": False,
+              "tooling_related": False,
+              "workflow_related": False,
+              "publish_related": False,
+              "aio_publish_related": False,
+              "agent_publish_related": False,
+          }
+
+          if status == "manual":
+              outputs.update(
+                  build_related=True,
+                  aio_related=True,
+                  agent_related=profile == "signoz-suite",
+                  xml_related=True,
+                  renovate_related=True,
+                  tooling_related=True,
+                  workflow_related=True,
+              )
+              emit(outputs)
+              raise SystemExit
+
+          if status == "fallback":
+              outputs.update(
+                  build_related=True,
+                  aio_related=True,
+                  agent_related=profile == "signoz-suite",
+                  xml_related=True,
+                  renovate_related=True,
+                  tooling_related=True,
+                  workflow_related=True,
+                  publish_related=True,
+                  aio_publish_related=True,
+                  agent_publish_related=profile == "signoz-suite",
+              )
+              emit(outputs)
+              raise SystemExit
+
+          publish_paths = ["Dockerfile", "upstream.toml", "rootfs/**", *lines("EXTRA_PUBLISH_PATHS")]
+          build_paths = [
+              "pyproject.toml",
+              "requirements-dev.txt",
+              "components.toml",
+              "components/**",
+              "docs/upstream/**",
+              "tests/integration/**",
+              "tests/integration_agent/**",
+              "tests/helpers.py",
+              "tests/conftest.py",
+          ]
+          xml_paths = lines("XML_PATHS")
+          tooling_paths = ["cliff.toml", "scripts/**", ".trunk/**", "tests/**"]
+          workflow_paths = [".github/actions/**", ".github/workflows/**"]
+
+          for path in changed:
+              if profile == "signoz-suite":
+                  if match(path, ["Dockerfile", "upstream.toml", "rootfs/**"]):
+                      outputs["aio_related"] = True
+                      outputs["build_related"] = True
+                      outputs["aio_publish_related"] = True
+                  elif match(path, ["tests/integration/**"]):
+                      outputs["aio_related"] = True
+                      outputs["build_related"] = True
+                  elif path == "components.toml":
+                      outputs["aio_related"] = True
+                      outputs["agent_related"] = True
+                      outputs["build_related"] = True
+                      outputs["aio_publish_related"] = True
+                      outputs["agent_publish_related"] = True
+                  elif match(path, ["components/**"]):
+                      outputs["agent_related"] = True
+                      outputs["build_related"] = True
+                      outputs["agent_publish_related"] = True
+                  elif match(path, ["tests/integration_agent/**"]):
+                      outputs["agent_related"] = True
+                      outputs["build_related"] = True
+                  elif match(path, xml_paths):
+                      outputs["xml_related"] = True
+                      outputs["aio_related"] = True
+                      outputs["agent_related"] = outputs["agent_related"] or "agent" in path
+              else:
+                  if match(path, publish_paths):
+                      outputs["build_related"] = True
+                      outputs["publish_related"] = True
+                  elif match(path, build_paths):
+                      outputs["build_related"] = True
+                  elif match(path, xml_paths):
+                      outputs["xml_related"] = True
+
+              if path == "CHANGELOG.md":
+                  outputs["tooling_related"] = True
+                  if profile == "signoz-suite":
+                      latest = run_text(["python3", "scripts/release.py", "latest-changelog-version"])
+                      aio_upstream = run_text(["python3", "scripts/release.py", "upstream-version"])
+                      agent_upstream = run_text(["python3", "scripts/release.py", "--component", "signoz-agent", "upstream-version"])
+                      if latest.startswith(f"{aio_upstream}-aio."):
+                          outputs["aio_publish_related"] = True
+                      elif latest.startswith(f"{agent_upstream}-agent."):
+                          outputs["agent_publish_related"] = True
+                      else:
+                          outputs["aio_publish_related"] = True
+                          outputs["agent_publish_related"] = True
+                  else:
+                      outputs["publish_related"] = True
+
+              if match(path, tooling_paths):
+                  outputs["tooling_related"] = True
+              if match(path, workflow_paths):
+                  outputs["tooling_related"] = True
+                  outputs["workflow_related"] = True
+              if path == "renovate.json":
+                  outputs["renovate_related"] = True
+
+          if profile != "signoz-suite":
+              outputs["aio_related"] = outputs["build_related"] or outputs["xml_related"]
+              outputs["aio_publish_related"] = outputs["publish_related"]
+          emit(outputs)
+          PY
+
+  validate-template:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.xml_related == 'true' || needs.detect-changes.outputs.renovate_related == 'true' || needs.detect-changes.outputs.tooling_related == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install validation dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Validate shell and python scripts
+        if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.tooling_related == 'true' }}
+        run: |
+          set -euo pipefail
+          bash -n scripts/validate-derived-repo.sh
+          PYTHONPYCACHEPREFIX="/tmp/${{ inputs.app_slug }}-pyc" python3 -m py_compile scripts/*.py
+          if [[ -d rootfs ]]; then
+            find rootfs -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+            find rootfs -type f -path '*/run' -print0 | xargs -0 -r -n1 bash -n
+            find rootfs -type f -path '*/up' -print0 | xargs -0 -r -n1 sh -n
+          fi
+          if [[ -d components ]]; then
+            find components -type f -path '*/rootfs/*' -print0 | xargs -0 -r -n1 bash -n
+          fi
+
+      - name: Validate generated template
+        if: ${{ inputs.generator_check_command != '' && (needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.xml_related == 'true') }}
+        run: ${{ inputs.generator_check_command }}
+
+      - name: Validate XML
+        if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.xml_related == 'true' }}
+        run: python3 scripts/validate-template.py --all
+
+      - name: Validate derived repo placeholders
+        run: |
+          chmod +x scripts/validate-derived-repo.sh
+          ./scripts/validate-derived-repo.sh .
+
+      - name: Validate Renovate config
+        if: ${{ needs.detect-changes.outputs.renovate_related == 'true' }}
+        run: npx --yes --package renovate renovate-config-validator renovate.json
+
+  pinned-actions:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Skip when workflow files are unchanged
+        if: ${{ needs.detect-changes.outputs.workflow_related != 'true' }}
+        run: echo "Workflow files unchanged; skipping pinned action scan."
+
+      - name: Checkout
+        if: ${{ needs.detect-changes.outputs.workflow_related == 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Enforce pinned action SHAs
+        if: ${{ needs.detect-changes.outputs.workflow_related == 'true' }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          workflow_paths = [
+              *pathlib.Path(".github/workflows").glob("*.yml"),
+              *pathlib.Path(".github/actions").glob("*/action.yml"),
+          ]
+          pattern = re.compile(r"^\s*uses:\s*([^@\s]+)@([^\s#]+)")
+          sha_pattern = re.compile(r"^[0-9a-f]{40}$")
+          failures = []
+
+          for path in sorted(workflow_paths):
+              for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+                  match = pattern.match(line)
+                  if not match:
+                      continue
+                  target, ref = match.groups()
+                  if target.startswith("./"):
+                      continue
+                  if not sha_pattern.fullmatch(ref):
+                      failures.append(f"{path}:{lineno}: action is not pinned to a full SHA -> {line.strip()}")
+
+          if failures:
+              print("\n".join(failures), file=sys.stderr)
+              sys.exit(1)
+          print("All workflow actions are pinned to full commit SHAs.")
+          PY
+
+  dependency-review:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Detect dependency review support
+        id: support
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          support_state="$(
+            gh api "repos/${GITHUB_REPOSITORY}" \
+              --jq 'if .security_and_analysis == null then "unsupported" else "supported" end'
+          )"
+
+          if [[ "${support_state}" == "supported" ]]; then
+            echo "supported=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "supported=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Skip when dependency review is unsupported
+        if: ${{ steps.support.outputs.supported != 'true' }}
+        run: echo "Dependency review is unsupported for this repository; skipping."
+
+      - name: Dependency review
+        if: ${{ steps.support.outputs.supported == 'true' }}
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+
+  unit-tests:
+    if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.xml_related == 'true' || needs.detect-changes.outputs.tooling_related == 'true' }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install pytest
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run unit and template tests
+        uses: ./.github/actions/run-pytest
+        with:
+          junit-path: reports/pytest-unit.xml
+          pytest-args: ${{ inputs.unit_pytest_args }}
+          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
+          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+
+  integration-tests:
+    if: ${{ needs.detect-changes.outputs.run_tests_requested == 'true' && (needs.detect-changes.outputs.build_related == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.detect-changes.outputs.aio_publish_related == 'true')) }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+      - unit-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Prebuild pytest image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ inputs.pytest_image_tag }}
+          cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
+
+      - name: Install pytest
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run integration tests
+        env:
+          AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
+        uses: ./.github/actions/run-pytest
+        with:
+          junit-path: reports/pytest-integration.xml
+          pytest-args: ${{ inputs.integration_pytest_args }}
+          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
+          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+
+      - name: Dump Docker diagnostics
+        if: ${{ failure() }}
+        run: |
+          docker ps -a
+          echo
+          docker images
+
+  agent-integration-tests:
+    if: ${{ inputs.publish_profile == 'signoz-suite' && needs.detect-changes.outputs.run_tests_requested == 'true' && (((needs.detect-changes.outputs.agent_related == 'true' || needs.detect-changes.outputs.aio_related == 'true') && needs.detect-changes.outputs.build_related == 'true') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.detect-changes.outputs.agent_publish_related == 'true')) }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+      - unit-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Prebuild AIO backend image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ inputs.pytest_image_tag }}
+          cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
+      - name: Prebuild pytest agent image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs.agent_context }}
+          file: ${{ inputs.agent_dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ inputs.agent_pytest_image_tag }}
+          cache-from: type=gha,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
+
+      - name: Install pytest
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run agent integration tests
+        env:
+          AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
+          SIGNOZ_AIO_IMAGE_TAG: ${{ inputs.pytest_image_tag }}
+          SIGNOZ_AGENT_PYTEST_USE_PREBUILT_IMAGE: "true"
+          SIGNOZ_AGENT_IMAGE_TAG: ${{ inputs.agent_pytest_image_tag }}
+        uses: ./.github/actions/run-pytest
+        with:
+          junit-path: reports/pytest-agent-integration.xml
+          pytest-args: ${{ inputs.agent_integration_pytest_args }}
+          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
+          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+
+      - name: Dump Docker diagnostics
+        if: ${{ failure() }}
+        run: |
+          docker ps -a
+          echo
+          docker images
+
+  extended-integration-tests:
+    if: ${{ inputs.extended_integration_pytest_args != '' && github.event_name == 'workflow_dispatch' && inputs.run_extended_integration == true && needs.detect-changes.outputs.build_related == 'true' && needs.integration-tests.result == 'success' }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+      - unit-tests
+      - integration-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Prebuild pytest image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ inputs.pytest_image_tag }}
+          cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
+
+      - name: Install pytest
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run extended integration tests
+        env:
+          AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
+        uses: ./.github/actions/run-pytest
+        with:
+          junit-path: reports/pytest-extended-integration.xml
+          pytest-args: ${{ inputs.extended_integration_pytest_args }}
+          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
+          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+
+      - name: Dump Docker diagnostics
+        if: ${{ failure() }}
+        run: |
+          docker ps -a
+          echo
+          docker images
+
+  publish:
+    if: ${{ inputs.publish_profile != 'signoz-suite' && needs.detect-changes.outputs.aio_publish_related == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.integration-tests.result == 'success' }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+      - unit-tests
+      - integration-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve Docker Hub publish settings
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE_NAME }}
+          DOCKERHUB_IMAGE_NAME_SECRET: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
+        run: |
+          if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          resolved_image_name="${DOCKERHUB_IMAGE_NAME:-${DOCKERHUB_IMAGE_NAME_SECRET}}"
+          if [[ -n "${resolved_image_name}" ]]; then
+            echo "image_name=${resolved_image_name}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "image_name=${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Login to Docker Hub
+        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Compute image tags and labels
+        id: prep
+        env:
+          DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
+          DOCKERHUB_IMAGE_NAME: ${{ steps.dockerhub.outputs.image_name }}
+          PUBLISH_PROFILE: ${{ inputs.publish_profile }}
+          UPSTREAM_DIGEST_ARG: ${{ inputs.upstream_digest_arg }}
+          UPSTREAM_NAME: ${{ inputs.upstream_name }}
+          IMAGE_DESCRIPTION: ${{ inputs.image_description }}
+          APP_SLUG: ${{ inputs.app_slug }}
+        run: |
+          set -euo pipefail
+
+          image_ghcr="$(printf '%s' "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          dockerhub_image_name="${DOCKERHUB_IMAGE_NAME:-${IMAGE_NAME}}"
+          image_dockerhub="$(printf '%s' "${dockerhub_image_name}" | tr '[:upper:]' '[:lower:]')"
+          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
+          upstream_version="$(python3 scripts/release.py upstream-version 2>/dev/null || true)"
+          upstream_digest="$(sed -n "s/^ARG ${UPSTREAM_DIGEST_ARG}=//p" Dockerfile | head -n1)"
+          changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
+          release_target_commit="$(python3 scripts/release.py find-release-target-commit "${changelog_version}" 2>/dev/null || true)"
+          release_package_tag=""
+          version_label="${upstream_version}"
+          wrapper_track="main"
+          wrapper_version=""
+
+          if [[ "${PUBLISH_PROFILE}" == "template" ]]; then
+            version_label=""
+          elif [[ "${changelog_version}" == "${upstream_version}"-aio.* && "${release_target_commit}" == "${GITHUB_SHA}" ]]; then
+            candidate_revision="${changelog_version##*.}"
+            if [[ "${candidate_revision}" =~ ^[0-9]+$ ]]; then
+              if [[ "${PUBLISH_PROFILE}" == "upstream-aio-track" ]]; then
+                wrapper_track="aio-v${candidate_revision}"
+                release_package_tag="${upstream_version}-${wrapper_track}"
+              else
+                wrapper_track="aio-v${candidate_revision}"
+                release_package_tag="${changelog_version}"
+              fi
+              version_label="${release_package_tag}"
+              wrapper_version="${release_package_tag}"
+            fi
+          fi
+
+          {
+            echo "upstream_version=${upstream_version}"
+            echo "upstream_digest=${upstream_digest}"
+            echo "release_package_tag=${release_package_tag}"
+            echo "version_label=${version_label}"
+            echo "wrapper_track=${wrapper_track}"
+            echo "wrapper_version=${wrapper_version}"
+            echo "tags<<EOF"
+            echo "${image_ghcr}:latest"
+            if [[ -n "${upstream_version}" ]]; then
+              echo "${image_ghcr}:${upstream_version}"
+              if [[ -n "${release_package_tag}" ]]; then
+                echo "${image_ghcr}:${release_package_tag}"
+              fi
+            fi
+            echo "${sha_tag_ghcr}"
+            if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
+              echo "${image_dockerhub}:latest"
+              if [[ -n "${upstream_version}" ]]; then
+                echo "${image_dockerhub}:${upstream_version}"
+                if [[ -n "${release_package_tag}" ]]; then
+                  echo "${image_dockerhub}:${release_package_tag}"
+                fi
+              fi
+              echo "${image_dockerhub}:sha-${GITHUB_SHA}"
+            fi
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.title=${APP_SLUG}"
+            echo "org.opencontainers.image.version=${version_label}"
+            echo "org.opencontainers.image.description=${IMAGE_DESCRIPTION}"
+            echo "io.jsonbored.upstream.name=${UPSTREAM_NAME}"
+            echo "io.jsonbored.upstream.version=${upstream_version}"
+            echo "io.jsonbored.upstream.digest=${upstream_digest}"
+            if [[ "${PUBLISH_PROFILE}" == "dify" ]]; then
+              echo "io.jsonbored.upstream.dify.api.digest=$(sed -n 's/^ARG UPSTREAM_DIFY_API_DIGEST=//p' Dockerfile | head -n1)"
+              echo "io.jsonbored.upstream.dify.web.digest=$(sed -n 's/^ARG UPSTREAM_DIFY_WEB_DIGEST=//p' Dockerfile | head -n1)"
+              echo "io.jsonbored.upstream.dify_sandbox.version=$(sed -n 's/^ARG UPSTREAM_DIFY_SANDBOX_VERSION=//p' Dockerfile | head -n1)"
+              echo "io.jsonbored.upstream.dify_sandbox.digest=$(sed -n 's/^ARG UPSTREAM_DIFY_SANDBOX_DIGEST=//p' Dockerfile | head -n1)"
+              echo "io.jsonbored.upstream.dify_plugin_daemon.version=$(sed -n 's/^ARG UPSTREAM_DIFY_PLUGIN_DAEMON_VERSION=//p' Dockerfile | head -n1)"
+              echo "io.jsonbored.upstream.dify_plugin_daemon.digest=$(sed -n 's/^ARG UPSTREAM_DIFY_PLUGIN_DAEMON_DIGEST=//p' Dockerfile | head -n1)"
+            fi
+            echo "io.jsonbored.wrapper.name=${APP_SLUG}"
+            echo "io.jsonbored.wrapper.type=unraid-aio"
+            echo "io.jsonbored.wrapper.track=${wrapper_track}"
+            echo "io.jsonbored.wrapper.version=${wrapper_version}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          platforms: ${{ inputs.publish_platforms }}
+          push: true
+          cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
+          tags: ${{ steps.prep.outputs.tags }}
+          labels: ${{ steps.prep.outputs.labels }}
+
+  publish-agent:
+    if: ${{ inputs.publish_profile == 'signoz-suite' && needs.detect-changes.outputs.agent_publish_related == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.agent-integration-tests.result == 'success' }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+      - unit-tests
+      - agent-integration-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          submodules: ${{ inputs.checkout_submodules }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve Docker Hub publish settings
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Login to Docker Hub
+        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Compute agent image tags and labels
+        id: prep
+        env:
+          DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
+        run: |
+          set -euo pipefail
+
+          image_ghcr="$(printf '%s' "${REGISTRY}/${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          image_dockerhub="$(printf '%s' "${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
+          upstream_version="$(python3 scripts/release.py --component signoz-agent upstream-version)"
+          upstream_digest="$(sed -n 's/^ARG UPSTREAM_OTELCOL_DIGEST=//p' "${{ inputs.agent_dockerfile }}" | head -n1)"
+          changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
+          release_target_commit="$(python3 scripts/release.py --component signoz-agent find-release-target-commit "${changelog_version}" 2>/dev/null || true)"
+          release_package_tag=""
+          version_label="${upstream_version}"
+          wrapper_track="main"
+          wrapper_version=""
+          if [[ "${changelog_version}" == "${upstream_version}"-agent.* && "${release_target_commit}" == "${GITHUB_SHA}" ]]; then
+            release_package_tag="${changelog_version}"
+            version_label="${release_package_tag}"
+            wrapper_track="${release_package_tag}"
+            wrapper_version="${release_package_tag}"
+          fi
+
+          {
+            echo "tags<<EOF"
+            echo "${image_ghcr}:latest"
+            echo "${image_ghcr}:${upstream_version}"
+            if [[ -n "${release_package_tag}" ]]; then
+              echo "${image_ghcr}:${release_package_tag}"
+            fi
+            echo "${sha_tag_ghcr}"
+            if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
+              echo "${image_dockerhub}:latest"
+              echo "${image_dockerhub}:${upstream_version}"
+              if [[ -n "${release_package_tag}" ]]; then
+                echo "${image_dockerhub}:${release_package_tag}"
+              fi
+              echo "${image_dockerhub}:sha-${GITHUB_SHA}"
+            fi
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.title=signoz-agent"
+            echo "org.opencontainers.image.version=${version_label}"
+            echo "org.opencontainers.image.description=${{ inputs.agent_image_description }}"
+            echo "io.jsonbored.upstream.name=${{ inputs.agent_upstream_name }}"
+            echo "io.jsonbored.upstream.version=${upstream_version}"
+            echo "io.jsonbored.upstream.digest=${upstream_digest}"
+            echo "io.jsonbored.wrapper.name=signoz-agent"
+            echo "io.jsonbored.wrapper.type=unraid-agent"
+            echo "io.jsonbored.wrapper.track=${wrapper_track}"
+            echo "io.jsonbored.wrapper.version=${wrapper_version}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Build and push agent
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs.agent_context }}
+          file: ${{ inputs.agent_dockerfile }}
+          platforms: ${{ inputs.publish_platforms }}
+          push: true
+          cache-from: type=gha,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
+          tags: ${{ steps.prep.outputs.tags }}
+          labels: ${{ steps.prep.outputs.labels }}
+
+  sync-awesome-unraid:
+    if: ${{ needs.detect-changes.outputs.xml_related == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs:
+      - detect-changes
+      - validate-template
+      - pinned-actions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check sync configuration
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [[ -z "${SYNC_TOKEN}" ]]; then
+            echo "SYNC_ENABLED=false" >> "${GITHUB_ENV}"
+            echo "SYNC_TOKEN is not configured; skipping sync."
+          else
+            echo "SYNC_ENABLED=true" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Checkout Source Repository
+        if: ${{ env.SYNC_ENABLED == 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: ${{ inputs.checkout_submodules }}
+
+      - name: Checkout Target Repository
+        if: ${{ env.SYNC_ENABLED == 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/awesome-unraid
+          token: ${{ secrets.SYNC_TOKEN }}
+          path: target-repo
+
+      - name: Copy catalog assets
+        if: ${{ env.SYNC_ENABLED == 'true' }}
+        env:
+          CATALOG_ASSETS: ${{ inputs.catalog_assets }}
+        run: |
+          set -euo pipefail
+          while IFS='|' read -r source target; do
+            [[ -z "${source}" || -z "${target}" ]] && continue
+            mkdir -p "target-repo/$(dirname "${target}")"
+            cp "${source}" "target-repo/${target}"
+          done <<< "${CATALOG_ASSETS}"
+
+      - name: Create sync pull request
+        if: ${{ env.SYNC_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          CATALOG_ASSETS: ${{ inputs.catalog_assets }}
+          APP_SLUG: ${{ inputs.app_slug }}
+        run: |
+          set -euo pipefail
+
+          cd target-repo
+          branch="sync-awesome-unraid/${APP_SLUG}"
+          title="ci(sync): sync ${APP_SLUG} catalog assets"
+          body="Automated sync from \`${SOURCE_REPOSITORY}\`."
+          paths=()
+          while IFS='|' read -r _source target; do
+            [[ -z "${target}" ]] && continue
+            paths+=("${target}")
+          done <<< "${CATALOG_ASSETS}"
+
+          if [[ "${#paths[@]}" -eq 0 ]]; then
+            echo "No catalog assets configured."
+            exit 0
+          fi
+          if [[ -z "$(git status --porcelain -- "${paths[@]}")" ]]; then
+            echo "No awesome-unraid changes to sync."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add "${paths[@]}"
+          git commit -m "ci(sync): auto-sync ${APP_SLUG} catalog assets"
+          git push --force origin "HEAD:${branch}"
+
+          existing_pr="$(gh pr list \
+            --repo JSONbored/awesome-unraid \
+            --head "${branch}" \
+            --base main \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "${existing_pr}" ]]; then
+            gh pr edit "${existing_pr}" \
+              --repo JSONbored/awesome-unraid \
+              --title "${title}" \
+              --body "${body}"
+          else
+            gh pr create \
+              --repo JSONbored/awesome-unraid \
+              --head "${branch}" \
+              --base main \
+              --title "${title}" \
+              --body "${body}"
+          fi

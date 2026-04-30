@@ -1,0 +1,189 @@
+schema_version: 1
+owner: JSONbored
+default_branch: main
+awesome_unraid_repository: JSONbored/awesome-unraid
+reusable_workflow:
+  path: .github/workflows/aio-build.yml
+  ref: main
+defaults:
+  python_version: "3.13"
+  trunk_org_slug: aethereal
+  registry: ghcr.io
+  publish_platforms: linux/amd64,linux/arm64
+  integration_pytest_args: tests/integration -m integration
+  unit_pytest_args: tests/unit tests/template
+repos:
+  unraid-aio-template:
+    path: /Users/shadowbook/Documents/unraid-aio-template
+    public: false
+    workflow_name: CI / AIO Template
+    app_slug: unraid-aio-template
+    image_name: jsonbored/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: aio-template:pytest
+    publish_profile: template
+    upstream_name: AIO Template
+    image_description: Reusable Unraid AIO template image
+    xml_paths:
+      - template-aio.xml
+    catalog_assets:
+      - source: template-aio.xml
+        target: template-aio.xml
+      - source: assets/app-icon.png
+        target: icons/template.png
+  sure-aio:
+    path: /Users/shadowbook/Documents/sure-aio
+    public: true
+    workflow_name: CI / Sure-AIO
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    publish_profile: upstream-aio-track
+    upstream_name: Sure
+    image_description: Unraid-first AIO wrapper image for Sure (web, worker, postgres, redis)
+    xml_paths:
+      - sure-aio.xml
+    catalog_assets:
+      - source: sure-aio.xml
+        target: sure-aio.xml
+  simplelogin-aio:
+    path: /Users/shadowbook/Documents/simplelogin-aio
+    public: true
+    workflow_name: CI / SimpleLogin AIO
+    app_slug: simplelogin-aio
+    image_name: jsonbored/simplelogin-aio
+    docker_cache_scope: simplelogin-aio-image
+    pytest_image_tag: simplelogin-aio:pytest
+    publish_profile: upstream-aio-track
+    upstream_name: SimpleLogin
+    image_description: Unraid-first AIO wrapper image for SimpleLogin
+    xml_paths:
+      - simplelogin-aio.xml
+    catalog_assets:
+      - source: simplelogin-aio.xml
+        target: simplelogin-aio.xml
+  khoj-aio:
+    path: /Users/shadowbook/Documents/khoj-aio
+    public: true
+    workflow_name: CI / Khoj AIO
+    app_slug: khoj-aio
+    image_name: jsonbored/khoj-aio
+    docker_cache_scope: khoj-aio-image
+    pytest_image_tag: khoj-aio:pytest
+    publish_profile: changelog-version
+    upstream_name: Khoj
+    image_description: Unraid-first AIO wrapper image for Khoj
+    xml_paths:
+      - khoj-aio.xml
+    catalog_assets:
+      - source: khoj-aio.xml
+        target: khoj-aio.xml
+  mem0-aio:
+    path: /Users/shadowbook/Documents/mem0-aio
+    public: true
+    workflow_name: CI / Mem0 AIO
+    app_slug: mem0-aio
+    image_name: jsonbored/mem0-aio
+    docker_cache_scope: mem0-aio-image
+    pytest_image_tag: mem0-aio:pytest
+    publish_profile: changelog-version
+    upstream_name: Mem0
+    image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
+    checkout_submodules: true
+    extra_publish_paths:
+      - openmemory
+      - openmemory/**
+    xml_paths:
+      - mem0-aio.xml
+      - assets/**
+    catalog_assets:
+      - source: mem0-aio.xml
+        target: mem0-aio.xml
+      - source: assets/app-icon.png
+        target: icons/mem0.png
+  infisical-aio:
+    path: /Users/shadowbook/Documents/infisical-aio
+    public: true
+    workflow_name: CI / Infisical AIO
+    app_slug: infisical-aio
+    image_name: jsonbored/infisical-aio
+    docker_cache_scope: infisical-aio-image
+    pytest_image_tag: infisical-aio:pytest
+    publish_profile: changelog-version
+    upstream_name: Infisical
+    image_description: Unraid-first AIO wrapper image for Infisical
+    generated_template: true
+    generator_check_command: python3 scripts/generate_infisical_template.py --check
+    xml_paths:
+      - "*.xml"
+      - assets/**
+    catalog_assets:
+      - source: infisical-aio.xml
+        target: infisical-aio.xml
+      - source: assets/app-icon.png
+        target: icons/infisical.png
+  dify-aio:
+    path: /Users/shadowbook/Documents/dify-aio
+    public: true
+    workflow_name: CI / Dify AIO
+    app_slug: dify-aio
+    image_name: jsonbored/dify-aio
+    docker_cache_scope: dify-aio-image
+    pytest_image_tag: dify-aio:pytest
+    publish_profile: dify
+    upstream_name: Dify
+    image_description: Unraid-first AIO wrapper image for Dify
+    generated_template: true
+    generator_check_command: python3 scripts/generate_dify_template.py --check
+    extended_integration:
+      input_name: run_extended_integration
+      description: Run sidecar-backed external provider integration tests
+      pytest_args: tests/integration -m extended_integration
+    xml_paths:
+      - "*.xml"
+      - assets/**
+    catalog_assets:
+      - source: dify-aio.xml
+        target: dify-aio.xml
+      - source: assets/app-icon.png
+        target: icons/dify.png
+  signoz-aio:
+    path: /Users/shadowbook/Documents/signoz-aio
+    public: true
+    workflow_name: CI / SigNoz Suite
+    app_slug: signoz-aio
+    image_name: jsonbored/signoz-aio
+    docker_cache_scope: signoz-aio-image
+    pytest_image_tag: signoz-aio:pytest
+    publish_profile: signoz-suite
+    upstream_name: SigNoz
+    image_description: Unraid-first AIO wrapper image for SigNoz with internal ClickHouse, ZooKeeper, and OpenTelemetry Collector defaults
+    publish_platforms: linux/amd64
+    upstream_digest_arg: UPSTREAM_SIGNOZ_DIGEST
+    components:
+      aio:
+        xml_paths:
+          - signoz-aio.xml
+      agent:
+        image_name: jsonbored/signoz-agent
+        docker_cache_scope: signoz-agent-image
+        pytest_image_tag: signoz-agent:pytest
+        integration_pytest_args: tests/integration_agent -m integration
+        context: components/signoz-agent
+        dockerfile: components/signoz-agent/Dockerfile
+        upstream_name: OpenTelemetry Collector Contrib
+        image_description: Unraid-friendly SigNoz OpenTelemetry collector companion for remote and local hosts
+        xml_paths:
+          - signoz-agent.xml
+    xml_paths:
+      - signoz-aio.xml
+      - signoz-agent.xml
+      - assets/**
+    catalog_assets:
+      - source: signoz-aio.xml
+        target: signoz-aio.xml
+      - source: signoz-agent.xml
+        target: signoz-agent.xml
+      - source: assets/app-icon.png
+        target: icons/signoz.png
