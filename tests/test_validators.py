@@ -101,3 +101,8 @@ def test_catalog_validation_skips_unpublished_repos(tmp_path: Path) -> None:
 
     (tmp_path / "catalog").mkdir()
     assert catalog_repo_failures(manifest, tmp_path / "catalog") == []  # type: ignore[arg-type] # nosec B101
+
+    (tmp_path / "catalog" / "example-aio.xml").write_text("<Container />\n")
+    assert catalog_repo_failures(manifest, tmp_path / "catalog") == [  # type: ignore[arg-type] # nosec B101
+        "example-aio: catalog target exists while catalog_published is false: example-aio.xml"
+    ]
