@@ -79,6 +79,13 @@ def test_simple_app_caller_keeps_repo_specific_inputs() -> None:
     assert "agent_image_name:" not in rendered  # nosec B101
 
 
+def test_simplelogin_caller_is_amd64_only() -> None:
+    rendered = _render("simplelogin-aio")
+
+    assert "publish_platforms: linux/amd64\n" in rendered  # nosec B101
+    assert "publish_platforms: linux/amd64,linux/arm64" not in rendered  # nosec B101
+
+
 def test_mem0_caller_preserves_submodule_checkout_and_publish_paths() -> None:
     rendered = _render("mem0-aio")
 

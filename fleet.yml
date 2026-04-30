@@ -59,6 +59,7 @@ repos:
     docker_cache_scope: simplelogin-aio-image
     pytest_image_tag: simplelogin-aio:pytest
     publish_profile: upstream-aio-track
+    publish_platforms: linux/amd64
     release_name: SimpleLogin-AIO
     upstream_name: SimpleLogin
     image_description: Unraid-first AIO wrapper image for SimpleLogin
