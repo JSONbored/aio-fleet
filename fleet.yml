@@ -31,8 +31,6 @@ repos:
     catalog_assets:
       - source: template-aio.xml
         target: template-aio.xml
-      - source: assets/app-icon.png
-        target: icons/template.png
   sure-aio:
     path: /Users/shadowbook/Documents/sure-aio
     public: true
@@ -107,8 +105,8 @@ repos:
     catalog_assets:
       - source: mem0-aio.xml
         target: mem0-aio.xml
-      - source: assets/app-icon.png
-        target: icons/mem0.png
+      - source: assets/mem0.jpeg
+        target: icons/mem0.jpeg
   infisical-aio:
     path: /Users/shadowbook/Documents/infisical-aio
     public: true

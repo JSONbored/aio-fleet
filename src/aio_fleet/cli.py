@@ -5,7 +5,9 @@ import difflib
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import urlparse
 
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.workflows import (
@@ -55,6 +57,74 @@ def _reusable_ref_from_caller(repo_path: Path) -> str:
     return match.group(1)
 
 
+def _catalog_target_from_icon(icon: str) -> str | None:
+    value = icon.strip()
+    if not value:
+        return None
+    if value.startswith("icons/"):
+        return value
+
+    parsed = urlparse(value)
+    path = parsed.path.lstrip("/")
+    for marker in ("/main/", "/master/"):
+        if marker in path:
+            target = path.partition(marker)[2]
+            return target if target.startswith("icons/") else None
+    return None
+
+
+def _catalog_asset_failures(repo: RepoConfig) -> list[str]:
+    assets = repo.raw.get("catalog_assets", [])
+    if not isinstance(assets, list):
+        return [f"{repo.name}: catalog_assets must be a list"]
+
+    failures: list[str] = []
+    target_sources: dict[str, str] = {}
+    xml_sources: list[str] = []
+    xml_icon_targets: set[str] = set()
+
+    for asset in assets:
+        if not isinstance(asset, dict):
+            failures.append(f"{repo.name}: catalog_assets entries must be mappings")
+            continue
+        source = str(asset.get("source", "")).strip()
+        target = str(asset.get("target", "")).strip()
+        if not source or not target:
+            failures.append(f"{repo.name}: catalog_assets entries require source and target")
+            continue
+
+        target_sources[target] = source
+        if target.endswith(".xml"):
+            xml_sources.append(source)
+        if not (repo.path / source).exists():
+            failures.append(f"{repo.name}: catalog_assets source missing: {source}")
+
+    for source in xml_sources:
+        xml_path = repo.path / source
+        if not xml_path.exists():
+            continue
+        try:
+            root = ET.parse(xml_path).getroot()
+        except ET.ParseError as exc:
+            failures.append(f"{repo.name}: unable to parse catalog XML {source}: {exc}")
+            continue
+
+        icon_target = _catalog_target_from_icon(root.findtext("Icon") or "")
+        if not icon_target:
+            continue
+        xml_icon_targets.add(icon_target)
+
+    for target in sorted(target_sources):
+        if not target.startswith("icons/"):
+            continue
+        if target not in xml_icon_targets:
+            failures.append(
+                f"{repo.name}: catalog_assets target {target} is not referenced by any catalog XML Icon"
+            )
+
+    return failures
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     failures: list[str] = []
@@ -74,6 +144,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 failures.append(
                     f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
                 )
+        failures.extend(_catalog_asset_failures(repo))
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
