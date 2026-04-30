@@ -125,6 +125,13 @@ def test_nonlocal_actions_are_pinned_to_full_commit_shas() -> None:
     assert pinned_action_failures(ROOT) == []  # nosec B101
 
 
+def test_aio_fleet_ci_runs_actionlint_without_external_integrations() -> None:
+    text = (ROOT / ".github/workflows/ci.yml").read_text()
+
+    assert "-shellcheck ''" in text  # nosec B101
+    assert "-pyflakes ''" in text  # nosec B101
+
+
 def test_release_and_upstream_reusable_workflows_exist() -> None:
     names = {path.name for path in REUSABLE_WORKFLOWS}
 
