@@ -96,6 +96,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     policy_repos: set[str] = set()
+    catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
     if args.github:
         try:
             policy_repos = set(load_policy(Path(args.policy))["repositories"])
@@ -107,14 +108,17 @@ def cmd_status(args: argparse.Namespace) -> int:
         dirty = "dirty" if status.stdout.strip() else "clean"
         drift = _run(["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"], cwd=repo.path)
         drift_state = ""
+        ahead = "?"
+        behind = "?"
         if drift.returncode == 0:
             ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
             drift_state = f" ahead={ahead} behind={behind}"
-        pr_state = ""
+        current_pr_state = ""
+        open_pr_state = ""
         policy_state = ""
         branch_name = branch.stdout.strip()
         if args.github and branch_name:
-            pr = _run(
+            current_pr = _run(
                 [
                     "gh",
                     "pr",
@@ -133,7 +137,24 @@ def cmd_status(args: argparse.Namespace) -> int:
                 ],
                 cwd=repo.path,
             )
-            pr_state = f" {pr.stdout.strip() or 'pr-unknown'}"
+            current_pr_state = f" current_pr={current_pr.stdout.strip() or 'pr-unknown'}"
+            open_prs = _run(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--repo",
+                    repo.github_repo,
+                    "--state",
+                    "open",
+                    "--json",
+                    "number",
+                    "--jq",
+                    "length",
+                ],
+                cwd=repo.path,
+            )
+            open_pr_state = f" open_prs={open_prs.stdout.strip() or 'unknown'}"
             if name not in policy_repos:
                 policy_state = " policy=manual"
             else:
@@ -142,8 +163,52 @@ def cmd_status(args: argparse.Namespace) -> int:
                     policy_state = " policy=ok" if not failures else f" policy={len(failures)}-drift"
                 except Exception as exc:
                     policy_state = f" policy=unknown:{exc}"
-        print(f"{name:22} {branch_name or '-':36} {dirty}{drift_state}{pr_state}{policy_state}")
+        catalog_state = f" {_catalog_status(repo, catalog_path)}"
+        publish_state = f" {_publish_status(repo, dirty=dirty, behind=behind, policy_state=policy_state)}"
+        print(
+            f"{name:22} {branch_name or '-':36} "
+            f"{dirty}{drift_state}{current_pr_state}{open_pr_state}{policy_state}{catalog_state}{publish_state}"
+        )
     return 0
+
+
+def _catalog_status(repo: RepoConfig, catalog_path: Path | None) -> str:
+    if repo.raw.get("catalog_published") is False:
+        return "catalog=held"
+    if catalog_path is None:
+        return "catalog=published"
+
+    missing = [
+        target
+        for target in _catalog_asset_targets(repo)
+        if target and not (catalog_path / target).exists()
+    ]
+    if missing:
+        return f"catalog=missing:{','.join(missing)}"
+    return "catalog=ok"
+
+
+def _catalog_asset_targets(repo: RepoConfig) -> list[str]:
+    assets = repo.raw.get("catalog_assets", [])
+    if not isinstance(assets, list):
+        return []
+    return [
+        str(asset.get("target", "")).strip()
+        for asset in assets
+        if isinstance(asset, dict) and str(asset.get("target", "")).strip()
+    ]
+
+
+def _publish_status(repo: RepoConfig, *, dirty: str, behind: str, policy_state: str) -> str:
+    if repo.publish_profile == "template":
+        return "publish=manual"
+    if dirty != "clean":
+        return "publish=blocked:dirty"
+    if behind not in {"0", "?"}:
+        return "publish=blocked:behind"
+    if policy_state.startswith(" policy=") and policy_state != " policy=ok":
+        return "publish=blocked:policy"
+    return "publish=source-ready"
 
 
 def cmd_render_workflow(args: argparse.Namespace) -> int:
@@ -623,6 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("--github", action="store_true")
     status.add_argument("--policy", default="infra/github/github-policy.yml")
+    status.add_argument("--catalog-path")
     status.set_defaults(func=cmd_status)
 
     render = sub.add_parser("render-workflow")
