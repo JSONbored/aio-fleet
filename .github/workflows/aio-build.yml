@@ -943,6 +943,34 @@ jobs:
         with:
           fetch-depth: 0
           submodules: ${{ inputs.checkout_submodules }}
+      - name: Resolve pinned aio-fleet ref
+        id: aio_fleet_ref
+        run: |
+          set -euo pipefail
+          ref="$(
+            python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          workflow = pathlib.Path(".github/workflows/build.yml")
+          match = re.search(
+              r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-build\.yml@([0-9a-f]{40})",
+              workflow.read_text(),
+          )
+          if not match:
+              print(f"{workflow} does not call aio-fleet at a pinned SHA", file=sys.stderr)
+              sys.exit(1)
+          print(match.group(1))
+          PY
+          )"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+      - name: Checkout aio-fleet release helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/aio-fleet
+          ref: ${{ steps.aio_fleet_ref.outputs.ref }}
+          path: .aio-fleet
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: Set up Docker Buildx
@@ -1150,6 +1178,34 @@ jobs:
         with:
           fetch-depth: 0
           submodules: ${{ inputs.checkout_submodules }}
+      - name: Resolve pinned aio-fleet ref
+        id: aio_fleet_ref
+        run: |
+          set -euo pipefail
+          ref="$(
+            python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          workflow = pathlib.Path(".github/workflows/build.yml")
+          match = re.search(
+              r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-build\.yml@([0-9a-f]{40})",
+              workflow.read_text(),
+          )
+          if not match:
+              print(f"{workflow} does not call aio-fleet at a pinned SHA", file=sys.stderr)
+              sys.exit(1)
+          print(match.group(1))
+          PY
+          )"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+      - name: Checkout aio-fleet release helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/aio-fleet
+          ref: ${{ steps.aio_fleet_ref.outputs.ref }}
+          path: .aio-fleet
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: Set up Docker Buildx

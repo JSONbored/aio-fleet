@@ -81,6 +81,21 @@ def test_reusable_build_workflow_checks_out_release_helpers_for_classification()
     assert "path: .aio-fleet" in detect_job  # nosec B101
 
 
+def test_reusable_build_workflow_checks_out_release_helpers_for_publish_jobs() -> None:
+    text = _workflow_text()
+    publish_job = text.split("  publish:", 1)[1].split("  publish-agent:", 1)[0]
+    agent_publish_job = text.split("  publish-agent:", 1)[1].split(
+        "  sync-awesome-unraid:", 1
+    )[0]
+
+    for job in (publish_job, agent_publish_job):
+        assert "Checkout aio-fleet release helpers" in job  # nosec B101
+        assert "path: .aio-fleet" in job  # nosec B101
+        assert job.index("Checkout aio-fleet release helpers") < job.index(
+            "scripts/release.py"
+        )  # nosec B101
+
+
 def test_reusable_build_workflow_runs_fleet_policy_validator() -> None:
     text = _workflow_text()
 
