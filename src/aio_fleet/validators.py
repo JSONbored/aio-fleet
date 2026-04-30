@@ -203,7 +203,7 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
             if icon_target and not (catalog_path / icon_target).exists():
                 failures.append(f"{repo.name}: catalog {target} icon missing: {icon_target}")
 
-            if source and not (repo.path / source).exists():
+            if repo.path.exists() and source and not (repo.path / source).exists():
                 failures.append(f"{repo.name}: source XML missing for catalog target {target}: {source}")
 
     return failures
