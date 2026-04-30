@@ -56,6 +56,15 @@ def test_reusable_build_workflow_owns_pytest_upload_centrally() -> None:
     assert "reports/pytest-extended-integration.xml" in text  # nosec B101
 
 
+def test_reusable_build_workflow_validates_caller_drift_centrally() -> None:
+    text = _workflow_text()
+
+    assert "Verify caller workflow drift" in text  # nosec B101
+    assert "python -m aio_fleet.cli" in text  # nosec B101
+    assert "--repo \"${{ inputs.app_slug }}\"" in text  # nosec B101
+    assert "--repo-path ." in text  # nosec B101
+
+
 def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> None:
     text = _workflow_text()
 

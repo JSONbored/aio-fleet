@@ -17,7 +17,8 @@ The first layer is reusable GitHub Actions:
 2. App repos also keep small callers for upstream checks and release workflows.
 3. Each caller pins `JSONbored/aio-fleet/.github/workflows/*.yml` to a full commit SHA.
 4. Repo-specific behavior is passed as explicit inputs from `fleet.yml`.
-5. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
+5. The reusable workflow checks the caller files against the manifest-rendered output, so workflow drift is caught centrally instead of through duplicated app-local unit tests.
+6. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
 
 Later layers are deliberately separate:
 
