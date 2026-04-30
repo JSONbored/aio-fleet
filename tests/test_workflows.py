@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from pathlib import Path
 
 import yaml
 
-from aio_fleet.manifest import load_manifest
+from aio_fleet.cli import cmd_verify_caller
+from aio_fleet.manifest import RepoConfig, load_manifest
 from aio_fleet.workflows import (
     rendered_workflows,
     render_caller_workflow,
@@ -132,3 +134,56 @@ def test_template_release_uses_semver_release_tag_command() -> None:
     release_text = next(text for path, text in rendered.items() if path.name == "release.yml")
 
     assert "previous_tag_command: latest-release-tag" in release_text  # nosec B101
+
+
+def _repo_in_tmp(repo_name: str, tmp_path: Path) -> RepoConfig:
+    manifest = load_manifest(ROOT / "fleet.yml")
+    repo = manifest.repo(repo_name)
+    raw = dict(repo.raw)
+    raw["path"] = str(tmp_path)
+    return RepoConfig(name=repo.name, raw=raw, defaults=repo.defaults, owner=repo.owner)
+
+
+def _write_rendered_workflows(repo_name: str, tmp_path: Path) -> None:
+    manifest = load_manifest(ROOT / "fleet.yml")
+    repo = _repo_in_tmp(repo_name, tmp_path)
+    for path, text in rendered_workflows(manifest, repo, PINNED_REF).items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+def test_verify_caller_accepts_generated_workflows(tmp_path: Path) -> None:
+    _write_rendered_workflows("sure-aio", tmp_path)
+
+    result = cmd_verify_caller(
+        Namespace(
+            manifest=str(ROOT / "fleet.yml"),
+            repo="sure-aio",
+            repo_path=str(tmp_path),
+            ref=PINNED_REF,
+            diff=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+
+
+def test_verify_caller_rejects_drifted_workflows(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_rendered_workflows("sure-aio", tmp_path)
+    (tmp_path / ".github" / "workflows" / "build.yml").write_text("name: drifted\n")
+
+    result = cmd_verify_caller(
+        Namespace(
+            manifest=str(ROOT / "fleet.yml"),
+            repo="sure-aio",
+            repo_path=str(tmp_path),
+            ref=PINNED_REF,
+            diff=True,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert "build.yml: out of date with aio-fleet manifest" in capsys.readouterr().err  # nosec B101

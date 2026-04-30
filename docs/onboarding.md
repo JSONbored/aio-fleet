@@ -33,6 +33,7 @@ After editing `fleet.yml`:
 ```bash
 python -m aio_fleet render-workflow <repo> --ref <aio-fleet-commit-sha>
 python -m aio_fleet sync-workflows --repo <repo> --ref <aio-fleet-commit-sha>
+python -m aio_fleet verify-caller --repo <repo> --repo-path ../<repo> --ref <aio-fleet-commit-sha>
 python -m aio_fleet doctor
 ```
 

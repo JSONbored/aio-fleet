@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-from aio_fleet.manifest import FleetManifest, RepoConfig, load_manifest
+from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.workflows import (
     rendered_workflows,
     render_caller_workflow,
@@ -27,6 +28,31 @@ def _current_ref() -> str:
     if result.returncode != 0:
         return "main"
     return result.stdout.strip()
+
+
+def _repo_for_identifier(manifest: FleetManifest, identifier: str) -> RepoConfig:
+    if identifier in manifest.repos:
+        return manifest.repo(identifier)
+    matches = [repo for repo in manifest.repos.values() if repo.app_slug == identifier]
+    if len(matches) == 1:
+        return matches[0]
+    raise ManifestError(f"unknown repo or app slug in fleet.yml: {identifier}")
+
+
+def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:
+    raw = dict(repo.raw)
+    raw["path"] = str(path)
+    return RepoConfig(name=repo.name, raw=raw, defaults=repo.defaults, owner=repo.owner)
+
+
+def _reusable_ref_from_caller(repo_path: Path) -> str:
+    workflow = repo_path / ".github" / "workflows" / "build.yml"
+    if not workflow.exists():
+        raise ManifestError(f"caller workflow missing: {workflow}")
+    match = PINNED_REUSABLE_WORKFLOW.search(workflow.read_text())
+    if not match:
+        raise ManifestError(f"{workflow} does not call aio-fleet at a pinned SHA")
+    return match.group(1)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -187,6 +213,41 @@ def cmd_sync_workflows(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify_caller(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    repo_path = Path(args.repo_path).resolve()
+    ref = args.ref or _reusable_ref_from_caller(repo_path)
+    repo_at_path = _repo_with_path(repo, repo_path)
+    failures: list[str] = []
+
+    for path, expected in rendered_workflows(manifest, repo_at_path, ref).items():
+        relative = path.relative_to(repo_path)
+        if not path.exists():
+            failures.append(f"{relative}: missing generated caller workflow")
+            continue
+        current = path.read_text()
+        if current == expected:
+            continue
+        failures.append(f"{relative}: out of date with aio-fleet manifest")
+        if args.diff:
+            failures.extend(
+                difflib.unified_diff(
+                    current.splitlines(),
+                    expected.splitlines(),
+                    fromfile=f"current/{relative}",
+                    tofile=f"expected/{relative}",
+                    lineterm="",
+                )
+            )
+
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print(f"{repo.name} caller workflows match aio-fleet@{ref}")
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = manifest.repos.values() if args.all else [manifest.repo(args.repo)]
@@ -232,6 +293,13 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--draft", action="store_true")
     sync.add_argument("--dry-run", action="store_true")
     sync.set_defaults(func=cmd_sync_workflows)
+
+    verify = sub.add_parser("verify-caller")
+    verify.add_argument("--repo", required=True)
+    verify.add_argument("--repo-path", default=".")
+    verify.add_argument("--ref")
+    verify.add_argument("--diff", action="store_true")
+    verify.set_defaults(func=cmd_verify_caller)
 
     validate = sub.add_parser("validate")
     validate.add_argument("--all", action="store_true")

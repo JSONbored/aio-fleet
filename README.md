@@ -24,6 +24,7 @@ python -m pip install -e ".[dev]"
 python -m aio_fleet doctor
 python -m aio_fleet status --github
 python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
+python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all
 python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>
 ```
