@@ -219,7 +219,8 @@ def render_prepare_release_workflow(
     *,
     component: str = "",
 ) -> str:
-    release_name = _release_name(repo, component)
+    release_component = "signoz-aio" if repo.is_signoz_suite and not component else component
+    release_name = _release_name(repo, release_component)
     uses = _uses(manifest, ".github/workflows/aio-prepare-release.yml", reusable_ref)
     previous_tag_command = repo.get(
         "previous_tag_command",
@@ -241,8 +242,8 @@ jobs:
       pull-requests: write
     with:
       release_name: {release_name}
-      component: {_empty_safe(component)}
-      component_label: {_empty_safe(component)}
+      component: {_empty_safe(release_component)}
+      component_label: {_empty_safe(release_component)}
       previous_tag_command: {previous_tag_command}
     secrets: inherit
 """
@@ -255,7 +256,8 @@ def render_publish_release_workflow(
     *,
     component: str = "",
 ) -> str:
-    release_name = _release_name(repo, component)
+    release_component = "signoz-aio" if repo.is_signoz_suite and not component else component
+    release_name = _release_name(repo, release_component)
     uses = _uses(manifest, ".github/workflows/aio-publish-release.yml", reusable_ref)
     return f"""name: Publish Release / {release_name}
 
@@ -273,7 +275,7 @@ jobs:
       contents: write
     with:
       release_name: {release_name}
-      component: {_empty_safe(component)}
+      component: {_empty_safe(release_component)}
       workflow_selector: build.yml
     secrets: inherit
 """

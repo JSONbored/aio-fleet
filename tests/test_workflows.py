@@ -118,6 +118,8 @@ def test_signoz_release_callers_keep_component_lanes() -> None:
 
     assert "release-agent.yml" in text_by_name  # nosec B101
     assert "publish-release-agent.yml" in text_by_name  # nosec B101
+    assert "component: signoz-aio" in text_by_name["release.yml"]  # nosec B101
+    assert "component: signoz-aio" in text_by_name["publish-release.yml"]  # nosec B101
     assert "component: signoz-agent" in text_by_name["release-agent.yml"]  # nosec B101
     assert "component: signoz-agent" in text_by_name["publish-release-agent.yml"]  # nosec B101
     assert "component_matrix: '[\"signoz-aio\", \"signoz-agent\"]'" in text_by_name["check-upstream.yml"]  # nosec B101
