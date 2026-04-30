@@ -50,6 +50,8 @@ def sync_boilerplate(
         if not dry_run:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(desired)
+            if source.stat().st_mode & 0o111:
+                target.chmod(target.stat().st_mode | 0o111)
 
     return changes
 

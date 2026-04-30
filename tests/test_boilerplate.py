@@ -64,6 +64,29 @@ profiles:
     assert (repo_path / ".github" / "pull_request_template.md").read_text() == "## Summary\n"  # nosec B101
 
 
+def test_sync_boilerplate_preserves_executable_source_mode(tmp_path: Path) -> None:
+    config = tmp_path / "boilerplate.yml"
+    source = tmp_path / "boilerplate" / "common" / "scripts" / "validate-derived-repo.sh"
+    source.parent.mkdir(parents=True)
+    source.write_text("#!/usr/bin/env bash\n")
+    source.chmod(0o755)
+    config.write_text(
+        """
+profiles:
+  aio:
+    files:
+      - source: boilerplate/common/scripts/validate-derived-repo.sh
+        target: scripts/validate-derived-repo.sh
+"""
+    )
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    sync_boilerplate(_repo(repo_path), config_path=config, profile="aio", dry_run=False)
+
+    assert (repo_path / "scripts" / "validate-derived-repo.sh").stat().st_mode & 0o111  # nosec B101
+
+
 def test_sync_boilerplate_honors_repo_filters_and_templates(tmp_path: Path) -> None:
     config = tmp_path / "boilerplate.yml"
     source = tmp_path / "boilerplate" / "aio" / "SECURITY.md"

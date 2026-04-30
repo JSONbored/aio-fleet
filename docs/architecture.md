@@ -24,7 +24,10 @@ The first layer is reusable GitHub Actions:
 Current and later layers are deliberately separate:
 
 - OpenTofu manages public GitHub-owned state: repository settings, branch protections, topics, descriptions, selected action allowlists, vulnerability alerts, and declared Actions variables/secrets names. v1 uses local state and keeps `unraid-aio-template` documented/manual because private-repo branch protection access is blocked by current API access.
-- `sync-boilerplate` and later Copier should manage reusable repo boilerplate: docs patterns, tests, issue templates, support-thread templates, and shared helper scripts.
+- `sync-boilerplate` manages reusable repo boilerplate: docs patterns, tests,
+  issue templates, support-thread templates, and shared compatibility shims.
+  App-local `scripts/validate-derived-repo.sh` files should stay thin and call
+  `aio-fleet validate-derived`; app-specific XML/env validation remains local.
 - `sync-catalog` moves manifest-declared XML/icon assets into `awesome-unraid`, refuses unpublished XML, and supports icon-only staged launches.
 - App runtime surfaces stay app-local until there is a proven shared abstraction.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,41 @@ PINNED_REUSABLE_WORKFLOW = re.compile(
 ACTION_REF = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
 SHA_REF = re.compile(r"^[0-9a-f]{40}$")
 CATALOG_RAW_PREFIX = "https://raw.githubusercontent.com/"
+
+DERIVED_REQUIRED_FILES = [
+    "Dockerfile",
+    "README.md",
+    "pyproject.toml",
+    "tests/template/test_validate_template.py",
+    "tests/integration/test_container_runtime.py",
+    "scripts/validate-template.py",
+    "scripts/update-template-changes.py",
+    ".github/FUNDING.yml",
+    "SECURITY.md",
+    ".github/pull_request_template.md",
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/feature_request.yml",
+    ".github/ISSUE_TEMPLATE/installation_help.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    "renovate.json",
+]
+
+PLACEHOLDER_CHECKS = [
+    ("Dockerfile", "Replace this starter base with the real upstream image once the derived repo is wired."),
+]
+
+XML_PLACEHOLDER_CHECKS = [
+    "yourapp-aio",
+    "Replace this overview with the real app description and first-run guidance.",
+    "replace-with-real-search-terms",
+    "Replace this with any real operational prerequisites or remove it.",
+    "https://github.com/JSONbored/yourapp-aio/releases",
+]
+
+SERVICE_PLACEHOLDER_FILES = [
+    "rootfs/etc/services.d/app/run",
+    "rootfs/usr/local/bin/aio-template-app.py",
+]
 
 
 def catalog_target_from_icon(icon: str) -> str | None:
@@ -166,6 +202,49 @@ def repo_policy_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]
     ]
 
 
+def derived_repo_failures(
+    repo_path: Path,
+    *,
+    strict_placeholders: bool = False,
+    template_xml: str | None = None,
+) -> list[str]:
+    failures: list[str] = []
+    repo_path = repo_path.resolve()
+
+    for required in DERIVED_REQUIRED_FILES:
+        _require_file(repo_path, required, failures)
+    if (repo_path / "components.toml").exists():
+        _require_file(repo_path, "scripts/components.py", failures)
+    _require_absent(repo_path, ".github/CODEOWNERS", failures)
+
+    template_xml = template_xml or _effective_template_xml(repo_path)
+    component_templates = _component_templates(repo_path, failures)
+    is_template_repo = _is_template_repo(repo_path)
+
+    if template_xml:
+        _require_file(repo_path, template_xml, failures)
+        if not is_template_repo:
+            _require_absent(repo_path, "template-aio.xml", failures)
+
+    xml_files = [template for template in component_templates if _require_file(repo_path, template, failures)]
+    if template_xml and (repo_path / template_xml).is_file():
+        xml_files.append(template_xml)
+
+    if strict_placeholders:
+        for relative_path, placeholder in PLACEHOLDER_CHECKS:
+            _check_no_placeholder(repo_path, placeholder, [relative_path], failures)
+        for placeholder in XML_PLACEHOLDER_CHECKS:
+            _check_no_placeholder(repo_path, placeholder, xml_files, failures)
+        _check_no_placeholder(
+            repo_path,
+            "aio-template starter app",
+            SERVICE_PLACEHOLDER_FILES,
+            failures,
+        )
+
+    return failures
+
+
 def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[str]:
     failures: list[str] = []
     catalog_repo = str(manifest.raw.get("awesome_unraid_repository", "JSONbored/awesome-unraid"))
@@ -207,6 +286,67 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
                 failures.append(f"{repo.name}: source XML missing for catalog target {target}: {source}")
 
     return failures
+
+
+def _require_file(repo_path: Path, relative_path: str, failures: list[str]) -> bool:
+    if not (repo_path / relative_path).is_file():
+        failures.append(f"missing required file: {relative_path}")
+        return False
+    return True
+
+
+def _require_absent(repo_path: Path, relative_path: str, failures: list[str]) -> None:
+    if (repo_path / relative_path).exists():
+        failures.append(f"remove template placeholder path in derived repo: {relative_path}")
+
+
+def _effective_template_xml(repo_path: Path) -> str:
+    root_xml_files = sorted(path.name for path in repo_path.glob("*.xml") if path.is_file())
+    inferred_repo_xml = f"{repo_path.name}.xml"
+    if (repo_path / inferred_repo_xml).is_file():
+        return inferred_repo_xml
+    return root_xml_files[0] if len(root_xml_files) == 1 else ""
+
+
+def _component_templates(repo_path: Path, failures: list[str]) -> list[str]:
+    components_path = repo_path / "components.toml"
+    if not components_path.exists():
+        return []
+    try:
+        data = tomllib.loads(components_path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        failures.append(f"unable to parse components.toml: {exc}")
+        return []
+    components = data.get("components", {})
+    if not isinstance(components, dict):
+        failures.append("components.toml must contain a [components] table")
+        return []
+    templates: list[str] = []
+    for name, config in components.items():
+        if not isinstance(config, dict):
+            failures.append(f"components.toml component {name} must be a table")
+            continue
+        template = str(config.get("template", "")).strip()
+        if template:
+            templates.append(template)
+    return templates
+
+
+def _is_template_repo(repo_path: Path) -> bool:
+    workflow = repo_path / ".github" / "workflows" / "publish-release.yml"
+    return workflow.exists() and "Publish Release / Template" in workflow.read_text()
+
+
+def _check_no_placeholder(
+    repo_path: Path,
+    placeholder: str,
+    relative_paths: list[str],
+    failures: list[str],
+) -> None:
+    existing_paths = [repo_path / path for path in relative_paths if (repo_path / path).exists()]
+    for path in existing_paths:
+        if placeholder in path.read_text(errors="ignore"):
+            failures.append(f"found unresolved placeholder '{placeholder}' in: {path.relative_to(repo_path)}")
 
 
 def _catalog_xml_assets(repo: RepoConfig) -> list[tuple[str, str]]:

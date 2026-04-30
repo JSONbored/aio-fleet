@@ -32,6 +32,7 @@ python -m aio_fleet status --github --catalog-path ../awesome-unraid
 python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all
+python -m aio_fleet validate-derived --repo-path ../sure-aio
 python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
 python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
 python -m aio_fleet validate-github --check-secrets
