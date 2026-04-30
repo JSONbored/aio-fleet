@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import tomllib
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
+from xml.etree.ElementTree import Element, ParseError  # nosec B405
+
+import defusedxml.ElementTree as DefusedET
 
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
@@ -35,7 +37,10 @@ DERIVED_REQUIRED_FILES = [
 ]
 
 PLACEHOLDER_CHECKS = [
-    ("Dockerfile", "Replace this starter base with the real upstream image once the derived repo is wired."),
+    (
+        "Dockerfile",
+        "Replace this starter base with the real upstream image once the derived repo is wired.",
+    ),
 ]
 
 XML_PLACEHOLDER_CHECKS = [
@@ -85,7 +90,9 @@ def catalog_asset_failures(repo: RepoConfig) -> list[str]:
         source = str(asset.get("source", "")).strip()
         target = str(asset.get("target", "")).strip()
         if not source or not target:
-            failures.append(f"{repo.name}: catalog_assets entries require source and target")
+            failures.append(
+                f"{repo.name}: catalog_assets entries require source and target"
+            )
             continue
 
         target_sources[target] = source
@@ -117,14 +124,24 @@ def catalog_asset_failures(repo: RepoConfig) -> list[str]:
 def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]:
     failures: list[str] = []
     xml_assets = _catalog_xml_assets(repo)
-    catalog_repo = str(manifest.raw.get("awesome_unraid_repository", "JSONbored/awesome-unraid"))
+    catalog_repo = str(
+        manifest.raw.get("awesome_unraid_repository", "JSONbored/awesome-unraid")
+    )
 
     for source, target in xml_assets:
         root = _parse_xml(repo, source, failures)
         if root is None:
             continue
 
-        for field in ["Name", "Project", "Support", "Overview", "Category", "TemplateURL", "Icon"]:
+        for field in [
+            "Name",
+            "Project",
+            "Support",
+            "Overview",
+            "Category",
+            "TemplateURL",
+            "Icon",
+        ]:
             if not (root.findtext(field) or "").strip():
                 failures.append(f"{repo.name}: {source} missing non-empty <{field}>")
 
@@ -139,8 +156,12 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
             )
 
         icon = (root.findtext("Icon") or "").strip()
-        if icon and not icon.startswith(f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/icons/"):
-            failures.append(f"{repo.name}: {source} Icon must point at {catalog_repo}/main/icons/")
+        if icon and not icon.startswith(
+            f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/icons/"
+        ):
+            failures.append(
+                f"{repo.name}: {source} Icon must point at {catalog_repo}/main/icons/"
+            )
 
     return failures
 
@@ -226,7 +247,11 @@ def derived_repo_failures(
         if not is_template_repo:
             _require_absent(repo_path, "template-aio.xml", failures)
 
-    xml_files = [template for template in component_templates if _require_file(repo_path, template, failures)]
+    xml_files = [
+        template
+        for template in component_templates
+        if _require_file(repo_path, template, failures)
+    ]
     if template_xml and (repo_path / template_xml).is_file():
         xml_files.append(template_xml)
 
@@ -247,7 +272,9 @@ def derived_repo_failures(
 
 def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[str]:
     failures: list[str] = []
-    catalog_repo = str(manifest.raw.get("awesome_unraid_repository", "JSONbored/awesome-unraid"))
+    catalog_repo = str(
+        manifest.raw.get("awesome_unraid_repository", "JSONbored/awesome-unraid")
+    )
 
     if not catalog_path.exists():
         return [f"catalog path missing: {catalog_path}"]
@@ -256,7 +283,9 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
         if repo.raw.get("catalog_published") is False:
             for _source, target in _catalog_xml_assets(repo):
                 if (catalog_path / target).exists():
-                    failures.append(f"{repo.name}: catalog target exists while catalog_published is false: {target}")
+                    failures.append(
+                        f"{repo.name}: catalog target exists while catalog_published is false: {target}"
+                    )
             continue
         for source, target in _catalog_xml_assets(repo):
             xml_path = catalog_path / target
@@ -267,9 +296,19 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
             if root is None:
                 continue
 
-            for field in ["Name", "Project", "Support", "Overview", "Category", "TemplateURL", "Icon"]:
+            for field in [
+                "Name",
+                "Project",
+                "Support",
+                "Overview",
+                "Category",
+                "TemplateURL",
+                "Icon",
+            ]:
                 if not (root.findtext(field) or "").strip():
-                    failures.append(f"{repo.name}: catalog {target} missing non-empty <{field}>")
+                    failures.append(
+                        f"{repo.name}: catalog {target} missing non-empty <{field}>"
+                    )
 
             expected_template_url = f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/{target}"
             template_url = (root.findtext("TemplateURL") or "").strip()
@@ -280,10 +319,14 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
 
             icon_target = catalog_target_from_icon(root.findtext("Icon") or "")
             if icon_target and not (catalog_path / icon_target).exists():
-                failures.append(f"{repo.name}: catalog {target} icon missing: {icon_target}")
+                failures.append(
+                    f"{repo.name}: catalog {target} icon missing: {icon_target}"
+                )
 
             if repo.path.exists() and source and not (repo.path / source).exists():
-                failures.append(f"{repo.name}: source XML missing for catalog target {target}: {source}")
+                failures.append(
+                    f"{repo.name}: source XML missing for catalog target {target}: {source}"
+                )
 
     return failures
 
@@ -297,11 +340,15 @@ def _require_file(repo_path: Path, relative_path: str, failures: list[str]) -> b
 
 def _require_absent(repo_path: Path, relative_path: str, failures: list[str]) -> None:
     if (repo_path / relative_path).exists():
-        failures.append(f"remove template placeholder path in derived repo: {relative_path}")
+        failures.append(
+            f"remove template placeholder path in derived repo: {relative_path}"
+        )
 
 
 def _effective_template_xml(repo_path: Path) -> str:
-    root_xml_files = sorted(path.name for path in repo_path.glob("*.xml") if path.is_file())
+    root_xml_files = sorted(
+        path.name for path in repo_path.glob("*.xml") if path.is_file()
+    )
     inferred_repo_xml = f"{repo_path.name}.xml"
     if (repo_path / inferred_repo_xml).is_file():
         return inferred_repo_xml
@@ -343,10 +390,14 @@ def _check_no_placeholder(
     relative_paths: list[str],
     failures: list[str],
 ) -> None:
-    existing_paths = [repo_path / path for path in relative_paths if (repo_path / path).exists()]
+    existing_paths = [
+        repo_path / path for path in relative_paths if (repo_path / path).exists()
+    ]
     for path in existing_paths:
         if placeholder in path.read_text(errors="ignore"):
-            failures.append(f"found unresolved placeholder '{placeholder}' in: {path.relative_to(repo_path)}")
+            failures.append(
+                f"found unresolved placeholder '{placeholder}' in: {path.relative_to(repo_path)}"
+            )
 
 
 def _catalog_xml_assets(repo: RepoConfig) -> list[tuple[str, str]]:
@@ -356,17 +407,18 @@ def _catalog_xml_assets(repo: RepoConfig) -> list[tuple[str, str]]:
     return [
         (str(asset.get("source", "")).strip(), str(asset.get("target", "")).strip())
         for asset in assets
-        if isinstance(asset, dict) and str(asset.get("target", "")).strip().endswith(".xml")
+        if isinstance(asset, dict)
+        and str(asset.get("target", "")).strip().endswith(".xml")
     ]
 
 
-def _parse_xml(repo: RepoConfig, source: str, failures: list[str]) -> ET.Element | None:
+def _parse_xml(repo: RepoConfig, source: str, failures: list[str]) -> Element | None:
     xml_path = repo.path / source
     if not xml_path.exists():
         return None
     try:
-        return ET.parse(xml_path).getroot()
-    except ET.ParseError as exc:
+        return DefusedET.parse(xml_path).getroot()
+    except ParseError as exc:
         failures.append(f"{repo.name}: unable to parse catalog XML {source}: {exc}")
         return None
 
@@ -376,16 +428,20 @@ def _parse_catalog_xml(
     target: str,
     xml_path: Path,
     failures: list[str],
-) -> ET.Element | None:
+) -> Element | None:
     try:
-        return ET.parse(xml_path).getroot()
-    except ET.ParseError as exc:
+        return DefusedET.parse(xml_path).getroot()
+    except ParseError as exc:
         failures.append(f"{repo_name}: unable to parse catalog XML {target}: {exc}")
         return None
 
 
 def _platforms(repo: RepoConfig) -> set[str]:
-    return {item.strip() for item in str(repo.get("publish_platforms", "")).split(",") if item.strip()}
+    return {
+        item.strip()
+        for item in str(repo.get("publish_platforms", "")).split(",")
+        if item.strip()
+    }
 
 
 def _dockerfile_mentions_arm64(text: str) -> bool:

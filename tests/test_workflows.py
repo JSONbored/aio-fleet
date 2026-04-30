@@ -8,8 +8,9 @@ import yaml
 from aio_fleet.cli import cmd_verify_caller
 from aio_fleet.manifest import RepoConfig, load_manifest
 from aio_fleet.workflows import (
-    rendered_workflows,
     render_caller_workflow,
+    render_check_upstream_workflow,
+    rendered_workflows,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ def _render(repo_name: str) -> str:
 
 
 def _parse(text: str) -> dict[str, object]:
-    return yaml.load(text, Loader=yaml.BaseLoader)
+    return yaml.load(text, Loader=yaml.BaseLoader)  # nosec B506
 
 
 def test_rendered_callers_use_pinned_reusable_workflow() -> None:
@@ -102,15 +103,33 @@ def test_caller_paths_include_shared_boilerplate_surfaces() -> None:
     assert "SECURITY.md" in rendered  # nosec B101
 
 
+def test_caller_paths_quote_only_yaml_special_values() -> None:
+    rendered = _render("dify-aio")
+
+    assert '      - ".github/**"' not in rendered  # nosec B101
+    assert "      - .github/**" in rendered  # nosec B101
+    assert '      - "*.xml"' in rendered  # nosec B101
+
+
 def test_dify_caller_exposes_manual_extended_integration_input() -> None:
     rendered = _render("dify-aio")
 
     assert "catalog_published: true" in rendered  # nosec B101
+    assert "#checkov:skip=CKV_GHA_7" in rendered  # nosec B101
     assert "run_extended_integration:" in rendered  # nosec B101
     assert "type: boolean" in rendered  # nosec B101
-    assert "run_extended_integration: ${{ github.event_name == 'workflow_dispatch'" in rendered  # nosec B101
-    assert "extended_integration_pytest_args: tests/integration -m extended_integration" in rendered  # nosec B101
-    assert "generator_check_command: python3 scripts/generate_dify_template.py --check" in rendered  # nosec B101
+    assert (
+        "run_extended_integration: ${{ github.event_name == 'workflow_dispatch'"
+        in rendered
+    )  # nosec B101
+    assert (
+        "extended_integration_pytest_args: tests/integration -m extended_integration"
+        in rendered
+    )  # nosec B101
+    assert (
+        "generator_check_command: python3 scripts/generate_dify_template.py --check"
+        in rendered
+    )  # nosec B101
 
 
 def test_signoz_caller_keeps_component_publish_inputs() -> None:
@@ -123,10 +142,19 @@ def test_signoz_caller_keeps_component_publish_inputs() -> None:
     assert "upstream_digest_arg: UPSTREAM_SIGNOZ_DIGEST" in rendered  # nosec B101
     assert "agent_image_name: jsonbored/signoz-agent" in rendered  # nosec B101
     assert "agent_context: components/signoz-agent" in rendered  # nosec B101
-    assert "agent_dockerfile: components/signoz-agent/Dockerfile" in rendered  # nosec B101
-    assert "agent_integration_pytest_args: tests/integration_agent -m integration" in rendered  # nosec B101
+    assert (
+        "agent_dockerfile: components/signoz-agent/Dockerfile" in rendered
+    )  # nosec B101
+    assert (
+        "agent_integration_pytest_args: tests/integration_agent -m integration"
+        in rendered
+    )  # nosec B101
     assert inputs["agent_image_name"] == "jsonbored/signoz-agent"  # nosec B101
-    assert inputs["catalog_assets"].strip().endswith("assets/app-icon.png|icons/signoz.png")  # nosec B101
+    assert (
+        inputs["catalog_assets"]
+        .strip()
+        .endswith("assets/app-icon.png|icons/signoz.png")
+    )  # nosec B101
 
 
 def test_signoz_release_callers_keep_component_lanes() -> None:
@@ -139,17 +167,38 @@ def test_signoz_release_callers_keep_component_lanes() -> None:
     assert "component: signoz-aio" in text_by_name["release.yml"]  # nosec B101
     assert "component: signoz-aio" in text_by_name["publish-release.yml"]  # nosec B101
     assert "component: signoz-agent" in text_by_name["release-agent.yml"]  # nosec B101
-    assert "component: signoz-agent" in text_by_name["publish-release-agent.yml"]  # nosec B101
-    assert "component_matrix: '[\"signoz-aio\", \"signoz-agent\"]'" in text_by_name["check-upstream.yml"]  # nosec B101
-    assert "components/signoz-agent/Dockerfile" in text_by_name["check-upstream.yml"]  # nosec B101
+    assert (
+        "component: signoz-agent" in text_by_name["publish-release-agent.yml"]
+    )  # nosec B101
+    assert (
+        'component_matrix: \'["signoz-aio", "signoz-agent"]\''
+        in text_by_name["check-upstream.yml"]
+    )  # nosec B101
+    assert (
+        "components/signoz-agent/Dockerfile" in text_by_name["check-upstream.yml"]
+    )  # nosec B101
 
 
 def test_template_release_uses_semver_release_tag_command() -> None:
     manifest = load_manifest(ROOT / "fleet.yml")
-    rendered = rendered_workflows(manifest, manifest.repo("unraid-aio-template"), PINNED_REF)
-    release_text = next(text for path, text in rendered.items() if path.name == "release.yml")
+    rendered = rendered_workflows(
+        manifest, manifest.repo("unraid-aio-template"), PINNED_REF
+    )
+    release_text = next(
+        text for path, text in rendered.items() if path.name == "release.yml"
+    )
 
     assert "previous_tag_command: latest-release-tag" in release_text  # nosec B101
+
+
+def test_check_upstream_cron_is_not_redundantly_quoted() -> None:
+    manifest = load_manifest(ROOT / "fleet.yml")
+    rendered = render_check_upstream_workflow(
+        manifest, manifest.repo("sure-aio"), PINNED_REF
+    )
+
+    assert 'cron: "23 7 * * 1"' not in rendered  # nosec B101
+    assert "cron: 23 7 * * 1" in rendered  # nosec B101
 
 
 def _repo_in_tmp(repo_name: str, tmp_path: Path) -> RepoConfig:
@@ -202,4 +251,6 @@ def test_verify_caller_rejects_drifted_workflows(
     )
 
     assert result == 1  # nosec B101
-    assert "build.yml: out of date with aio-fleet manifest" in capsys.readouterr().err  # nosec B101
+    assert (
+        "build.yml: out of date with aio-fleet manifest" in capsys.readouterr().err
+    )  # nosec B101

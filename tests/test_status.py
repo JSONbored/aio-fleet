@@ -33,18 +33,27 @@ def test_catalog_status_reports_missing_catalog_assets(tmp_path: Path) -> None:
 
 
 def test_catalog_status_respects_unpublished_repos(tmp_path: Path) -> None:
-    assert _catalog_status(_repo(tmp_path, catalog_published=False), tmp_path) == "catalog=held"  # nosec B101
+    assert (
+        _catalog_status(_repo(tmp_path, catalog_published=False), tmp_path)
+        == "catalog=held"
+    )  # nosec B101
 
 
 def test_publish_status_blocks_dirty_or_drifted_repos(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
 
-    assert _publish_status(repo, dirty="dirty", behind="0", policy_state=" policy=ok") == (  # nosec B101
+    assert _publish_status(
+        repo, dirty="dirty", behind="0", policy_state=" policy=ok"
+    ) == (  # nosec B101
         "publish=blocked:dirty"
     )
-    assert _publish_status(repo, dirty="clean", behind="1", policy_state=" policy=ok") == (  # nosec B101
+    assert _publish_status(
+        repo, dirty="clean", behind="1", policy_state=" policy=ok"
+    ) == (  # nosec B101
         "publish=blocked:behind"
     )
-    assert _publish_status(repo, dirty="clean", behind="0", policy_state=" policy=ok") == (  # nosec B101
+    assert _publish_status(
+        repo, dirty="clean", behind="0", policy_state=" policy=ok"
+    ) == (  # nosec B101
         "publish=source-ready"
     )

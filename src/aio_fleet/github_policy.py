@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import shutil
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,9 @@ def validate_github_policy(
     return failures
 
 
-def _repository_failures(owner: str, repo_name: str, policy: dict[str, Any]) -> list[str]:
+def _repository_failures(
+    owner: str, repo_name: str, policy: dict[str, Any]
+) -> list[str]:
     expected = dict(policy.get("repository", {}))
     if not expected:
         return []
@@ -62,11 +65,15 @@ def _repository_failures(owner: str, repo_name: str, policy: dict[str, Any]) -> 
     }
     for key, actual in comparisons.items():
         if key in expected and actual != expected[key]:
-            failures.append(f"{repo_name}: repository {key} expected {expected[key]!r}, got {actual!r}")
+            failures.append(
+                f"{repo_name}: repository {key} expected {expected[key]!r}, got {actual!r}"
+            )
     return failures
 
 
-def _branch_protection_failures(owner: str, repo_name: str, policy: dict[str, Any]) -> list[str]:
+def _branch_protection_failures(
+    owner: str, repo_name: str, policy: dict[str, Any]
+) -> list[str]:
     expected = dict(policy.get("branch_protection", {}))
     if not expected:
         return []
@@ -82,38 +89,55 @@ def _branch_protection_failures(owner: str, repo_name: str, policy: dict[str, An
         )
 
     strict = data.get("required_status_checks", {}).get("strict")
-    if "strict_required_status_checks" in expected and strict != expected["strict_required_status_checks"]:
-        failures.append(f"{repo_name}: required status strict expected {expected['strict_required_status_checks']}, got {strict}")
+    if (
+        "strict_required_status_checks" in expected
+        and strict != expected["strict_required_status_checks"]
+    ):
+        failures.append(
+            f"{repo_name}: required status strict expected {expected['strict_required_status_checks']}, got {strict}"
+        )
 
     checks = {
         "enforce_admins": data.get("enforce_admins", {}).get("enabled"),
-        "require_conversation_resolution": data.get("required_conversation_resolution", {}).get("enabled"),
+        "require_conversation_resolution": data.get(
+            "required_conversation_resolution", {}
+        ).get("enabled"),
         "require_signed_commits": data.get("required_signatures", {}).get("enabled"),
-        "required_approving_review_count": data.get("required_pull_request_reviews", {}).get(
-            "required_approving_review_count"
-        ),
+        "required_approving_review_count": data.get(
+            "required_pull_request_reviews", {}
+        ).get("required_approving_review_count"),
     }
     for key, actual in checks.items():
         if key in expected and actual != expected[key]:
-            failures.append(f"{repo_name}: branch protection {key} expected {expected[key]!r}, got {actual!r}")
+            failures.append(
+                f"{repo_name}: branch protection {key} expected {expected[key]!r}, got {actual!r}"
+            )
     return failures
 
 
-def _action_permission_failures(owner: str, repo_name: str, policy: dict[str, Any]) -> list[str]:
+def _action_permission_failures(
+    owner: str, repo_name: str, policy: dict[str, Any]
+) -> list[str]:
     expected = dict(policy.get("actions", {}))
     if not expected:
         return []
     permissions = _gh_json(["api", f"repos/{owner}/{repo_name}/actions/permissions"])
-    selected = _gh_json(["api", f"repos/{owner}/{repo_name}/actions/permissions/selected-actions"])
+    selected = _gh_json(
+        ["api", f"repos/{owner}/{repo_name}/actions/permissions/selected-actions"]
+    )
     failures: list[str] = []
 
     for key in ["enabled", "allowed_actions", "sha_pinning_required"]:
         if key in expected and permissions.get(key) != expected[key]:
-            failures.append(f"{repo_name}: actions {key} expected {expected[key]!r}, got {permissions.get(key)!r}")
+            failures.append(
+                f"{repo_name}: actions {key} expected {expected[key]!r}, got {permissions.get(key)!r}"
+            )
 
     for key in ["github_owned_allowed", "verified_allowed"]:
         if key in expected and selected.get(key) != expected[key]:
-            failures.append(f"{repo_name}: selected actions {key} expected {expected[key]!r}, got {selected.get(key)!r}")
+            failures.append(
+                f"{repo_name}: selected actions {key} expected {expected[key]!r}, got {selected.get(key)!r}"
+            )
 
     expected_patterns = set(str(item) for item in expected.get("patterns_allowed", []))
     actual_patterns = set(str(item) for item in selected.get("patterns_allowed", []))
@@ -129,14 +153,23 @@ def _secret_failures(owner: str, repo_name: str, policy: dict[str, Any]) -> list
     required = {str(item) for item in policy.get("required_secrets", [])}
     if not required:
         return []
-    data = _gh_json(["secret", "list", "--repo", f"{owner}/{repo_name}", "--json", "name"])
+    data = _gh_json(
+        ["secret", "list", "--repo", f"{owner}/{repo_name}", "--json", "name"]
+    )
     present = {str(item["name"]) for item in data}
     missing = sorted(required - present)
-    return [f"{repo_name}: missing required repository secret {name}" for name in missing]
+    return [
+        f"{repo_name}: missing required repository secret {name}" for name in missing
+    ]
 
 
 def _gh_json(args: list[str]) -> Any:
-    result = subprocess.run(["gh", *args], check=False, text=True, capture_output=True)
+    gh = shutil.which("gh")
+    if gh is None:
+        raise RuntimeError("gh CLI is required for GitHub policy validation")
+    result = subprocess.run(  # nosec B603
+        [gh, *args], check=False, text=True, capture_output=True
+    )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"gh {' '.join(args)} failed")
     text = result.stdout.strip()

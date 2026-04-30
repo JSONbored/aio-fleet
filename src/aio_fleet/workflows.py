@@ -9,7 +9,7 @@ from aio_fleet.manifest import FleetManifest, RepoConfig
 
 def _yaml_list(values: Iterable[str], indent: int = 6) -> str:
     prefix = " " * indent
-    return "\n".join(f'{prefix}- "{_quote(value)}"' for value in values)
+    return "\n".join(f"{prefix}- {_yaml_scalar(value)}" for value in values)
 
 
 def _block(values: Iterable[str], indent: int = 8) -> str:
@@ -19,6 +19,26 @@ def _block(values: Iterable[str], indent: int = 8) -> str:
 
 def _quote(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _yaml_scalar(value: object) -> str:
+    text = str(value)
+    if _needs_yaml_quote(text):
+        return f'"{_quote(text)}"'
+    return text
+
+
+def _needs_yaml_quote(text: str) -> bool:
+    if text == "":
+        return True
+    lowered = text.lower()
+    if lowered in {"null", "true", "false", "yes", "no", "on", "off"}:
+        return True
+    if text[0] in {"*", "&", "!", "%", "@", "`", "{", "}", "[", "]", ","}:
+        return True
+    if text.startswith(("-", "?")) and (len(text) == 1 or text[1].isspace()):
+        return True
+    return ": " in text or " #" in text or "\n" in text
 
 
 def _catalog_block(repo: RepoConfig) -> str:
@@ -83,7 +103,9 @@ def render_caller_workflow(
     repo: RepoConfig,
     reusable_ref: str,
 ) -> str:
-    workflow_path = manifest.reusable_workflow.get("path", ".github/workflows/aio-build.yml")
+    workflow_path = manifest.reusable_workflow.get(
+        "path", ".github/workflows/aio-build.yml"
+    )
     uses = f"{manifest.owner}/aio-fleet/{workflow_path}@{reusable_ref}"
     paths = _yaml_list(_workflow_paths(repo), indent=6)
     extra_inputs = ""
@@ -94,7 +116,8 @@ def render_caller_workflow(
     if extended:
         input_name = str(extended.get("input_name", "run_extended_integration"))
         description = str(extended.get("description", "Run extended integration tests"))
-        dispatch = f"""  workflow_dispatch:
+        dispatch = f"""  #checkov:skip=CKV_GHA_7: input only toggles optional extended tests.
+  workflow_dispatch:
     inputs:
       {input_name}:
         description: {description}
@@ -185,7 +208,7 @@ def render_check_upstream_workflow(
 
 on:
   schedule:
-    - cron: "23 7 * * 1"
+    - cron: 23 7 * * 1
   workflow_dispatch:
 
 permissions:
@@ -214,7 +237,9 @@ jobs:
 def _release_name(repo: RepoConfig, component: str = "") -> str:
     if component and repo.is_signoz_suite:
         if component == "signoz-agent":
-            return str(repo.raw["components"]["agent"].get("release_name", "SigNoz Agent"))
+            return str(
+                repo.raw["components"]["agent"].get("release_name", "SigNoz Agent")
+            )
         return str(repo.raw.get("release_name", "SigNoz-AIO"))
     return str(repo.raw.get("release_name", repo.get("upstream_name", repo.app_slug)))
 
@@ -226,12 +251,18 @@ def render_prepare_release_workflow(
     *,
     component: str = "",
 ) -> str:
-    release_component = "signoz-aio" if repo.is_signoz_suite and not component else component
+    release_component = (
+        "signoz-aio" if repo.is_signoz_suite and not component else component
+    )
     release_name = _release_name(repo, release_component)
     uses = _uses(manifest, ".github/workflows/aio-prepare-release.yml", reusable_ref)
     previous_tag_command = repo.get(
         "previous_tag_command",
-        "latest-release-tag" if repo.publish_profile == "template" else "latest-aio-tag",
+        (
+            "latest-release-tag"
+            if repo.publish_profile == "template"
+            else "latest-aio-tag"
+        ),
     )
     return f"""name: Prepare Release / {release_name}
 
@@ -263,7 +294,9 @@ def render_publish_release_workflow(
     *,
     component: str = "",
 ) -> str:
-    release_component = "signoz-aio" if repo.is_signoz_suite and not component else component
+    release_component = (
+        "signoz-aio" if repo.is_signoz_suite and not component else component
+    )
     release_name = _release_name(repo, release_component)
     uses = _uses(manifest, ".github/workflows/aio-publish-release.yml", reusable_ref)
     return f"""name: Publish Release / {release_name}
@@ -330,20 +363,20 @@ def rendered_workflows(
         ),
     }
     if repo.is_signoz_suite:
-        workflows[
-            prepare_release_workflow_path_for(repo, component="signoz-agent")
-        ] = render_prepare_release_workflow(
-            manifest,
-            repo,
-            reusable_ref,
-            component="signoz-agent",
+        workflows[prepare_release_workflow_path_for(repo, component="signoz-agent")] = (
+            render_prepare_release_workflow(
+                manifest,
+                repo,
+                reusable_ref,
+                component="signoz-agent",
+            )
         )
-        workflows[
-            publish_release_workflow_path_for(repo, component="signoz-agent")
-        ] = render_publish_release_workflow(
-            manifest,
-            repo,
-            reusable_ref,
-            component="signoz-agent",
+        workflows[publish_release_workflow_path_for(repo, component="signoz-agent")] = (
+            render_publish_release_workflow(
+                manifest,
+                repo,
+                reusable_ref,
+                component="signoz-agent",
+            )
         )
     return workflows

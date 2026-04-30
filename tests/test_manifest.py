@@ -39,8 +39,7 @@ def test_manifest_records_known_fleet_exceptions() -> None:
 
 def test_manifest_rejects_unknown_publish_profiles(tmp_path: Path) -> None:
     manifest_path = tmp_path / "fleet.yml"
-    manifest_path.write_text(
-        """
+    manifest_path.write_text("""
 owner: JSONbored
 repos:
   broken-aio:
@@ -50,9 +49,7 @@ repos:
     docker_cache_scope: broken-aio-image
     pytest_image_tag: broken-aio:pytest
     publish_profile: mystery
-"""
-    )
+""")
 
     with pytest.raises(ManifestError, match="unsupported publish_profile"):
         load_manifest(manifest_path)
-

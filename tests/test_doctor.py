@@ -19,13 +19,11 @@ def _repo(tmp_path: Path, catalog_assets: list[dict[str, str]]) -> RepoConfig:
 
 
 def _write_mem0_xml(tmp_path: Path) -> None:
-    (tmp_path / "mem0-aio.xml").write_text(
-        """<?xml version="1.0"?>
+    (tmp_path / "mem0-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/mem0.jpeg</Icon>
 </Container>
-"""
-    )
+""")
 
 
 def test_catalog_asset_check_accepts_matching_icon_source(tmp_path: Path) -> None:
@@ -46,7 +44,9 @@ def test_catalog_asset_check_accepts_matching_icon_source(tmp_path: Path) -> Non
     assert failures == []  # nosec B101
 
 
-def test_catalog_asset_check_rejects_missing_and_mismatched_icon(tmp_path: Path) -> None:
+def test_catalog_asset_check_rejects_missing_and_mismatched_icon(
+    tmp_path: Path,
+) -> None:
     _write_mem0_xml(tmp_path)
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "mem0.jpeg").write_bytes(b"icon")
@@ -61,7 +61,9 @@ def test_catalog_asset_check_rejects_missing_and_mismatched_icon(tmp_path: Path)
         )
     )
 
-    assert "mem0-aio: catalog_assets source missing: assets/app-icon.png" in failures  # nosec B101
+    assert (
+        "mem0-aio: catalog_assets source missing: assets/app-icon.png" in failures
+    )  # nosec B101
     assert (  # nosec B101
         "mem0-aio: catalog_assets target icons/mem0.png "
         "is not referenced by any catalog XML Icon"
