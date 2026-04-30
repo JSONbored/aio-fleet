@@ -47,6 +47,8 @@ def test_simple_app_caller_keeps_repo_specific_inputs() -> None:
     assert "docker_cache_scope: sure-aio-image" in rendered  # nosec B101
     assert "publish_profile: upstream-aio-track" in rendered  # nosec B101
     assert "checkout_submodules: false" in rendered  # nosec B101
+    assert 'extended_integration_pytest_args: ""' in rendered  # nosec B101
+    assert 'generator_check_command: ""' in rendered  # nosec B101
     assert "agent_image_name:" not in rendered  # nosec B101
 
 

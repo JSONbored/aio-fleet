@@ -63,6 +63,11 @@ def _bool_literal(value: object) -> str:
     return "true" if bool(value) else "false"
 
 
+def _empty_safe(value: object) -> str:
+    text = "" if value is None else str(value)
+    return '""' if text == "" else text
+
+
 def render_caller_workflow(
     manifest: FleetManifest,
     repo: RepoConfig,
@@ -144,8 +149,8 @@ jobs:
       checkout_submodules: {_bool_literal(repo.get('checkout_submodules', False))}
       integration_pytest_args: {repo.get('integration_pytest_args')}
       run_extended_integration: {run_extended}
-      extended_integration_pytest_args: {extended_pytest_args}
-      generator_check_command: {repo.get('generator_check_command', '')}
+      extended_integration_pytest_args: {_empty_safe(extended_pytest_args)}
+      generator_check_command: {_empty_safe(repo.get('generator_check_command', ''))}
       upstream_digest_arg: {repo.get('upstream_digest_arg', 'UPSTREAM_IMAGE_DIGEST')}
       xml_paths: |
 {_xml_block(repo)}
