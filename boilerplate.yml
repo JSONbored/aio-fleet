@@ -1,6 +1,8 @@
 profiles:
   aio:
     files:
+      - source: boilerplate/common/scripts/validate-derived-repo.sh
+        target: scripts/validate-derived-repo.sh
       - source: boilerplate/aio/.github/pull_request_template.md
         target: .github/pull_request_template.md
         exclude_repos:
@@ -57,6 +59,8 @@ profiles:
           - unraid-aio-template
   template:
     files:
+      - source: boilerplate/common/scripts/validate-derived-repo.sh
+        target: scripts/validate-derived-repo.sh
       - source: boilerplate/template/.github/pull_request_template.md
         target: .github/pull_request_template.md
       - source: boilerplate/aio/.github/ISSUE_TEMPLATE/config.yml

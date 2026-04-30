@@ -5,6 +5,7 @@ from pathlib import Path
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.validators import (
     catalog_repo_failures,
+    derived_repo_failures,
     pinned_action_failures,
     publish_platform_failures,
     template_metadata_failures,
@@ -31,6 +32,30 @@ def _repo(tmp_path: Path, **overrides: object) -> RepoConfig:
     return RepoConfig(name="example-aio", raw=raw, defaults={}, owner="JSONbored")
 
 
+def _write_minimal_derived_repo(tmp_path: Path) -> None:
+    for path in [
+        "Dockerfile",
+        "README.md",
+        "pyproject.toml",
+        "tests/template/test_validate_template.py",
+        "tests/integration/test_container_runtime.py",
+        "scripts/validate-template.py",
+        "scripts/update-template-changes.py",
+        ".github/FUNDING.yml",
+        "SECURITY.md",
+        ".github/pull_request_template.md",
+        ".github/ISSUE_TEMPLATE/bug_report.yml",
+        ".github/ISSUE_TEMPLATE/feature_request.yml",
+        ".github/ISSUE_TEMPLATE/installation_help.yml",
+        ".github/ISSUE_TEMPLATE/config.yml",
+        "renovate.json",
+        "example-aio.xml",
+    ]:
+        file_path = tmp_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("ok\n")
+
+
 def test_pinned_action_validation_rejects_tagged_actions(tmp_path: Path) -> None:
     workflow_dir = tmp_path / ".github" / "workflows"
     workflow_dir.mkdir(parents=True)
@@ -46,6 +71,36 @@ jobs:
     assert pinned_action_failures(tmp_path) == [  # nosec B101
         ".github/workflows/build.yml: action is not pinned to a full SHA -> actions/checkout@v6"
     ]
+
+
+def test_derived_repo_validation_accepts_minimal_repo(tmp_path: Path) -> None:
+    _write_minimal_derived_repo(tmp_path)
+
+    assert derived_repo_failures(tmp_path) == []  # nosec B101
+
+
+def test_derived_repo_validation_rejects_template_leftovers(tmp_path: Path) -> None:
+    repo_path = tmp_path / "example-aio"
+    repo_path.mkdir()
+    _write_minimal_derived_repo(repo_path)
+    (repo_path / "template-aio.xml").write_text("leftover\n")
+
+    assert derived_repo_failures(repo_path) == [  # nosec B101
+        "remove template placeholder path in derived repo: template-aio.xml"
+    ]
+
+
+def test_derived_repo_validation_loads_component_templates(tmp_path: Path) -> None:
+    _write_minimal_derived_repo(tmp_path)
+    (tmp_path / "components.toml").write_text(
+        """
+[components.agent]
+template = "agent.xml"
+"""
+    )
+    (tmp_path / "scripts" / "components.py").write_text("ok\n")
+
+    assert derived_repo_failures(tmp_path) == ["missing required file: agent.xml"]  # nosec B101
 
 
 def test_publish_platform_validation_rejects_unhandled_arm64(tmp_path: Path) -> None:

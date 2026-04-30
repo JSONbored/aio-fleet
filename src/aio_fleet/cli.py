@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from aio_fleet.validators import (
     catalog_asset_failures,
     catalog_repo_failures,
     pinned_action_failures,
+    derived_repo_failures,
     repo_policy_failures,
 )
 from aio_fleet.workflows import (
@@ -351,6 +353,19 @@ def cmd_validate_actions(args: argparse.Namespace) -> int:
         print("\n".join(failures), file=sys.stderr)
         return 1
     print("All workflow actions are pinned to full commit SHAs.")
+    return 0
+
+
+def cmd_validate_derived(args: argparse.Namespace) -> int:
+    failures = derived_repo_failures(
+        Path(args.repo_path).resolve(),
+        strict_placeholders=args.strict_placeholders,
+        template_xml=args.template_xml or os.environ.get("TEMPLATE_XML"),
+    )
+    if failures:
+        print("\n".join(f"template validation error: {failure}" for failure in failures), file=sys.stderr)
+        return 1
+    print("Derived repo validation passed.")
     return 0
 
 
@@ -740,6 +755,12 @@ def build_parser() -> argparse.ArgumentParser:
     actions = sub.add_parser("validate-actions")
     actions.add_argument("--repo-path", default=".")
     actions.set_defaults(func=cmd_validate_actions)
+
+    derived = sub.add_parser("validate-derived")
+    derived.add_argument("--repo-path", default=".")
+    derived.add_argument("--strict-placeholders", action="store_true")
+    derived.add_argument("--template-xml")
+    derived.set_defaults(func=cmd_validate_derived)
 
     repo = sub.add_parser("validate-repo")
     repo.add_argument("--repo", required=True)
