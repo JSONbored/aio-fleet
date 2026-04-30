@@ -106,3 +106,27 @@ def test_catalog_validation_skips_unpublished_repos(tmp_path: Path) -> None:
     assert catalog_repo_failures(manifest, tmp_path / "catalog") == [  # type: ignore[arg-type] # nosec B101
         "example-aio: catalog target exists while catalog_published is false: example-aio.xml"
     ]
+
+
+def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "missing-repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    (catalog_path / "example-aio.xml").write_text(
+        """<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+"""
+    )
+
+    assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
