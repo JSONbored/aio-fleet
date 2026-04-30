@@ -70,6 +70,18 @@ def test_reusable_workflow_keeps_known_component_exceptions_explicit() -> None:
     assert "UPSTREAM_OTELCOL_DIGEST" in text  # nosec B101
 
 
+def test_reusable_workflow_mirrors_docker_hub_from_ghcr() -> None:
+    text = _workflow_text()
+
+    assert "Build and push GHCR image" in text  # nosec B101
+    assert "Build and push GHCR agent image" in text  # nosec B101
+    assert "tags: ${{ steps.prep.outputs.ghcr_tags }}" in text  # nosec B101
+    assert "tags: ${{ steps.prep.outputs.tags }}" not in text  # nosec B101
+    assert "dockerhub_tags<<EOF" in text  # nosec B101
+    assert "skopeo copy --all --retry-times 3" in text  # nosec B101
+    assert "skopeo inspect --raw" in text  # nosec B101
+
+
 def test_nonlocal_actions_are_pinned_to_full_commit_shas() -> None:
     action_ref = re.compile(r"^\s*uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
     failures = []
@@ -83,4 +95,3 @@ def test_nonlocal_actions_are_pinned_to_full_commit_shas() -> None:
                 failures.append(f"{path.relative_to(ROOT)}: {target}@{ref}")
 
     assert failures == []  # nosec B101
-
