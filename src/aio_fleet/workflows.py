@@ -12,7 +12,7 @@ def _yaml_list(values: Iterable[str], indent: int = 6) -> str:
     return "\n".join(f'{prefix}- "{_quote(value)}"' for value in values)
 
 
-def _block(values: Iterable[str], indent: int = 10) -> str:
+def _block(values: Iterable[str], indent: int = 8) -> str:
     prefix = " " * indent
     return "\n".join(f"{prefix}{value}" for value in values)
 
