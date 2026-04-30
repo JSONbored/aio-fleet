@@ -7,10 +7,14 @@ import sys
 from pathlib import Path
 
 from aio_fleet.manifest import FleetManifest, RepoConfig, load_manifest
-from aio_fleet.workflows import render_caller_workflow, workflow_path_for
+from aio_fleet.workflows import (
+    rendered_workflows,
+    render_caller_workflow,
+    workflow_path_for,
+)
 
 PINNED_REUSABLE_WORKFLOW = re.compile(
-    r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-build\.yml@([0-9a-f]{40})"
+    r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-[a-z-]+\.yml@([0-9a-f]{40})"
 )
 
 
@@ -35,13 +39,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         for required in ["Dockerfile", "scripts/validate-template.py", "scripts/validate-derived-repo.sh"]:
             if not (repo.path / required).exists():
                 failures.append(f"{name}: missing {required}")
-        workflow = workflow_path_for(repo)
-        if not workflow.exists():
-            failures.append(f"{name}: missing .github/workflows/build.yml")
-            continue
-        workflow_text = workflow.read_text()
-        if not PINNED_REUSABLE_WORKFLOW.search(workflow_text):
-            failures.append(f"{name}: build.yml does not call aio-fleet at a pinned SHA")
+        for workflow in rendered_workflows(manifest, repo, "0" * 40):
+            if not workflow.exists():
+                failures.append(f"{name}: missing {workflow.relative_to(repo.path)}")
+                continue
+            workflow_text = workflow.read_text()
+            if not PINNED_REUSABLE_WORKFLOW.search(workflow_text):
+                failures.append(
+                    f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
+                )
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
@@ -91,18 +97,19 @@ def cmd_render_workflow(args: argparse.Namespace) -> int:
 
 
 def _sync_repo(repo: RepoConfig, manifest: FleetManifest, ref: str, dry_run: bool) -> bool:
-    path = workflow_path_for(repo)
-    rendered = render_caller_workflow(manifest, repo, ref)
-    current = path.read_text() if path.exists() else ""
-    if current == rendered:
-        return False
-    if dry_run:
-        print(f"would update {repo.name}: {path}")
-        return True
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(rendered)
-    print(f"updated {repo.name}: {path}")
-    return True
+    changes = 0
+    for path, rendered in rendered_workflows(manifest, repo, ref).items():
+        current = path.read_text() if path.exists() else ""
+        if current == rendered:
+            continue
+        changes += 1
+        if dry_run:
+            print(f"would update {repo.name}: {path}")
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(rendered)
+        print(f"updated {repo.name}: {path}")
+    return changes > 0
 
 
 def _git_commit_and_pr(
@@ -113,24 +120,23 @@ def _git_commit_and_pr(
     draft: bool,
     dry_run: bool,
 ) -> None:
-    workflow = workflow_path_for(repo)
-    title = "ci(fleet): use shared AIO build workflow"
+    title = "ci(fleet): use shared AIO workflows"
     body = """## Summary
-- Converts this repository to the shared AIO fleet build workflow.
+- Converts this repository to the shared AIO fleet workflows.
 
 ## What changed
-- Replaces duplicated build workflow logic with the pinned aio-fleet reusable workflow
-- Keeps repo-specific inputs in the local caller workflow
+- Replaces duplicated build, upstream-check, and release workflow logic with pinned aio-fleet reusable workflows
+- Keeps repo-specific inputs in small local caller workflows
 
 ## Why
-- Centralizes CI, publish gates, Docker cache behavior, and catalog sync behavior across the AIO fleet
+- Centralizes CI, publish gates, upstream monitoring, release preparation, Docker cache behavior, and catalog sync behavior across the AIO fleet
 
 ## Validation
 - Generated from JSONbored/aio-fleet manifest
 """
     commands = [
         ["git", "checkout", "-B", branch],
-        ["git", "add", str(workflow.relative_to(repo.path))],
+        ["git", "add", ".github/workflows"],
         ["git", "commit", "-m", title],
         ["git", "push", "-u", "origin", branch],
         [

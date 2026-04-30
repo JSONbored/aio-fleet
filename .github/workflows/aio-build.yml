@@ -525,12 +525,33 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Run unit and template tests
-        uses: ./.github/actions/run-pytest
+        id: unit_pytest
+        run: |
+          mkdir -p reports
+          rm -f reports/pytest-unit.xml
+          set +e
+          python -m pytest \
+            ${{ inputs.unit_pytest_args }} \
+            --junit-xml=reports/pytest-unit.xml \
+            -o junit_family=xunit1
+          status=$?
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload unit test results to Trunk
+        if: ${{ always() && env.TRUNK_API_TOKEN != '' }}
+        continue-on-error: true
+        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
+        env:
+          TRUNK_API_TOKEN: ${{ env.TRUNK_API_TOKEN }}
         with:
-          junit-path: reports/pytest-unit.xml
-          pytest-args: ${{ inputs.unit_pytest_args }}
-          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
-          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          junit-paths: reports/pytest-unit.xml
+          org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          token: ${{ env.TRUNK_API_TOKEN }}
+
+      - name: Fail if unit tests failed
+        if: ${{ steps.unit_pytest.outputs.exit_code != '0' }}
+        run: exit 1
 
   integration-tests:
     if: ${{ needs.detect-changes.outputs.run_tests_requested == 'true' && (needs.detect-changes.outputs.build_related == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.detect-changes.outputs.aio_publish_related == 'true')) }}
@@ -570,14 +591,35 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Run integration tests
+        id: integration_pytest
         env:
           AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
-        uses: ./.github/actions/run-pytest
+        run: |
+          mkdir -p reports
+          rm -f reports/pytest-integration.xml
+          set +e
+          python -m pytest \
+            ${{ inputs.integration_pytest_args }} \
+            --junit-xml=reports/pytest-integration.xml \
+            -o junit_family=xunit1
+          status=$?
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload integration test results to Trunk
+        if: ${{ always() && env.TRUNK_API_TOKEN != '' }}
+        continue-on-error: true
+        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
+        env:
+          TRUNK_API_TOKEN: ${{ env.TRUNK_API_TOKEN }}
         with:
-          junit-path: reports/pytest-integration.xml
-          pytest-args: ${{ inputs.integration_pytest_args }}
-          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
-          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          junit-paths: reports/pytest-integration.xml
+          org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          token: ${{ env.TRUNK_API_TOKEN }}
+
+      - name: Fail if integration tests failed
+        if: ${{ steps.integration_pytest.outputs.exit_code != '0' }}
+        run: exit 1
 
       - name: Dump Docker diagnostics
         if: ${{ failure() }}
@@ -634,17 +676,38 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Run agent integration tests
+        id: agent_integration_pytest
         env:
           AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
           SIGNOZ_AIO_IMAGE_TAG: ${{ inputs.pytest_image_tag }}
           SIGNOZ_AGENT_PYTEST_USE_PREBUILT_IMAGE: "true"
           SIGNOZ_AGENT_IMAGE_TAG: ${{ inputs.agent_pytest_image_tag }}
-        uses: ./.github/actions/run-pytest
+        run: |
+          mkdir -p reports
+          rm -f reports/pytest-agent-integration.xml
+          set +e
+          python -m pytest \
+            ${{ inputs.agent_integration_pytest_args }} \
+            --junit-xml=reports/pytest-agent-integration.xml \
+            -o junit_family=xunit1
+          status=$?
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload agent integration test results to Trunk
+        if: ${{ always() && env.TRUNK_API_TOKEN != '' }}
+        continue-on-error: true
+        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
+        env:
+          TRUNK_API_TOKEN: ${{ env.TRUNK_API_TOKEN }}
         with:
-          junit-path: reports/pytest-agent-integration.xml
-          pytest-args: ${{ inputs.agent_integration_pytest_args }}
-          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
-          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          junit-paths: reports/pytest-agent-integration.xml
+          org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          token: ${{ env.TRUNK_API_TOKEN }}
+
+      - name: Fail if agent integration tests failed
+        if: ${{ steps.agent_integration_pytest.outputs.exit_code != '0' }}
+        run: exit 1
 
       - name: Dump Docker diagnostics
         if: ${{ failure() }}
@@ -692,14 +755,35 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Run extended integration tests
+        id: extended_integration_pytest
         env:
           AIO_PYTEST_USE_PREBUILT_IMAGE: "true"
-        uses: ./.github/actions/run-pytest
+        run: |
+          mkdir -p reports
+          rm -f reports/pytest-extended-integration.xml
+          set +e
+          python -m pytest \
+            ${{ inputs.extended_integration_pytest_args }} \
+            --junit-xml=reports/pytest-extended-integration.xml \
+            -o junit_family=xunit1
+          status=$?
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload extended integration test results to Trunk
+        if: ${{ always() && env.TRUNK_API_TOKEN != '' }}
+        continue-on-error: true
+        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
+        env:
+          TRUNK_API_TOKEN: ${{ env.TRUNK_API_TOKEN }}
         with:
-          junit-path: reports/pytest-extended-integration.xml
-          pytest-args: ${{ inputs.extended_integration_pytest_args }}
-          trunk-api-token: ${{ env.TRUNK_API_TOKEN }}
-          trunk-org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          junit-paths: reports/pytest-extended-integration.xml
+          org-slug: ${{ env.TRUNK_ORG_URL_SLUG }}
+          token: ${{ env.TRUNK_API_TOKEN }}
+
+      - name: Fail if extended integration tests failed
+        if: ${{ steps.extended_integration_pytest.outputs.exit_code != '0' }}
+        run: exit 1
 
       - name: Dump Docker diagnostics
         if: ${{ failure() }}

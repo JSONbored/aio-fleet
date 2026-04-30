@@ -10,6 +10,8 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 
 - `fleet.yml` is the canonical manifest for app repo metadata and exceptions.
 - `.github/workflows/aio-build.yml` is the reusable CI/publish workflow.
+- `.github/workflows/aio-check-upstream.yml`, `aio-prepare-release.yml`, and
+  `aio-publish-release.yml` centralize upstream monitors and release workflows.
 - `aio-fleet` CLI validates the manifest, renders thin caller workflows, checks
   workflow drift, and reports fleet status.
 - Docs describe the architecture, repo onboarding, release model, and future

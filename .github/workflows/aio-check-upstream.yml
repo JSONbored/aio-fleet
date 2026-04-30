@@ -1,0 +1,205 @@
+name: Reusable AIO Upstream Check
+
+on:
+  workflow_call:
+    inputs:
+      workflow_title:
+        required: false
+        default: Check Upstream Version
+        type: string
+      component_matrix:
+        required: false
+        default: '[""]'
+        type: string
+      commit_paths:
+        required: false
+        default: Dockerfile
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(inputs.component_matrix) }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Check upstream
+        id: upstream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/check-upstream.py
+          component_args=()
+          if [[ -n "${COMPONENT}" ]]; then
+            component_args=(--component "${COMPONENT}")
+          fi
+          ./scripts/check-upstream.py "${component_args[@]}"
+
+      - name: Stop if already current
+        if: ${{ steps.upstream.outputs.updates_available != 'true' }}
+        run: echo "Upstream is already current."
+
+      - name: Create update branch
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'pr' }}
+        run: git checkout -B "${{ steps.upstream.outputs.branch_name }}"
+
+      - name: Apply upstream version bump
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'pr' }}
+        env:
+          WRITE_UPSTREAM_VERSION: "true"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          component_args=()
+          if [[ -n "${COMPONENT}" ]]; then
+            component_args=(--component "${COMPONENT}")
+          fi
+          ./scripts/check-upstream.py "${component_args[@]}"
+
+      - name: Commit upstream version bump
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'pr' }}
+        env:
+          COMMIT_PATHS: ${{ inputs.commit_paths }}
+          PR_TITLE: ${{ steps.upstream.outputs.pr_title }}
+        run: |
+          set -euo pipefail
+          paths=()
+          while IFS= read -r path; do
+            [[ -z "${path}" ]] && continue
+            paths+=("${path}")
+          done <<< "${COMMIT_PATHS}"
+          if [[ "${#paths[@]}" -eq 0 ]]; then
+            echo "No upstream commit paths configured." >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${paths[@]}"
+          if git diff --cached --quiet; then
+            echo "Upstream monitor reported updates, but no configured files changed." >&2
+            exit 1
+          fi
+          git commit -m "${PR_TITLE}"
+
+      - name: Push update branch
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'pr' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ steps.upstream.outputs.branch_name }}
+        run: git push --force --set-upstream origin "${BRANCH_NAME}"
+
+      - name: Open or update pull request
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'pr' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_VERSION: ${{ steps.upstream.outputs.current_version }}
+          LATEST_VERSION: ${{ steps.upstream.outputs.latest_version }}
+          CURRENT_DIGEST: ${{ steps.upstream.outputs.current_digest }}
+          LATEST_DIGEST: ${{ steps.upstream.outputs.latest_digest }}
+          COMPOSE_MISMATCHES: ${{ steps.upstream.outputs.compose_mismatches }}
+          RELEASE_NOTES_URL: ${{ steps.upstream.outputs.release_notes_url }}
+          BRANCH_NAME: ${{ steps.upstream.outputs.branch_name }}
+          PR_TITLE: ${{ steps.upstream.outputs.pr_title }}
+          UPSTREAM_NAME: ${{ steps.upstream.outputs.upstream_name }}
+          COMPONENT: ${{ steps.upstream.outputs.component }}
+        run: |
+          set -euo pipefail
+          body_file="$(mktemp)"
+          if [[ -n "${COMPONENT}" ]]; then
+            heading="${UPSTREAM_NAME} upstream has newer published artifacts for ${COMPONENT}."
+          else
+            heading="${UPSTREAM_NAME} upstream has newer published artifacts."
+          fi
+          {
+            echo "${heading}"
+            echo
+            echo "- Current pinned upstream version: \`${CURRENT_VERSION}\`"
+            echo "- Latest upstream version: \`${LATEST_VERSION}\`"
+            if [[ -n "${CURRENT_DIGEST}" || -n "${LATEST_DIGEST}" ]]; then
+              echo "- Current pinned upstream digest: \`${CURRENT_DIGEST}\`"
+              echo "- Latest upstream digest: \`${LATEST_DIGEST}\`"
+            fi
+            if [[ -n "${COMPOSE_MISMATCHES}" ]]; then
+              echo "- Bundled image drift from upstream Compose: \`${COMPOSE_MISMATCHES}\`"
+            fi
+            echo "- Release notes: ${RELEASE_NOTES_URL}"
+            echo
+            echo "This PR was opened automatically by the upstream monitor workflow."
+          } > "${body_file}"
+
+          existing_pr="$(gh pr list --head "${BRANCH_NAME}" --base main --json number --jq '.[0].number')"
+          if [[ -n "${existing_pr}" ]]; then
+            gh pr edit "${existing_pr}" \
+              --title "${PR_TITLE}" \
+              --body-file "${body_file}"
+          else
+            gh pr create \
+              --base main \
+              --head "${BRANCH_NAME}" \
+              --title "${PR_TITLE}" \
+              --body-file "${body_file}"
+          fi
+
+      - name: Open or update notification issue
+        if: ${{ steps.upstream.outputs.updates_available == 'true' && steps.upstream.outputs.strategy == 'notify' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_VERSION: ${{ steps.upstream.outputs.current_version }}
+          LATEST_VERSION: ${{ steps.upstream.outputs.latest_version }}
+          CURRENT_DIGEST: ${{ steps.upstream.outputs.current_digest }}
+          LATEST_DIGEST: ${{ steps.upstream.outputs.latest_digest }}
+          COMPOSE_MISMATCHES: ${{ steps.upstream.outputs.compose_mismatches }}
+          RELEASE_NOTES_URL: ${{ steps.upstream.outputs.release_notes_url }}
+          UPSTREAM_NAME: ${{ steps.upstream.outputs.upstream_name }}
+          COMPONENT: ${{ steps.upstream.outputs.component }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${COMPONENT}" ]]; then
+            issue_title="Upstream update available for ${COMPONENT}: ${LATEST_VERSION}"
+            heading="${UPSTREAM_NAME} upstream has newer published artifacts available for ${COMPONENT}."
+          else
+            issue_title="Upstream update available: ${LATEST_VERSION}"
+            heading="${UPSTREAM_NAME} upstream has newer published artifacts available."
+          fi
+          body_file="$(mktemp)"
+          {
+            echo "${heading}"
+            echo
+            echo "- Current pinned upstream version: \`${CURRENT_VERSION}\`"
+            echo "- Latest upstream version: \`${LATEST_VERSION}\`"
+            if [[ -n "${CURRENT_DIGEST}" || -n "${LATEST_DIGEST}" ]]; then
+              echo "- Current pinned upstream digest: \`${CURRENT_DIGEST}\`"
+              echo "- Latest upstream digest: \`${LATEST_DIGEST}\`"
+            fi
+            if [[ -n "${COMPOSE_MISMATCHES}" ]]; then
+              echo "- Bundled image drift from upstream Compose: \`${COMPOSE_MISMATCHES}\`"
+            fi
+            echo "- Release notes: ${RELEASE_NOTES_URL}"
+          } > "${body_file}"
+
+          existing_issue="$(gh issue list --state open --search "${issue_title} in:title" --json number --jq '.[0].number')"
+          if [[ -n "${existing_issue}" ]]; then
+            gh issue edit "${existing_issue}" --title "${issue_title}" --body-file "${body_file}"
+          else
+            gh issue create --title "${issue_title}" --body-file "${body_file}" --label enhancement
+          fi

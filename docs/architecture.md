@@ -14,9 +14,10 @@ It does not replace the existing source-of-truth repos:
 The first layer is reusable GitHub Actions:
 
 1. App repos keep a small `.github/workflows/build.yml` caller.
-2. The caller pins `JSONbored/aio-fleet/.github/workflows/aio-build.yml` to a full commit SHA.
-3. Repo-specific behavior is passed as explicit inputs from `fleet.yml`.
-4. Publish gates, Docker cache behavior, integration test gating, and catalog sync behavior live in one reusable workflow.
+2. App repos also keep small callers for upstream checks and release workflows.
+3. Each caller pins `JSONbored/aio-fleet/.github/workflows/*.yml` to a full commit SHA.
+4. Repo-specific behavior is passed as explicit inputs from `fleet.yml`.
+5. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
 
 Later layers are deliberately separate:
 
@@ -28,5 +29,5 @@ Later layers are deliberately separate:
 
 The fleet is many similar repos with real app-specific exceptions. A monorepo would make Community Apps packaging, release provenance, and app-specific ownership worse. Pure copy/paste keeps every repo independent but makes every CI or release-policy correction multiply across the fleet.
 
-This control-plane model keeps app repos independent while moving repeat policy into one tested place.
-
+This control-plane model keeps app repos independent while moving repeat policy
+into one tested place.

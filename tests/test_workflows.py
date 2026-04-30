@@ -5,7 +5,10 @@ from pathlib import Path
 import yaml
 
 from aio_fleet.manifest import load_manifest
-from aio_fleet.workflows import render_caller_workflow
+from aio_fleet.workflows import (
+    rendered_workflows,
+    render_caller_workflow,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PINNED_REF = "0123456789abcdef0123456789abcdef01234567"
@@ -37,6 +40,28 @@ def test_rendered_callers_use_pinned_reusable_workflow() -> None:
             "packages": "write",
             "pull-requests": "write",
         }
+
+
+def test_rendered_release_and_upstream_callers_use_pinned_reusable_workflows() -> None:
+    manifest = load_manifest(ROOT / "fleet.yml")
+
+    for repo in manifest.repos.values():
+        rendered = rendered_workflows(manifest, repo, PINNED_REF)
+        text = "\n".join(rendered.values())
+
+        assert (  # nosec B101
+            "uses: JSONbored/aio-fleet/.github/workflows/aio-check-upstream.yml@"
+            f"{PINNED_REF}" in text
+        )
+        assert (  # nosec B101
+            "uses: JSONbored/aio-fleet/.github/workflows/aio-prepare-release.yml@"
+            f"{PINNED_REF}" in text
+        )
+        assert (  # nosec B101
+            "uses: JSONbored/aio-fleet/.github/workflows/aio-publish-release.yml@"
+            f"{PINNED_REF}" in text
+        )
+        assert "@main" not in text  # nosec B101
 
 
 def test_simple_app_caller_keeps_repo_specific_inputs() -> None:
@@ -84,3 +109,24 @@ def test_signoz_caller_keeps_component_publish_inputs() -> None:
     assert "agent_integration_pytest_args: tests/integration_agent -m integration" in rendered  # nosec B101
     assert inputs["agent_image_name"] == "jsonbored/signoz-agent"  # nosec B101
     assert inputs["catalog_assets"].strip().endswith("assets/app-icon.png|icons/signoz.png")  # nosec B101
+
+
+def test_signoz_release_callers_keep_component_lanes() -> None:
+    manifest = load_manifest(ROOT / "fleet.yml")
+    rendered = rendered_workflows(manifest, manifest.repo("signoz-aio"), PINNED_REF)
+    text_by_name = {path.name: text for path, text in rendered.items()}
+
+    assert "release-agent.yml" in text_by_name  # nosec B101
+    assert "publish-release-agent.yml" in text_by_name  # nosec B101
+    assert "component: signoz-agent" in text_by_name["release-agent.yml"]  # nosec B101
+    assert "component: signoz-agent" in text_by_name["publish-release-agent.yml"]  # nosec B101
+    assert "component_matrix: '[\"signoz-aio\", \"signoz-agent\"]'" in text_by_name["check-upstream.yml"]  # nosec B101
+    assert "components/signoz-agent/Dockerfile" in text_by_name["check-upstream.yml"]  # nosec B101
+
+
+def test_template_release_uses_semver_release_tag_command() -> None:
+    manifest = load_manifest(ROOT / "fleet.yml")
+    rendered = rendered_workflows(manifest, manifest.repo("unraid-aio-template"), PINNED_REF)
+    release_text = next(text for path, text in rendered.items() if path.name == "release.yml")
+
+    assert "previous_tag_command: latest-release-tag" in release_text  # nosec B101

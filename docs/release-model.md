@@ -15,8 +15,10 @@ Publish jobs still require:
 
 - push to `main`;
 - a publish-related change;
-- the repo CI flags allowing publish;
 - successful integration tests.
+
+The reusable `aio-build.yml` owns those publish-gate decisions centrally. App
+repos pass only their publish profile and app-specific path exceptions.
 
 ## Generated Templates
 
@@ -29,10 +31,11 @@ Generated-template repos run their generator check before XML validation. This p
 - the AIO image and agent image have separate publish lanes;
 - component path changes decide which image is publish-related;
 - agent integration tests build against the matching AIO backend image.
+- release and publish workflows stay separate for `signoz-aio` and
+  `signoz-agent`, but both call the same reusable release workflows.
 
 This is an explicit fleet exception, not copied hidden logic.
 
 ## Catalog Sync
 
 App repos sync CA-facing XML and icon assets into `awesome-unraid` by opening/updating a PR. The catalog repo remains the public CA source of truth.
-

@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/aio-build.yml"
+REUSABLE_WORKFLOWS = sorted((ROOT / ".github/workflows").glob("aio-*.yml"))
 
 
 def _workflow_text() -> str:
@@ -42,6 +43,17 @@ def test_reusable_workflow_owns_ci_gate_flags_centrally() -> None:
     assert "pull_request:*|workflow_dispatch:*)" in text  # nosec B101
     assert "publish_requested=true" in text  # nosec B101
     assert "publish_requested=false" in text  # nosec B101
+
+
+def test_reusable_build_workflow_owns_pytest_upload_centrally() -> None:
+    text = _workflow_text()
+
+    assert "uses: ./.github/actions/run-pytest" not in text  # nosec B101
+    assert "trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803" in text  # nosec B101
+    assert "reports/pytest-unit.xml" in text  # nosec B101
+    assert "reports/pytest-integration.xml" in text  # nosec B101
+    assert "reports/pytest-agent-integration.xml" in text  # nosec B101
+    assert "reports/pytest-extended-integration.xml" in text  # nosec B101
 
 
 def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> None:
@@ -95,3 +107,12 @@ def test_nonlocal_actions_are_pinned_to_full_commit_shas() -> None:
                 failures.append(f"{path.relative_to(ROOT)}: {target}@{ref}")
 
     assert failures == []  # nosec B101
+
+
+def test_release_and_upstream_reusable_workflows_exist() -> None:
+    names = {path.name for path in REUSABLE_WORKFLOWS}
+
+    assert "aio-build.yml" in names  # nosec B101
+    assert "aio-check-upstream.yml" in names  # nosec B101
+    assert "aio-prepare-release.yml" in names  # nosec B101
+    assert "aio-publish-release.yml" in names  # nosec B101

@@ -11,6 +11,7 @@ Required manifest fields:
 - `docker_cache_scope`: GitHub Actions cache scope for the main image.
 - `pytest_image_tag`: local image tag used by integration tests.
 - `publish_profile`: one of `template`, `upstream-aio-track`, `changelog-version`, `dify`, or `signoz-suite`.
+- `release_name`: user-facing release workflow name.
 - `upstream_name` and `image_description`: OCI metadata labels.
 - `xml_paths`: XML/template paths watched by CI.
 - `catalog_assets`: source-to-target copy rules for `awesome-unraid` sync.
@@ -23,6 +24,9 @@ Optional fields:
 - `extra_publish_paths`: paths that should trigger image publishing.
 - `extended_integration`: manual extended integration test input and pytest args.
 - `components`: component-aware publish lanes, currently used by `signoz-aio`.
+- `upstream_components`: matrix values for component-aware upstream checks.
+- `upstream_commit_paths`: files committed by an upstream monitor PR.
+- `previous_tag_command`: release-script command used as the changelog base tag.
 
 After editing `fleet.yml`:
 
@@ -33,4 +37,3 @@ python -m aio_fleet doctor
 ```
 
 Callers should pin the reusable workflow to a full commit SHA. Use `main` only for local experimentation.
-

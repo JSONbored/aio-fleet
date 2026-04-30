@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable
 
@@ -46,7 +47,6 @@ def _workflow_paths(repo: RepoConfig) -> list[str]:
         "scripts/**",
         "tests/**",
         ".trunk/**",
-        ".github/actions/**",
         "upstream.toml",
         "components.toml",
         "components/**",
@@ -66,6 +66,10 @@ def _bool_literal(value: object) -> str:
 def _empty_safe(value: object) -> str:
     text = "" if value is None else str(value)
     return '""' if text == "" else text
+
+
+def _uses(manifest: FleetManifest, workflow_path: str, reusable_ref: str) -> str:
+    return f"{manifest.owner}/aio-fleet/{workflow_path}@{reusable_ref}"
 
 
 def render_caller_workflow(
@@ -162,5 +166,175 @@ jobs:
 """
 
 
+def render_check_upstream_workflow(
+    manifest: FleetManifest,
+    repo: RepoConfig,
+    reusable_ref: str,
+) -> str:
+    uses = _uses(manifest, ".github/workflows/aio-check-upstream.yml", reusable_ref)
+    components = repo.list_value("upstream_components") or [""]
+    commit_paths = repo.list_value("upstream_commit_paths") or ["Dockerfile"]
+    return f"""name: {repo.get('check_upstream_name', 'Check Upstream Version')}
+
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{{{ github.workflow }}}}-${{{{ github.ref }}}}
+  cancel-in-progress: true
+
+jobs:
+  check-upstream:
+    uses: {uses}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    with:
+      workflow_title: {repo.get('check_upstream_name', 'Check Upstream Version')}
+      component_matrix: '{json.dumps(components)}'
+      commit_paths: |
+{_block(commit_paths)}
+    secrets: inherit
+"""
+
+
+def _release_name(repo: RepoConfig, component: str = "") -> str:
+    if component and repo.is_signoz_suite:
+        if component == "signoz-agent":
+            return str(repo.raw["components"]["agent"].get("release_name", "SigNoz Agent"))
+        return str(repo.raw.get("release_name", "SigNoz-AIO"))
+    return str(repo.raw.get("release_name", repo.get("upstream_name", repo.app_slug)))
+
+
+def render_prepare_release_workflow(
+    manifest: FleetManifest,
+    repo: RepoConfig,
+    reusable_ref: str,
+    *,
+    component: str = "",
+) -> str:
+    release_name = _release_name(repo, component)
+    uses = _uses(manifest, ".github/workflows/aio-prepare-release.yml", reusable_ref)
+    previous_tag_command = repo.get(
+        "previous_tag_command",
+        "latest-release-tag" if repo.publish_profile == "template" else "latest-aio-tag",
+    )
+    return f"""name: Prepare Release / {release_name}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-release:
+    uses: {uses}
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      release_name: {release_name}
+      component: {_empty_safe(component)}
+      component_label: {_empty_safe(component)}
+      previous_tag_command: {previous_tag_command}
+    secrets: inherit
+"""
+
+
+def render_publish_release_workflow(
+    manifest: FleetManifest,
+    repo: RepoConfig,
+    reusable_ref: str,
+    *,
+    component: str = "",
+) -> str:
+    release_name = _release_name(repo, component)
+    uses = _uses(manifest, ".github/workflows/aio-publish-release.yml", reusable_ref)
+    return f"""name: Publish Release / {release_name}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-release:
+    uses: {uses}
+    permissions:
+      actions: read
+      contents: write
+    with:
+      release_name: {release_name}
+      component: {_empty_safe(component)}
+      workflow_selector: build.yml
+    secrets: inherit
+"""
+
+
 def workflow_path_for(repo: RepoConfig) -> Path:
     return repo.path / ".github" / "workflows" / "build.yml"
+
+
+def check_upstream_workflow_path_for(repo: RepoConfig) -> Path:
+    return repo.path / ".github" / "workflows" / "check-upstream.yml"
+
+
+def prepare_release_workflow_path_for(repo: RepoConfig, *, component: str = "") -> Path:
+    if repo.is_signoz_suite and component == "signoz-agent":
+        filename = "release-agent.yml"
+    else:
+        filename = "release.yml"
+    return repo.path / ".github" / "workflows" / filename
+
+
+def publish_release_workflow_path_for(repo: RepoConfig, *, component: str = "") -> Path:
+    if repo.is_signoz_suite and component == "signoz-agent":
+        filename = "publish-release-agent.yml"
+    else:
+        filename = "publish-release.yml"
+    return repo.path / ".github" / "workflows" / filename
+
+
+def rendered_workflows(
+    manifest: FleetManifest,
+    repo: RepoConfig,
+    reusable_ref: str,
+) -> dict[Path, str]:
+    workflows = {
+        workflow_path_for(repo): render_caller_workflow(manifest, repo, reusable_ref),
+        check_upstream_workflow_path_for(repo): render_check_upstream_workflow(
+            manifest, repo, reusable_ref
+        ),
+        prepare_release_workflow_path_for(repo): render_prepare_release_workflow(
+            manifest, repo, reusable_ref
+        ),
+        publish_release_workflow_path_for(repo): render_publish_release_workflow(
+            manifest, repo, reusable_ref
+        ),
+    }
+    if repo.is_signoz_suite:
+        workflows[
+            prepare_release_workflow_path_for(repo, component="signoz-agent")
+        ] = render_prepare_release_workflow(
+            manifest,
+            repo,
+            reusable_ref,
+            component="signoz-agent",
+        )
+        workflows[
+            publish_release_workflow_path_for(repo, component="signoz-agent")
+        ] = render_publish_release_workflow(
+            manifest,
+            repo,
+            reusable_ref,
+            component="signoz-agent",
+        )
+    return workflows
