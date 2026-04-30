@@ -1,4 +1,19 @@
 repositories = {
+  "awesome-unraid" = {
+    description = "Community Apps catalog for JSONbored Unraid AIO templates"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+    ]
+    required_checks = [
+      "validate-catalog",
+      "CodeQL",
+      "Analyze (actions)",
+    ]
+  }
+
   "sure-aio" = {
     description = "Unraid-first AIO wrapper image for Sure"
     topics = [
@@ -12,6 +27,98 @@ repositories = {
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
+      "aio-build / integration-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+
+  "simplelogin-aio" = {
+    description = "Unraid-first AIO wrapper image for SimpleLogin"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / integration-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+
+  "khoj-aio" = {
+    description = "Unraid-first AIO wrapper image for Khoj"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "ai",
+      "khoj",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / integration-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+
+  "mem0-aio" = {
+    description = "Unraid-first AIO wrapper image for Mem0"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "ai",
+      "mem0",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / integration-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+      "Analyze (javascript-typescript)",
+    ]
+  }
+
+  "infisical-aio" = {
+    description = "Unraid-first AIO wrapper image for Infisical"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "security",
+      "secrets-management",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / integration-tests",
       "aio-build / dependency-review",
       "CodeQL",
       "Analyze (actions)",
@@ -34,6 +141,30 @@ repositories = {
       "aio-build / validate-template",
       "aio-build / pinned-actions",
       "aio-build / unit-tests",
+      "aio-build / integration-tests",
+      "aio-build / dependency-review",
+      "CodeQL",
+      "Analyze (actions)",
+      "Analyze (python)",
+    ]
+  }
+
+  "signoz-aio" = {
+    description = "Unraid-first AIO wrapper images for SigNoz"
+    topics = [
+      "unraid",
+      "community-applications",
+      "docker",
+      "self-hosted",
+      "observability",
+      "signoz",
+      "aio",
+    ]
+    required_checks = [
+      "aio-build / validate-template",
+      "aio-build / pinned-actions",
+      "aio-build / unit-tests",
+      "aio-build / integration-tests",
       "aio-build / dependency-review",
       "CodeQL",
       "Analyze (actions)",
