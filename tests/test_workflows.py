@@ -113,9 +113,19 @@ def test_caller_paths_quote_only_yaml_special_values() -> None:
 
 def test_dify_caller_exposes_manual_extended_integration_input() -> None:
     rendered = _render("dify-aio")
+    parsed = _parse(rendered)
+    dispatch_inputs = parsed["on"]["workflow_dispatch"]["inputs"]  # type: ignore[index]
 
     assert "catalog_published: true" in rendered  # nosec B101
     assert "#checkov:skip=CKV_GHA_7" in rendered  # nosec B101
+    assert dispatch_inputs["publish_target"]["options"] == [  # nosec B101
+        "none",
+        "aio",
+    ]
+    assert (
+        "manual_publish_target: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_target || 'none' }}"
+        in rendered
+    )  # nosec B101
     assert "run_extended_integration:" in rendered  # nosec B101
     assert "type: boolean" in rendered  # nosec B101
     assert (
@@ -136,9 +146,16 @@ def test_signoz_caller_keeps_component_publish_inputs() -> None:
     rendered = _render("signoz-aio")
     parsed = _parse(rendered)
     inputs = parsed["jobs"]["aio-build"]["with"]  # type: ignore[index]
+    dispatch_inputs = parsed["on"]["workflow_dispatch"]["inputs"]  # type: ignore[index]
 
     assert "publish_profile: signoz-suite" in rendered  # nosec B101
     assert "publish_platforms: linux/amd64" in rendered  # nosec B101
+    assert dispatch_inputs["publish_target"]["options"] == [  # nosec B101
+        "none",
+        "aio",
+        "agent",
+        "all",
+    ]
     assert "upstream_digest_arg: UPSTREAM_SIGNOZ_DIGEST" in rendered  # nosec B101
     assert "agent_image_name: jsonbored/signoz-agent" in rendered  # nosec B101
     assert "agent_context: components/signoz-agent" in rendered  # nosec B101

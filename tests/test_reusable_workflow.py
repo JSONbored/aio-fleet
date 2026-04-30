@@ -29,6 +29,7 @@ def test_reusable_workflow_defines_expected_workflow_call_inputs() -> None:
         "docker_cache_scope",
         "pytest_image_tag",
         "publish_profile",
+        "manual_publish_target",
         "checkout_submodules",
         "xml_paths",
         "catalog_assets",
@@ -140,8 +141,25 @@ def test_reusable_workflow_keeps_publish_gates_behind_integration_success() -> N
     assert "needs.integration-tests.result == 'success'" in text  # nosec B101
     assert "needs.agent-integration-tests.result == 'success'" in text  # nosec B101
     assert "github.event_name == 'push'" in text  # nosec B101
+    assert "github.event_name == 'workflow_dispatch'" in text  # nosec B101
     assert "github.ref == 'refs/heads/main'" in text  # nosec B101
     assert "publish_requested == 'true'" in text  # nosec B101
+    assert (
+        "inputs.publish_profile != 'signoz-suite' && needs.detect-changes.outputs.aio_publish_related"
+        not in text
+    )  # nosec B101
+
+
+def test_reusable_workflow_supports_manual_publish_target() -> None:
+    text = _workflow_text()
+
+    assert (
+        "MANUAL_PUBLISH_TARGET: ${{ inputs.manual_publish_target }}" in text
+    )  # nosec B101
+    assert 'manual_target not in {"none", "aio", "agent", "all"}' in text  # nosec B101
+    assert (
+        "manual_publish_target=agent requires publish_profile=signoz-suite" in text
+    )  # nosec B101
 
 
 def test_reusable_workflow_keeps_known_component_exceptions_explicit() -> None:
