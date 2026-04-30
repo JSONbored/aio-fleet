@@ -32,6 +32,7 @@ def test_reusable_workflow_defines_expected_workflow_call_inputs() -> None:
         "checkout_submodules",
         "xml_paths",
         "catalog_assets",
+        "catalog_published",
     ]:
         assert required_input in inputs  # nosec B101
 
@@ -72,6 +73,14 @@ def test_reusable_build_workflow_runs_fleet_policy_validator() -> None:
     assert "Validate fleet repo policy" in text  # nosec B101
     assert "validate-repo" in text  # nosec B101
     assert "validate-actions --repo-path ." in text  # nosec B101
+
+
+def test_reusable_build_workflow_uses_fleet_catalog_sync() -> None:
+    text = _workflow_text()
+
+    assert "sync-catalog" in text  # nosec B101
+    assert "--repo-path ." in text  # nosec B101
+    assert "CATALOG_PUBLISHED" in text  # nosec B101
 
 
 def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> None:

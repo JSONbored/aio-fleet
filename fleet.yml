@@ -17,6 +17,7 @@ repos:
     path: /Users/shadowbook/Documents/unraid-aio-template
     public: false
     catalog_published: false
+    boilerplate_profile: template
     workflow_name: CI / AIO Template
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template

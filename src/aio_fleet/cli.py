@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 from aio_fleet.boilerplate import sync_boilerplate
+from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
+from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
@@ -77,6 +79,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
                 )
         failures.extend(catalog_asset_failures(repo))
+    if args.github:
+        failures.extend(
+            validate_github_policy(
+                Path(args.policy),
+                check_secrets=args.check_secrets,
+            )
+        )
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
@@ -86,11 +95,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
+    policy_repos: set[str] = set()
+    if args.github:
+        try:
+            policy_repos = set(load_policy(Path(args.policy))["repositories"])
+        except Exception:
+            policy_repos = set()
     for name, repo in manifest.repos.items():
         branch = _run(["git", "branch", "--show-current"], cwd=repo.path)
         status = _run(["git", "status", "--short"], cwd=repo.path)
         dirty = "dirty" if status.stdout.strip() else "clean"
+        drift = _run(["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"], cwd=repo.path)
+        drift_state = ""
+        if drift.returncode == 0:
+            ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
+            drift_state = f" ahead={ahead} behind={behind}"
         pr_state = ""
+        policy_state = ""
         branch_name = branch.stdout.strip()
         if args.github and branch_name:
             pr = _run(
@@ -113,7 +134,15 @@ def cmd_status(args: argparse.Namespace) -> int:
                 cwd=repo.path,
             )
             pr_state = f" {pr.stdout.strip() or 'pr-unknown'}"
-        print(f"{name:22} {branch_name or '-':36} {dirty}{pr_state}")
+            if name not in policy_repos:
+                policy_state = " policy=manual"
+            else:
+                try:
+                    failures = validate_github_policy(Path(args.policy), repos=[name], check_secrets=False)
+                    policy_state = " policy=ok" if not failures else f" policy={len(failures)}-drift"
+                except Exception as exc:
+                    policy_state = f" policy=unknown:{exc}"
+        print(f"{name:22} {branch_name or '-':36} {dirty}{drift_state}{pr_state}{policy_state}")
     return 0
 
 
@@ -282,6 +311,19 @@ def cmd_validate_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_github(args: argparse.Namespace) -> int:
+    failures = validate_github_policy(
+        Path(args.policy),
+        repos=args.repo,
+        check_secrets=args.check_secrets,
+    )
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print("github policy checks passed")
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = manifest.repos.values() if args.all else [manifest.repo(args.repo)]
@@ -308,10 +350,11 @@ def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
     repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
     changed = 0
     for repo in repos:
+        profile = str(repo.get("boilerplate_profile", "aio")) if args.profile == "auto" else args.profile
         changes = sync_boilerplate(
             repo,
             config_path=Path(args.config),
-            profile=args.profile,
+            profile=profile,
             dry_run=args.dry_run,
         )
         changed += len(changes)
@@ -319,8 +362,252 @@ def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
             relative = change.target.relative_to(repo.path)
             prefix = "would " if args.dry_run else ""
             print(f"{repo.name}: {prefix}{change.action} {relative}")
+        if changes and args.create_pr:
+            _boilerplate_commit_and_pr(
+                repo,
+                branch=args.branch,
+                base=args.base,
+                draft=args.draft,
+                paths=[change.target for change in changes],
+                dry_run=args.dry_run,
+            )
     print(f"boilerplate changes: {changed}")
     return 0
+
+
+def _boilerplate_commit_and_pr(
+    repo: RepoConfig,
+    *,
+    branch: str,
+    base: str,
+    draft: bool,
+    paths: list[Path],
+    dry_run: bool,
+) -> None:
+    title = "chore(fleet): sync shared repository boilerplate"
+    body = """## Summary
+- Syncs shared AIO repository boilerplate from `aio-fleet`.
+
+## What changed
+- Updates common repository support files such as issue templates, funding metadata, or support docs
+- Preserves app-specific files through explicit `aio-fleet` exclusions and create-only rules
+
+## Why
+- Reduces fleet drift without moving runtime or generated-template logic out of the app repo
+
+## Validation
+- Generated by `aio-fleet sync-boilerplate`
+"""
+    relative_paths = [str(path.relative_to(repo.path)) for path in paths]
+    commands = [
+        ["git", "checkout", "-B", branch],
+        ["git", "add", *relative_paths],
+        ["git", "commit", "-m", title],
+        ["git", "push", "-u", "origin", branch],
+    ]
+    for command in commands:
+        if dry_run:
+            print(f"{repo.name}: would run {' '.join(command)}")
+            continue
+        result = _run(command, cwd=repo.path)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        if result.returncode != 0:
+            raise RuntimeError(f"{repo.name}: command failed: {' '.join(command)}")
+
+    if dry_run:
+        print(f"{repo.name}: would open or update PR {branch} -> {base}")
+        return
+
+    existing = _run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo.github_repo,
+            "--head",
+            branch,
+            "--base",
+            base,
+            "--json",
+            "number",
+            "--jq",
+            ".[0].number // empty",
+        ],
+        cwd=repo.path,
+    )
+    number = existing.stdout.strip()
+    if number:
+        result = _run(["gh", "pr", "edit", number, "--repo", repo.github_repo, "--title", title, "--body", body], cwd=repo.path)
+    else:
+        result = _run(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--repo",
+                repo.github_repo,
+                "--base",
+                base,
+                "--head",
+                branch,
+                "--title",
+                title,
+                "--body",
+                body,
+                *(["--draft"] if draft else []),
+            ],
+            cwd=repo.path,
+        )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode != 0:
+        raise RuntimeError(f"{repo.name}: boilerplate PR command failed")
+
+
+def cmd_sync_catalog(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repos = [_repo_for_identifier(manifest, args.repo)] if args.repo else list(manifest.repos.values())
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+    blocked = unpublished_xml_targets(manifest, repos)
+    if blocked and not args.icon_only:
+        print(
+            "refusing XML sync for catalog_published=false repos; use --icon-only for staged launches:\n"
+            + "\n".join(blocked),
+            file=sys.stderr,
+        )
+        return 1
+
+    changes = sync_catalog_assets(
+        manifest,
+        catalog_path=Path(args.catalog_path).resolve(),
+        repos=repos,
+        icon_only=args.icon_only,
+        dry_run=args.dry_run,
+    )
+    for change in changes:
+        prefix = "would " if args.dry_run else ""
+        print(
+            f"{change.repo}: {prefix}{change.action} "
+            f"{change.target.relative_to(Path(args.catalog_path).resolve())}"
+        )
+    print(f"catalog changes: {len(changes)}")
+    if changes and args.create_pr:
+        _catalog_commit_and_pr(
+            Path(args.catalog_path).resolve(),
+            branch=args.branch or _catalog_branch(args.repo, args.icon_only),
+            base=args.base,
+            title=args.title or _catalog_title(args.repo, args.icon_only),
+            body=args.body or _catalog_body(args.repo, args.icon_only),
+            paths=[change.target for change in changes],
+            dry_run=args.dry_run,
+        )
+    return 0
+
+
+def _catalog_branch(repo: str | None, icon_only: bool) -> str:
+    if repo:
+        suffix = "icons" if icon_only else "catalog-assets"
+        return f"sync-awesome-unraid/{repo}-{suffix}"
+    return "sync-awesome-unraid/fleet-catalog-assets"
+
+
+def _catalog_title(repo: str | None, icon_only: bool) -> str:
+    if repo:
+        target = "icons" if icon_only else "catalog assets"
+        return f"ci(sync): sync {repo} {target}"
+    return "ci(sync): sync fleet catalog assets"
+
+
+def _catalog_body(repo: str | None, icon_only: bool) -> str:
+    scope = f"`{repo}` " if repo else "fleet "
+    mode = "icon-only staged launch sync" if icon_only else "catalog XML/icon sync"
+    return f"""## Summary
+- Syncs {scope}assets into `awesome-unraid`.
+
+## What changed
+- Runs `aio-fleet sync-catalog`
+- Mode: {mode}
+
+## Why
+- Keeps Community Apps catalog assets aligned with the source repo manifest.
+
+## Validation
+- Generated by `aio-fleet`; catalog validation should run on this PR.
+"""
+
+
+def _catalog_commit_and_pr(
+    catalog_path: Path,
+    *,
+    branch: str,
+    base: str,
+    title: str,
+    body: str,
+    paths: list[Path],
+    dry_run: bool,
+) -> None:
+    relative_paths = [str(path.relative_to(catalog_path)) for path in paths]
+    commands = [
+        ["git", "config", "user.name", "github-actions[bot]"],
+        ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        ["git", "checkout", "-B", branch],
+        ["git", "add", *relative_paths],
+        ["git", "commit", "-m", title],
+        ["git", "push", "-u", "origin", branch],
+    ]
+    for command in commands:
+        if dry_run:
+            print(f"would run {' '.join(command)}")
+            continue
+        result = _run(command, cwd=catalog_path)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        if result.returncode != 0:
+            raise RuntimeError(f"catalog command failed: {' '.join(command)}")
+
+    if dry_run:
+        print(f"would open or update PR {branch} -> {base}")
+        return
+
+    existing = _run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--base",
+            base,
+            "--json",
+            "number",
+            "--jq",
+            ".[0].number // empty",
+        ],
+        cwd=catalog_path,
+    )
+    number = existing.stdout.strip()
+    if number:
+        result = _run(["gh", "pr", "edit", number, "--title", title, "--body", body], cwd=catalog_path)
+    else:
+        result = _run(["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body], cwd=catalog_path)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode != 0:
+        raise RuntimeError("catalog PR command failed")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -328,9 +615,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", default="fleet.yml")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("doctor").set_defaults(func=cmd_doctor)
+    doctor = sub.add_parser("doctor")
+    doctor.add_argument("--github", action="store_true")
+    doctor.add_argument("--policy", default="infra/github/github-policy.yml")
+    doctor.add_argument("--check-secrets", action="store_true")
+    doctor.set_defaults(func=cmd_doctor)
     status = sub.add_parser("status")
     status.add_argument("--github", action="store_true")
+    status.add_argument("--policy", default="infra/github/github-policy.yml")
     status.set_defaults(func=cmd_status)
 
     render = sub.add_parser("render-workflow")
@@ -350,10 +642,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     boilerplate = sub.add_parser("sync-boilerplate")
     boilerplate.add_argument("--repo")
-    boilerplate.add_argument("--profile", default="aio")
+    boilerplate.add_argument("--profile", default="auto")
     boilerplate.add_argument("--config", default="boilerplate.yml")
+    boilerplate.add_argument("--create-pr", action="store_true")
+    boilerplate.add_argument("--branch", default="codex/aio-fleet-boilerplate")
+    boilerplate.add_argument("--base", default="main")
+    boilerplate.add_argument("--draft", action="store_true")
     boilerplate.add_argument("--dry-run", action="store_true")
     boilerplate.set_defaults(func=cmd_sync_boilerplate)
+
+    sync_catalog = sub.add_parser("sync-catalog")
+    sync_catalog.add_argument("--repo")
+    sync_catalog.add_argument("--repo-path")
+    sync_catalog.add_argument("--catalog-path", required=True)
+    sync_catalog.add_argument("--icon-only", action="store_true")
+    sync_catalog.add_argument("--create-pr", action="store_true")
+    sync_catalog.add_argument("--branch")
+    sync_catalog.add_argument("--base", default="main")
+    sync_catalog.add_argument("--title")
+    sync_catalog.add_argument("--body")
+    sync_catalog.add_argument("--dry-run", action="store_true")
+    sync_catalog.set_defaults(func=cmd_sync_catalog)
 
     verify = sub.add_parser("verify-caller")
     verify.add_argument("--repo", required=True)
@@ -374,6 +683,12 @@ def build_parser() -> argparse.ArgumentParser:
     catalog = sub.add_parser("validate-catalog")
     catalog.add_argument("--catalog-path", required=True)
     catalog.set_defaults(func=cmd_validate_catalog)
+
+    github = sub.add_parser("validate-github")
+    github.add_argument("--policy", default="infra/github/github-policy.yml")
+    github.add_argument("--repo", action="append")
+    github.add_argument("--check-secrets", action="store_true")
+    github.set_defaults(func=cmd_validate_github)
 
     validate = sub.add_parser("validate")
     validate.add_argument("--all", action="store_true")

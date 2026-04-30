@@ -3,5 +3,82 @@ profiles:
     files:
       - source: boilerplate/aio/.github/pull_request_template.md
         target: .github/pull_request_template.md
+        exclude_repos:
+          - unraid-aio-template
       - source: boilerplate/aio/.github/ISSUE_TEMPLATE/config.yml
         target: .github/ISSUE_TEMPLATE/config.yml
+        exclude_repos:
+          - unraid-aio-template
+        template: true
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/bug_report.yml
+        target: .github/ISSUE_TEMPLATE/bug_report.yml
+        exclude_repos:
+          - unraid-aio-template
+          - signoz-aio
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/feature_request.yml
+        target: .github/ISSUE_TEMPLATE/feature_request.yml
+        exclude_repos:
+          - unraid-aio-template
+          - signoz-aio
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/installation_help.yml
+        target: .github/ISSUE_TEMPLATE/installation_help.yml
+        exclude_repos:
+          - unraid-aio-template
+          - signoz-aio
+      - source: boilerplate/aio/.github/FUNDING.yml
+        target: .github/FUNDING.yml
+        exclude_repos:
+          - unraid-aio-template
+      - source: boilerplate/aio/.trunk/trunk.yaml
+        target: .trunk/trunk.yaml
+        exclude_repos:
+          - unraid-aio-template
+      - source: boilerplate/aio/renovate.json
+        target: renovate.json
+        exclude_repos:
+          - unraid-aio-template
+          - signoz-aio
+      - source: boilerplate/aio/SECURITY.md
+        target: SECURITY.md
+        exclude_repos:
+          - unraid-aio-template
+          - infisical-aio
+      - source: boilerplate/aio/docs/releases.md
+        target: docs/releases.md
+        if_missing: true
+        exclude_repos:
+          - unraid-aio-template
+          - signoz-aio
+        template: true
+      - source: boilerplate/aio/docs/support-thread-template.md
+        target: docs/support-thread-template.md
+        if_missing: true
+        exclude_repos:
+          - unraid-aio-template
+  template:
+    files:
+      - source: boilerplate/template/.github/pull_request_template.md
+        target: .github/pull_request_template.md
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/config.yml
+        target: .github/ISSUE_TEMPLATE/config.yml
+        template: true
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/bug_report.yml
+        target: .github/ISSUE_TEMPLATE/bug_report.yml
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/feature_request.yml
+        target: .github/ISSUE_TEMPLATE/feature_request.yml
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/installation_help.yml
+        target: .github/ISSUE_TEMPLATE/installation_help.yml
+      - source: boilerplate/aio/.github/FUNDING.yml
+        target: .github/FUNDING.yml
+      - source: boilerplate/aio/.trunk/trunk.yaml
+        target: .trunk/trunk.yaml
+      - source: boilerplate/aio/renovate.json
+        target: renovate.json
+      - source: boilerplate/template/SECURITY.md
+        target: SECURITY.md
+      - source: boilerplate/template/docs/releases.md
+        target: docs/releases.md
+        if_missing: true
+      - source: boilerplate/template/docs/support-thread-template.md
+        target: docs/support-thread-template.md
+        if_missing: true

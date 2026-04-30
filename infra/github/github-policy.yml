@@ -1,0 +1,105 @@
+owner: JSONbored
+default_branch: main
+defaults:
+  repository:
+    visibility: public
+    homepage_url: https://aethereal.dev
+    has_issues: true
+    has_projects: false
+    has_wiki: false
+    delete_branch_on_merge: true
+    allow_auto_merge: false
+  branch_protection:
+    strict_required_status_checks: true
+    enforce_admins: false
+    require_conversation_resolution: true
+    require_signed_commits: true
+    required_approving_review_count: 0
+  actions:
+    enabled: true
+    allowed_actions: selected
+    github_owned_allowed: true
+    verified_allowed: true
+    sha_pinning_required: true
+    patterns_allowed:
+      - JSONbored/aio-fleet/.github/workflows/aio-*.yml@*
+      - peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+repositories:
+  awesome-unraid:
+    required_checks:
+      - validate-catalog
+      - CodeQL
+      - Analyze (actions)
+    required_secrets:
+      - AIO_FLEET_BOT_TOKEN
+  sure-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+  simplelogin-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+  khoj-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+  mem0-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+      - Analyze (javascript-typescript)
+  infisical-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+  dify-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)
+  signoz-aio:
+    required_checks:
+      - CodeQL
+      - aio-build / validate-template
+      - aio-build / pinned-actions
+      - aio-build / unit-tests
+      - aio-build / integration-tests
+      - aio-build / dependency-review
+      - Analyze (actions)
+      - Analyze (python)

@@ -62,3 +62,56 @@ profiles:
 
     assert len(changes) == 1  # nosec B101
     assert (repo_path / ".github" / "pull_request_template.md").read_text() == "## Summary\n"  # nosec B101
+
+
+def test_sync_boilerplate_honors_repo_filters_and_templates(tmp_path: Path) -> None:
+    config = tmp_path / "boilerplate.yml"
+    source = tmp_path / "boilerplate" / "aio" / "SECURITY.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Report issues at https://github.com/{{ github_repo }}/security/policy\n")
+    config.write_text(
+        """
+profiles:
+  aio:
+    files:
+      - source: boilerplate/aio/SECURITY.md
+        target: SECURITY.md
+        template: true
+        exclude_repos:
+          - other-aio
+"""
+    )
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    changes = sync_boilerplate(_repo(repo_path), config_path=config, profile="aio", dry_run=False)
+
+    assert len(changes) == 1  # nosec B101
+    assert (repo_path / "SECURITY.md").read_text() == (  # nosec B101
+        "Report issues at https://github.com/JSONbored/example-aio/security/policy\n"
+    )
+
+
+def test_sync_boilerplate_can_create_missing_only(tmp_path: Path) -> None:
+    config = tmp_path / "boilerplate.yml"
+    source = tmp_path / "boilerplate" / "aio" / "docs" / "releases.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("canonical\n")
+    config.write_text(
+        """
+profiles:
+  aio:
+    files:
+      - source: boilerplate/aio/docs/releases.md
+        target: docs/releases.md
+        if_missing: true
+"""
+    )
+    repo_path = tmp_path / "repo"
+    (repo_path / "docs").mkdir(parents=True)
+    (repo_path / "docs" / "releases.md").write_text("app-specific\n")
+
+    changes = sync_boilerplate(_repo(repo_path), config_path=config, profile="aio", dry_run=False)
+
+    assert changes == []  # nosec B101
+    assert (repo_path / "docs" / "releases.md").read_text() == "app-specific\n"  # nosec B101

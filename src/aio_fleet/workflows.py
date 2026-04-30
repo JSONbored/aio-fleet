@@ -156,6 +156,7 @@ jobs:
       extended_integration_pytest_args: {_empty_safe(extended_pytest_args)}
       generator_check_command: {_empty_safe(repo.get('generator_check_command', ''))}
       upstream_digest_arg: {repo.get('upstream_digest_arg', 'UPSTREAM_IMAGE_DIGEST')}
+      catalog_published: {_bool_literal(repo.raw.get('catalog_published', True))}
       xml_paths: |
 {_xml_block(repo)}
       extra_publish_paths: |
