@@ -32,6 +32,37 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve pinned aio-fleet ref
+        id: aio_fleet_ref
+        run: |
+          set -euo pipefail
+          ref="$(
+            python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          for workflow in pathlib.Path(".github/workflows").glob("*.yml"):
+              match = re.search(
+                  r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-publish-release\.yml@([0-9a-f]{40})",
+                  workflow.read_text(),
+              )
+              if match:
+                  print(match.group(1))
+                  sys.exit(0)
+          print("No pinned aio-fleet publish-release caller workflow found", file=sys.stderr)
+          sys.exit(1)
+          PY
+          )"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout aio-fleet release helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/aio-fleet
+          ref: ${{ steps.aio_fleet_ref.outputs.ref }}
+          path: .aio-fleet
+
       - name: Determine release version
         id: version
         env:

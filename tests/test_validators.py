@@ -9,6 +9,7 @@ from aio_fleet.validators import (
     pinned_action_failures,
     publish_platform_failures,
     template_metadata_failures,
+    tracked_artifact_failures,
 )
 
 
@@ -137,6 +138,66 @@ def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> Non
     assert (  # nosec B101
         "example-aio: example-aio.xml Icon must point at JSONbored/awesome-unraid/main/icons/"
     ) in failures
+
+
+def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Changes>bad heading</Changes>
+  <Config Name="Mode" Target="MODE"><Option>one</Option></Config>
+</Container>
+""")
+
+    failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
+
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <Changes> must start with '### YYYY-MM-DD'"
+        in failures
+    )
+    assert (  # nosec B101
+        "example-aio: example-aio.xml Config Mode uses nested <Option> tags; use pipe-delimited values instead"
+        in failures
+    )
+
+
+def test_tracked_artifact_validation_rejects_tfstate_and_pycache(
+    tmp_path: Path,
+) -> None:
+    import subprocess  # nosec B404
+
+    subprocess.run(
+        ["git", "init"], cwd=tmp_path, check=True, capture_output=True
+    )  # nosec
+    (tmp_path / "infra" / "github").mkdir(parents=True)
+    (tmp_path / "infra" / "github" / "terraform.tfstate").write_text("{}\n")
+    (tmp_path / "tests" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "tests" / "__pycache__" / "test.pyc").write_bytes(b"cache")
+    subprocess.run(  # nosec
+        [
+            "git",
+            "add",
+            "-f",
+            "infra/github/terraform.tfstate",
+            "tests/__pycache__/test.pyc",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    failures = tracked_artifact_failures(tmp_path)
+
+    assert any("terraform.tfstate" in failure for failure in failures)  # nosec B101
+    assert any("test.pyc" in failure for failure in failures)  # nosec B101
 
 
 def test_catalog_validation_skips_unpublished_repos(tmp_path: Path) -> None:
