@@ -11,8 +11,7 @@ def test_validate_github_policy_detects_required_check_and_action_drift(
     monkeypatch,
 ) -> None:
     policy = tmp_path / "github-policy.yml"
-    policy.write_text(
-        """
+    policy.write_text("""
 owner: JSONbored
 defaults:
   repository:
@@ -41,8 +40,7 @@ repositories:
   example-aio:
     required_checks:
       - aio-build / validate-template
-"""
-    )
+""")
 
     def fake_gh_json(args: list[str]) -> Any:
         joined = " ".join(args)
@@ -65,14 +63,29 @@ repositories:
                 "required_pull_request_reviews": {"required_approving_review_count": 0},
             }
         if joined == "api repos/JSONbored/example-aio/actions/permissions":
-            return {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True}
-        if joined == "api repos/JSONbored/example-aio/actions/permissions/selected-actions":
-            return {"github_owned_allowed": True, "verified_allowed": True, "patterns_allowed": []}
+            return {
+                "enabled": True,
+                "allowed_actions": "selected",
+                "sha_pinning_required": True,
+            }
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {
+                "github_owned_allowed": True,
+                "verified_allowed": True,
+                "patterns_allowed": [],
+            }
         raise AssertionError(args)
 
     monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
 
-    failures = github_policy.validate_github_policy(policy, repos=["example-aio"], check_secrets=False)
+    failures = github_policy.validate_github_policy(
+        policy, repos=["example-aio"], check_secrets=False
+    )
 
     assert any("required checks drift" in failure for failure in failures)  # nosec B101
-    assert any("selected action patterns drift" in failure for failure in failures)  # nosec B101
+    assert any(
+        "selected action patterns drift" in failure for failure in failures
+    )  # nosec B101

@@ -35,6 +35,18 @@ profiles:
         target: .trunk/trunk.yaml
         exclude_repos:
           - unraid-aio-template
+      - source: boilerplate/aio/.trunk/configs/.hadolint.yaml
+        target: .trunk/configs/.hadolint.yaml
+      - source: boilerplate/aio/.trunk/configs/.isort.cfg
+        target: .trunk/configs/.isort.cfg
+      - source: boilerplate/aio/.trunk/configs/.markdownlint.yaml
+        target: .trunk/configs/.markdownlint.yaml
+      - source: boilerplate/aio/.trunk/configs/.shellcheckrc
+        target: .trunk/configs/.shellcheckrc
+      - source: boilerplate/aio/.trunk/configs/.yamllint.yaml
+        target: .trunk/configs/.yamllint.yaml
+      - source: boilerplate/aio/.trunk/configs/ruff.toml
+        target: .trunk/configs/ruff.toml
       - source: boilerplate/aio/renovate.json
         target: renovate.json
         exclude_repos:
@@ -76,6 +88,18 @@ profiles:
         target: .github/FUNDING.yml
       - source: boilerplate/aio/.trunk/trunk.yaml
         target: .trunk/trunk.yaml
+      - source: boilerplate/aio/.trunk/configs/.hadolint.yaml
+        target: .trunk/configs/.hadolint.yaml
+      - source: boilerplate/aio/.trunk/configs/.isort.cfg
+        target: .trunk/configs/.isort.cfg
+      - source: boilerplate/aio/.trunk/configs/.markdownlint.yaml
+        target: .trunk/configs/.markdownlint.yaml
+      - source: boilerplate/aio/.trunk/configs/.shellcheckrc
+        target: .trunk/configs/.shellcheckrc
+      - source: boilerplate/aio/.trunk/configs/.yamllint.yaml
+        target: .trunk/configs/.yamllint.yaml
+      - source: boilerplate/aio/.trunk/configs/ruff.toml
+        target: .trunk/configs/ruff.toml
       - source: boilerplate/aio/renovate.json
         target: renovate.json
       - source: boilerplate/template/SECURITY.md

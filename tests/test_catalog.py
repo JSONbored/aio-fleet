@@ -42,11 +42,15 @@ def test_sync_catalog_skips_unpublished_xml_but_allows_icons(tmp_path: Path) -> 
         dry_run=False,
     )
 
-    assert [change.target.relative_to(catalog_path).as_posix() for change in changes] == [  # nosec B101
+    assert [
+        change.target.relative_to(catalog_path).as_posix() for change in changes
+    ] == [  # nosec B101
         "icons/example.png"
     ]
     assert not (catalog_path / "example-aio.xml").exists()  # nosec B101
-    assert (catalog_path / "icons" / "example.png").read_bytes() == b"icon"  # nosec B101
+    assert (
+        catalog_path / "icons" / "example.png"
+    ).read_bytes() == b"icon"  # nosec B101
 
 
 def test_unpublished_xml_targets_reports_blocked_assets(tmp_path: Path) -> None:

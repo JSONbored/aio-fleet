@@ -4,6 +4,12 @@
 .venv/
 __pycache__/
 *.py[cod]
+.trunk/actions
+.trunk/logs
+.trunk/notifications
+.trunk/out
+.trunk/plugins
+.trunk/tools
 dist/
 build/
 *.egg-info/

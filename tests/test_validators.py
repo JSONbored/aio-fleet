@@ -59,14 +59,12 @@ def _write_minimal_derived_repo(tmp_path: Path) -> None:
 def test_pinned_action_validation_rejects_tagged_actions(tmp_path: Path) -> None:
     workflow_dir = tmp_path / ".github" / "workflows"
     workflow_dir.mkdir(parents=True)
-    (workflow_dir / "build.yml").write_text(
-        """
+    (workflow_dir / "build.yml").write_text("""
 jobs:
   test:
     steps:
       - uses: actions/checkout@v6
-"""
-    )
+""")
 
     assert pinned_action_failures(tmp_path) == [  # nosec B101
         ".github/workflows/build.yml: action is not pinned to a full SHA -> actions/checkout@v6"
@@ -92,24 +90,22 @@ def test_derived_repo_validation_rejects_template_leftovers(tmp_path: Path) -> N
 
 def test_derived_repo_validation_loads_component_templates(tmp_path: Path) -> None:
     _write_minimal_derived_repo(tmp_path)
-    (tmp_path / "components.toml").write_text(
-        """
+    (tmp_path / "components.toml").write_text("""
 [components.agent]
 template = "agent.xml"
-"""
-    )
+""")
     (tmp_path / "scripts" / "components.py").write_text("ok\n")
 
-    assert derived_repo_failures(tmp_path) == ["missing required file: agent.xml"]  # nosec B101
+    assert derived_repo_failures(tmp_path) == [
+        "missing required file: agent.xml"
+    ]  # nosec B101
 
 
 def test_publish_platform_validation_rejects_unhandled_arm64(tmp_path: Path) -> None:
-    (tmp_path / "Dockerfile").write_text(
-        """
+    (tmp_path / "Dockerfile").write_text("""
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in amd64) echo ok ;; *) exit 1 ;; esac
-"""
-    )
+""")
 
     failures = publish_platform_failures(_repo(tmp_path))
 
@@ -119,8 +115,7 @@ RUN case "${TARGETARCH}" in amd64) echo ok ;; *) exit 1 ;; esac
 
 
 def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> None:
-    (tmp_path / "example-aio.xml").write_text(
-        """<?xml version="1.0"?>
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
   <Project>https://github.com/JSONbored/example-aio</Project>
@@ -130,8 +125,7 @@ def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> Non
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/wrong.xml</TemplateURL>
   <Icon>https://example.com/icon.png</Icon>
 </Container>
-"""
-    )
+""")
 
     failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
 
@@ -163,15 +157,16 @@ def test_catalog_validation_skips_unpublished_repos(tmp_path: Path) -> None:
     ]
 
 
-def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(tmp_path: Path) -> None:
+def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
+    tmp_path: Path,
+) -> None:
     repo = _repo(tmp_path / "missing-repo")
     manifest = _Manifest()
     manifest.repos = {"example-aio": repo}
     catalog_path = tmp_path / "catalog"
     (catalog_path / "icons").mkdir(parents=True)
     (catalog_path / "icons" / "example.png").write_bytes(b"icon")
-    (catalog_path / "example-aio.xml").write_text(
-        """<?xml version="1.0"?>
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
   <Project>https://github.com/JSONbored/example-aio</Project>
@@ -181,7 +176,6 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(tmp_p
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
 </Container>
-"""
-    )
+""")
 
     assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101

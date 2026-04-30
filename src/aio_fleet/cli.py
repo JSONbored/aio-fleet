@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -15,18 +15,30 @@ from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
     catalog_asset_failures,
     catalog_repo_failures,
-    pinned_action_failures,
     derived_repo_failures,
+    pinned_action_failures,
     repo_policy_failures,
 )
 from aio_fleet.workflows import (
-    rendered_workflows,
     render_caller_workflow,
+    rendered_workflows,
 )
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=False, text=True, capture_output=True)
+    return subprocess.run(  # nosec B603
+        cmd, cwd=cwd, check=False, text=True, capture_output=True
+    )
+
+
+def _repo_python(repo_path: Path) -> str:
+    for candidate in (
+        repo_path / ".venv" / "bin" / "python",
+        repo_path / ".venv" / "bin" / "python3",
+    ):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return sys.executable
 
 
 def _current_ref() -> str:
@@ -68,7 +80,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if not repo.path.exists():
             failures.append(f"{name}: repo path missing: {repo.path}")
             continue
-        for required in ["Dockerfile", "scripts/validate-template.py", "scripts/validate-derived-repo.sh"]:
+        for required in [
+            "Dockerfile",
+            "scripts/validate-template.py",
+            "scripts/validate-derived-repo.sh",
+        ]:
             if not (repo.path / required).exists():
                 failures.append(f"{name}: missing {required}")
         for workflow in rendered_workflows(manifest, repo, "0" * 40):
@@ -108,7 +124,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         branch = _run(["git", "branch", "--show-current"], cwd=repo.path)
         status = _run(["git", "status", "--short"], cwd=repo.path)
         dirty = "dirty" if status.stdout.strip() else "clean"
-        drift = _run(["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"], cwd=repo.path)
+        drift = _run(
+            ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
+            cwd=repo.path,
+        )
         drift_state = ""
         ahead = "?"
         behind = "?"
@@ -133,13 +152,15 @@ def cmd_status(args: argparse.Namespace) -> int:
                     "number,url,isDraft,statusCheckRollup",
                     "--jq",
                     (
-                        ".[0] // null | if . == null then \"no-pr\" "
-                        "else \"#\\(.number) \\(.url) draft=\\(.isDraft) checks=\\(.statusCheckRollup | length)\" end"
+                        '.[0] // null | if . == null then "no-pr" '
+                        'else "#\\(.number) \\(.url) draft=\\(.isDraft) checks=\\(.statusCheckRollup | length)" end'
                     ),
                 ],
                 cwd=repo.path,
             )
-            current_pr_state = f" current_pr={current_pr.stdout.strip() or 'pr-unknown'}"
+            current_pr_state = (
+                f" current_pr={current_pr.stdout.strip() or 'pr-unknown'}"
+            )
             open_prs = _run(
                 [
                     "gh",
@@ -161,8 +182,14 @@ def cmd_status(args: argparse.Namespace) -> int:
                 policy_state = " policy=manual"
             else:
                 try:
-                    failures = validate_github_policy(Path(args.policy), repos=[name], check_secrets=False)
-                    policy_state = " policy=ok" if not failures else f" policy={len(failures)}-drift"
+                    failures = validate_github_policy(
+                        Path(args.policy), repos=[name], check_secrets=False
+                    )
+                    policy_state = (
+                        " policy=ok"
+                        if not failures
+                        else f" policy={len(failures)}-drift"
+                    )
                 except Exception as exc:
                     policy_state = f" policy=unknown:{exc}"
         catalog_state = f" {_catalog_status(repo, catalog_path)}"
@@ -201,7 +228,9 @@ def _catalog_asset_targets(repo: RepoConfig) -> list[str]:
     ]
 
 
-def _publish_status(repo: RepoConfig, *, dirty: str, behind: str, policy_state: str) -> str:
+def _publish_status(
+    repo: RepoConfig, *, dirty: str, behind: str, policy_state: str
+) -> str:
     if repo.publish_profile == "template":
         return "publish=manual"
     if dirty != "clean":
@@ -221,7 +250,9 @@ def cmd_render_workflow(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sync_repo(repo: RepoConfig, manifest: FleetManifest, ref: str, dry_run: bool) -> bool:
+def _sync_repo(
+    repo: RepoConfig, manifest: FleetManifest, ref: str, dry_run: bool
+) -> bool:
     changes = 0
     for path, rendered in rendered_workflows(manifest, repo, ref).items():
         current = path.read_text() if path.exists() else ""
@@ -363,7 +394,10 @@ def cmd_validate_derived(args: argparse.Namespace) -> int:
         template_xml=args.template_xml or os.environ.get("TEMPLATE_XML"),
     )
     if failures:
-        print("\n".join(f"template validation error: {failure}" for failure in failures), file=sys.stderr)
+        print(
+            "\n".join(f"template validation error: {failure}" for failure in failures),
+            file=sys.stderr,
+        )
         return 1
     print("Derived repo validation passed.")
     return 0
@@ -411,8 +445,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for repo in repos:
         print(f"== {repo.name} ==")
         for cmd in (
-            [sys.executable, "scripts/validate-template.py", "--all"],
-            ["bash", "scripts/validate-derived-repo.sh", "."],
+            [_repo_python(repo.path), "scripts/validate-template.py", "--all"],
+            [
+                sys.executable,
+                "-m",
+                "aio_fleet.cli",
+                "validate-derived",
+                "--repo-path",
+                ".",
+            ],
         ):
             result = _run(cmd, cwd=repo.path)
             if result.stdout:
@@ -425,12 +466,57 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_trunk_audit(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
+    failed = False
+    for repo in repos:
+        trunk_config = repo.path / ".trunk" / "trunk.yaml"
+        if not trunk_config.exists():
+            print(f"{repo.name}: trunk=skipped:no-config")
+            continue
+        command = [
+            "trunk",
+            "check",
+            "--show-existing",
+            "--all",
+            "--no-fix",
+            "--no-progress",
+            "--color=false",
+        ]
+        result = _run(command, cwd=repo.path)
+        if result.returncode == 0:
+            print(f"{repo.name}: trunk=ok")
+            continue
+        failed = True
+        issue_line = next(
+            (
+                line.strip()
+                for line in result.stdout.splitlines()
+                if "issues" in line.lower()
+            ),
+            "",
+        )
+        detail = f" {issue_line}" if issue_line else ""
+        print(f"{repo.name}: trunk=failed exit={result.returncode}{detail}")
+        if args.verbose:
+            if result.stdout:
+                print(result.stdout, end="")
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end="")
+    return 1 if failed else 0
+
+
 def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
     changed = 0
     for repo in repos:
-        profile = str(repo.get("boilerplate_profile", "aio")) if args.profile == "auto" else args.profile
+        profile = (
+            str(repo.get("boilerplate_profile", "aio"))
+            if args.profile == "auto"
+            else args.profile
+        )
         changes = sync_boilerplate(
             repo,
             config_path=Path(args.config),
@@ -521,7 +607,21 @@ def _boilerplate_commit_and_pr(
     )
     number = existing.stdout.strip()
     if number:
-        result = _run(["gh", "pr", "edit", number, "--repo", repo.github_repo, "--title", title, "--body", body], cwd=repo.path)
+        result = _run(
+            [
+                "gh",
+                "pr",
+                "edit",
+                number,
+                "--repo",
+                repo.github_repo,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            cwd=repo.path,
+        )
     else:
         result = _run(
             [
@@ -552,7 +652,11 @@ def _boilerplate_commit_and_pr(
 
 def cmd_sync_catalog(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
-    repos = [_repo_for_identifier(manifest, args.repo)] if args.repo else list(manifest.repos.values())
+    repos = (
+        [_repo_for_identifier(manifest, args.repo)]
+        if args.repo
+        else list(manifest.repos.values())
+    )
     if args.repo_path:
         if len(repos) != 1:
             print("--repo-path can only be used with --repo", file=sys.stderr)
@@ -639,7 +743,12 @@ def _catalog_commit_and_pr(
     relative_paths = [str(path.relative_to(catalog_path)) for path in paths]
     commands = [
         ["git", "config", "user.name", "github-actions[bot]"],
-        ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        [
+            "git",
+            "config",
+            "user.email",
+            "41898282+github-actions[bot]@users.noreply.github.com",
+        ],
         ["git", "checkout", "-B", branch],
         ["git", "add", *relative_paths],
         ["git", "commit", "-m", title],
@@ -679,9 +788,27 @@ def _catalog_commit_and_pr(
     )
     number = existing.stdout.strip()
     if number:
-        result = _run(["gh", "pr", "edit", number, "--title", title, "--body", body], cwd=catalog_path)
+        result = _run(
+            ["gh", "pr", "edit", number, "--title", title, "--body", body],
+            cwd=catalog_path,
+        )
     else:
-        result = _run(["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body], cwd=catalog_path)
+        result = _run(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--base",
+                base,
+                "--head",
+                branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            cwd=catalog_path,
+        )
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -781,6 +908,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--all", action="store_true")
     validate.add_argument("--repo")
     validate.set_defaults(func=cmd_validate)
+
+    trunk_audit = sub.add_parser("trunk-audit")
+    trunk_audit.add_argument("--repo")
+    trunk_audit.add_argument("--verbose", action="store_true")
+    trunk_audit.set_defaults(func=cmd_trunk_audit)
     return parser
 
 

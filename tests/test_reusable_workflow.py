@@ -16,7 +16,7 @@ def _workflow_text() -> str:
 
 
 def _workflow() -> dict[str, object]:
-    return yaml.load(_workflow_text(), Loader=yaml.BaseLoader)
+    return yaml.load(_workflow_text(), Loader=yaml.BaseLoader)  # nosec B506
 
 
 def test_reusable_workflow_defines_expected_workflow_call_inputs() -> None:
@@ -51,7 +51,9 @@ def test_reusable_build_workflow_owns_pytest_upload_centrally() -> None:
     text = _workflow_text()
 
     assert "uses: ./.github/actions/run-pytest" not in text  # nosec B101
-    assert "trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803" in text  # nosec B101
+    assert (
+        "trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803" in text
+    )  # nosec B101
     assert "reports/pytest-unit.xml" in text  # nosec B101
     assert "reports/pytest-integration.xml" in text  # nosec B101
     assert "reports/pytest-agent-integration.xml" in text  # nosec B101
@@ -63,7 +65,7 @@ def test_reusable_build_workflow_validates_caller_drift_centrally() -> None:
 
     assert "Verify caller workflow drift" in text  # nosec B101
     assert "python -m aio_fleet.cli" in text  # nosec B101
-    assert "--repo \"${{ inputs.app_slug }}\"" in text  # nosec B101
+    assert '--repo "${{ inputs.app_slug }}"' in text  # nosec B101
     assert "--repo-path ." in text  # nosec B101
 
 
@@ -81,7 +83,9 @@ def test_reusable_build_workflow_installs_fleet_validator_before_unit_tests() ->
     unit_job = text.split("  unit-tests:", 1)[1].split("  integration-tests:", 1)[0]
     assert "Checkout aio-fleet validator" in unit_job  # nosec B101
     assert "Install aio-fleet validator" in unit_job  # nosec B101
-    assert unit_job.index("Install aio-fleet validator") < unit_job.index("Run unit and template tests")  # nosec B101
+    assert unit_job.index("Install aio-fleet validator") < unit_job.index(
+        "Run unit and template tests"
+    )  # nosec B101
 
 
 def test_reusable_build_workflow_uses_fleet_catalog_sync() -> None:
@@ -92,11 +96,15 @@ def test_reusable_build_workflow_uses_fleet_catalog_sync() -> None:
     assert "CATALOG_PUBLISHED" in text  # nosec B101
 
 
-def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> None:
+def test_reusable_workflow_preserves_submodule_checkout_for_repos_that_need_it() -> (
+    None
+):
     text = _workflow_text()
 
     assert "checkout_submodules:" in text  # nosec B101
-    assert text.count("submodules: ${{ inputs.checkout_submodules }}") >= 7  # nosec B101
+    assert (
+        text.count("submodules: ${{ inputs.checkout_submodules }}") >= 7
+    )  # nosec B101
 
 
 def test_reusable_workflow_keeps_publish_gates_behind_integration_success() -> None:

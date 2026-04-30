@@ -3,6 +3,7 @@ provider "github" {
 }
 
 resource "github_repository" "aio" {
+  #checkov:skip=CKV_GIT_1: Public repos are intentional for Community Apps and portfolio visibility.
   for_each = var.repositories
 
   name                   = each.key
@@ -39,6 +40,8 @@ resource "github_repository_vulnerability_alerts" "aio" {
 }
 
 resource "github_branch_protection" "main" {
+  #checkov:skip=CKV_GIT_5: Required review counts are policy-managed per repository.
+  #checkov:skip=CKV_GIT_6: Signed commit enforcement is policy-managed per repository.
   for_each = {
     for name, repo in var.repositories : name => repo
     if length(repo.required_checks) > 0

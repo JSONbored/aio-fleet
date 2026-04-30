@@ -36,6 +36,7 @@ python -m aio_fleet validate-derived --repo-path ../sure-aio
 python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
 python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
 python -m aio_fleet validate-github --check-secrets
+python -m aio_fleet trunk-audit
 python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run
 python -m aio_fleet sync-boilerplate --repo sure-aio --dry-run
 python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>

@@ -35,7 +35,9 @@ def sync_catalog_assets(
             source = repo.path / source_rel
             target = catalog_path / target_rel
             if not source.exists():
-                raise FileNotFoundError(f"{repo.name}: catalog source missing: {source_rel}")
+                raise FileNotFoundError(
+                    f"{repo.name}: catalog source missing: {source_rel}"
+                )
 
             current = target.read_bytes() if target.exists() else None
             desired = source.read_bytes()
@@ -43,7 +45,11 @@ def sync_catalog_assets(
                 continue
 
             action = "create" if current is None else "update"
-            changes.append(CatalogSyncChange(repo=repo.name, source=source, target=target, action=action))
+            changes.append(
+                CatalogSyncChange(
+                    repo=repo.name, source=source, target=target, action=action
+                )
+            )
             if not dry_run:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
@@ -51,7 +57,9 @@ def sync_catalog_assets(
     return changes
 
 
-def unpublished_xml_targets(manifest: FleetManifest, repos: list[RepoConfig]) -> list[str]:
+def unpublished_xml_targets(
+    manifest: FleetManifest, repos: list[RepoConfig]
+) -> list[str]:
     targets: list[str] = []
     for repo in repos:
         if repo.raw.get("catalog_published") is not False:
@@ -74,6 +82,8 @@ def _catalog_assets(repo: RepoConfig) -> list[tuple[str, str]]:
         source = str(asset.get("source", "")).strip()
         target = str(asset.get("target", "")).strip()
         if not source or not target:
-            raise ValueError(f"{repo.name}: catalog_assets entries require source and target")
+            raise ValueError(
+                f"{repo.name}: catalog_assets entries require source and target"
+            )
         pairs.append((source, target))
     return pairs

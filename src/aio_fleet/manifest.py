@@ -120,7 +120,13 @@ def validate_manifest(manifest: FleetManifest) -> None:
         raise ManifestError("fleet.yml must define at least one repo")
 
     for name, repo in manifest.repos.items():
-        for key in ["path", "app_slug", "image_name", "docker_cache_scope", "pytest_image_tag"]:
+        for key in [
+            "path",
+            "app_slug",
+            "image_name",
+            "docker_cache_scope",
+            "pytest_image_tag",
+        ]:
             if key not in repo.raw:
                 raise ManifestError(f"{name} missing required key: {key}")
         if repo.publish_profile not in {
@@ -130,6 +136,8 @@ def validate_manifest(manifest: FleetManifest) -> None:
             "dify",
             "signoz-suite",
         }:
-            raise ManifestError(f"{name} has unsupported publish_profile: {repo.publish_profile}")
+            raise ManifestError(
+                f"{name} has unsupported publish_profile: {repo.publish_profile}"
+            )
         if repo.publish_profile == "signoz-suite" and "components" not in repo.raw:
             raise ManifestError(f"{name} signoz-suite profile requires components")
