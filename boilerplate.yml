@@ -1,0 +1,7 @@
+profiles:
+  aio:
+    files:
+      - source: boilerplate/aio/.github/pull_request_template.md
+        target: .github/pull_request_template.md
+      - source: boilerplate/aio/.github/ISSUE_TEMPLATE/config.yml
+        target: .github/ISSUE_TEMPLATE/config.yml

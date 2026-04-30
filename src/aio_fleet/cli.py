@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import argparse
 import difflib
-import re
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
-from urllib.parse import urlparse
 
+from aio_fleet.boilerplate import sync_boilerplate
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
+from aio_fleet.validators import (
+    PINNED_REUSABLE_WORKFLOW,
+    catalog_asset_failures,
+    catalog_repo_failures,
+    pinned_action_failures,
+    repo_policy_failures,
+)
 from aio_fleet.workflows import (
     rendered_workflows,
     render_caller_workflow,
-    workflow_path_for,
-)
-
-PINNED_REUSABLE_WORKFLOW = re.compile(
-    r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-[a-z-]+\.yml@([0-9a-f]{40})"
 )
 
 
@@ -57,74 +57,6 @@ def _reusable_ref_from_caller(repo_path: Path) -> str:
     return match.group(1)
 
 
-def _catalog_target_from_icon(icon: str) -> str | None:
-    value = icon.strip()
-    if not value:
-        return None
-    if value.startswith("icons/"):
-        return value
-
-    parsed = urlparse(value)
-    path = parsed.path.lstrip("/")
-    for marker in ("/main/", "/master/"):
-        if marker in path:
-            target = path.partition(marker)[2]
-            return target if target.startswith("icons/") else None
-    return None
-
-
-def _catalog_asset_failures(repo: RepoConfig) -> list[str]:
-    assets = repo.raw.get("catalog_assets", [])
-    if not isinstance(assets, list):
-        return [f"{repo.name}: catalog_assets must be a list"]
-
-    failures: list[str] = []
-    target_sources: dict[str, str] = {}
-    xml_sources: list[str] = []
-    xml_icon_targets: set[str] = set()
-
-    for asset in assets:
-        if not isinstance(asset, dict):
-            failures.append(f"{repo.name}: catalog_assets entries must be mappings")
-            continue
-        source = str(asset.get("source", "")).strip()
-        target = str(asset.get("target", "")).strip()
-        if not source or not target:
-            failures.append(f"{repo.name}: catalog_assets entries require source and target")
-            continue
-
-        target_sources[target] = source
-        if target.endswith(".xml"):
-            xml_sources.append(source)
-        if not (repo.path / source).exists():
-            failures.append(f"{repo.name}: catalog_assets source missing: {source}")
-
-    for source in xml_sources:
-        xml_path = repo.path / source
-        if not xml_path.exists():
-            continue
-        try:
-            root = ET.parse(xml_path).getroot()
-        except ET.ParseError as exc:
-            failures.append(f"{repo.name}: unable to parse catalog XML {source}: {exc}")
-            continue
-
-        icon_target = _catalog_target_from_icon(root.findtext("Icon") or "")
-        if not icon_target:
-            continue
-        xml_icon_targets.add(icon_target)
-
-    for target in sorted(target_sources):
-        if not target.startswith("icons/"):
-            continue
-        if target not in xml_icon_targets:
-            failures.append(
-                f"{repo.name}: catalog_assets target {target} is not referenced by any catalog XML Icon"
-            )
-
-    return failures
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     failures: list[str] = []
@@ -144,7 +76,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 failures.append(
                     f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
                 )
-        failures.extend(_catalog_asset_failures(repo))
+        failures.extend(catalog_asset_failures(repo))
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
@@ -319,6 +251,37 @@ def cmd_verify_caller(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_actions(args: argparse.Namespace) -> int:
+    failures = pinned_action_failures(Path(args.repo_path).resolve())
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print("All workflow actions are pinned to full commit SHAs.")
+    return 0
+
+
+def cmd_validate_repo(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    repo_at_path = _repo_with_path(repo, Path(args.repo_path).resolve())
+    failures = repo_policy_failures(repo_at_path, manifest)
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print(f"{repo.name} fleet policy checks passed")
+    return 0
+
+
+def cmd_validate_catalog(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    failures = catalog_repo_failures(manifest, Path(args.catalog_path).resolve())
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print("catalog checks passed")
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = manifest.repos.values() if args.all else [manifest.repo(args.repo)]
@@ -338,6 +301,26 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 failed = True
                 break
     return 1 if failed else 0
+
+
+def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
+    changed = 0
+    for repo in repos:
+        changes = sync_boilerplate(
+            repo,
+            config_path=Path(args.config),
+            profile=args.profile,
+            dry_run=args.dry_run,
+        )
+        changed += len(changes)
+        for change in changes:
+            relative = change.target.relative_to(repo.path)
+            prefix = "would " if args.dry_run else ""
+            print(f"{repo.name}: {prefix}{change.action} {relative}")
+    print(f"boilerplate changes: {changed}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -365,12 +348,32 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--dry-run", action="store_true")
     sync.set_defaults(func=cmd_sync_workflows)
 
+    boilerplate = sub.add_parser("sync-boilerplate")
+    boilerplate.add_argument("--repo")
+    boilerplate.add_argument("--profile", default="aio")
+    boilerplate.add_argument("--config", default="boilerplate.yml")
+    boilerplate.add_argument("--dry-run", action="store_true")
+    boilerplate.set_defaults(func=cmd_sync_boilerplate)
+
     verify = sub.add_parser("verify-caller")
     verify.add_argument("--repo", required=True)
     verify.add_argument("--repo-path", default=".")
     verify.add_argument("--ref")
     verify.add_argument("--diff", action="store_true")
     verify.set_defaults(func=cmd_verify_caller)
+
+    actions = sub.add_parser("validate-actions")
+    actions.add_argument("--repo-path", default=".")
+    actions.set_defaults(func=cmd_validate_actions)
+
+    repo = sub.add_parser("validate-repo")
+    repo.add_argument("--repo", required=True)
+    repo.add_argument("--repo-path", default=".")
+    repo.set_defaults(func=cmd_validate_repo)
+
+    catalog = sub.add_parser("validate-catalog")
+    catalog.add_argument("--catalog-path", required=True)
+    catalog.set_defaults(func=cmd_validate_catalog)
 
     validate = sub.add_parser("validate")
     validate.add_argument("--all", action="store_true")

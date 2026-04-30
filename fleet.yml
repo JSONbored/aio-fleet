@@ -16,6 +16,7 @@ repos:
   unraid-aio-template:
     path: /Users/shadowbook/Documents/unraid-aio-template
     public: false
+    catalog_published: false
     workflow_name: CI / AIO Template
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template
@@ -132,6 +133,7 @@ repos:
   dify-aio:
     path: /Users/shadowbook/Documents/dify-aio
     public: true
+    catalog_published: false
     workflow_name: CI / Dify AIO
     app_slug: dify-aio
     image_name: jsonbored/dify-aio

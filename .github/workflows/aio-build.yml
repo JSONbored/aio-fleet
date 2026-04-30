@@ -390,6 +390,39 @@ jobs:
       - name: Install validation dependencies
         run: python -m pip install -r requirements-dev.txt
 
+      - name: Resolve pinned aio-fleet ref
+        id: aio_fleet_ref
+        run: |
+          set -euo pipefail
+          ref="$(
+            python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          workflow = pathlib.Path(".github/workflows/build.yml")
+          match = re.search(
+              r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-build\.yml@([0-9a-f]{40})",
+              workflow.read_text(),
+          )
+          if not match:
+              print(f"{workflow} does not call aio-fleet at a pinned SHA", file=sys.stderr)
+              sys.exit(1)
+          print(match.group(1))
+          PY
+          )"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout aio-fleet validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/aio-fleet
+          ref: ${{ steps.aio_fleet_ref.outputs.ref }}
+          path: .aio-fleet
+
+      - name: Install aio-fleet validator
+        run: python -m pip install ./.aio-fleet
+
       - name: Validate shell and python scripts
         if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.tooling_related == 'true' }}
         run: |
@@ -412,6 +445,14 @@ jobs:
       - name: Validate XML
         if: ${{ needs.detect-changes.outputs.build_related == 'true' || needs.detect-changes.outputs.xml_related == 'true' }}
         run: python3 scripts/validate-template.py --all
+
+      - name: Validate fleet repo policy
+        run: |
+          python -m aio_fleet.cli \
+            --manifest .aio-fleet/fleet.yml \
+            validate-repo \
+            --repo "${{ inputs.app_slug }}" \
+            --repo-path .
 
       - name: Validate derived repo placeholders
         run: |
@@ -493,35 +534,7 @@ jobs:
       - name: Enforce pinned action SHAs
         if: ${{ needs.detect-changes.outputs.workflow_related == 'true' }}
         run: |
-          python3 - <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          workflow_paths = [
-              *pathlib.Path(".github/workflows").glob("*.yml"),
-              *pathlib.Path(".github/actions").glob("*/action.yml"),
-          ]
-          pattern = re.compile(r"^\s*uses:\s*([^@\s]+)@([^\s#]+)")
-          sha_pattern = re.compile(r"^[0-9a-f]{40}$")
-          failures = []
-
-          for path in sorted(workflow_paths):
-              for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-                  match = pattern.match(line)
-                  if not match:
-                      continue
-                  target, ref = match.groups()
-                  if target.startswith("./"):
-                      continue
-                  if not sha_pattern.fullmatch(ref):
-                      failures.append(f"{path}:{lineno}: action is not pinned to a full SHA -> {line.strip()}")
-
-          if failures:
-              print("\n".join(failures), file=sys.stderr)
-              sys.exit(1)
-          print("All workflow actions are pinned to full commit SHAs.")
-          PY
+          python -m aio_fleet.cli validate-actions --repo-path .
 
   dependency-review:
     if: ${{ github.event_name == 'pull_request' }}

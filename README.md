@@ -26,6 +26,9 @@ python -m aio_fleet status --github
 python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all
+python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
+python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
+python -m aio_fleet sync-boilerplate --repo sure-aio --dry-run
 python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>
 ```
 
@@ -48,4 +51,6 @@ infrastructure as code.
 - [Architecture](docs/architecture.md)
 - [Repository onboarding](docs/onboarding.md)
 - [Release model](docs/release-model.md)
+- [Required checks](docs/required-checks.md)
+- [Dify launch gate](docs/dify-launch-gate.md)
 - [Content series outline](docs/content-series.md)
