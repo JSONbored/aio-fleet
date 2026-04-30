@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import fnmatch
+import json
 import os
 import subprocess  # nosec B404
 import sys
@@ -13,11 +15,13 @@ from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
+    TRACKED_ARTIFACT_PATTERNS,
     catalog_asset_failures,
     catalog_repo_failures,
     derived_repo_failures,
     pinned_action_failures,
     repo_policy_failures,
+    tracked_artifact_failures,
 )
 from aio_fleet.workflows import (
     render_caller_workflow,
@@ -97,6 +101,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
                 )
         failures.extend(catalog_asset_failures(repo))
+        failures.extend(tracked_artifact_failures(repo.path))
     if args.github:
         failures.extend(
             validate_github_policy(
@@ -240,6 +245,236 @@ def _publish_status(
     if policy_state.startswith(" policy=") and policy_state != " policy=ok":
         return "publish=blocked:policy"
     return "publish=source-ready"
+
+
+def cmd_debt_report(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
+    current_ref = args.ref or _current_ref()
+    catalog_failures = (
+        catalog_repo_failures(manifest, catalog_path) if catalog_path else []
+    )
+    report: dict[str, object] = {
+        "ref": current_ref,
+        "catalog_path": str(catalog_path) if catalog_path else None,
+        "repos": [],
+    }
+
+    for repo in manifest.repos.values():
+        git_status = _run(["git", "status", "--short"], cwd=repo.path)
+        dirty = "dirty" if git_status.stdout.strip() else "clean"
+        drift = _run(
+            ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
+            cwd=repo.path,
+        )
+        ahead = behind = "?"
+        if drift.returncode == 0:
+            ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
+
+        workflow_drift = _workflow_drift(repo, manifest, current_ref)
+        boilerplate_drift = [
+            str(change.target.relative_to(repo.path))
+            for change in sync_boilerplate(
+                repo,
+                config_path=Path(args.boilerplate_config),
+                profile=str(repo.get("boilerplate_profile", "aio")),
+                dry_run=True,
+            )
+        ]
+        repo_catalog_failures = [
+            failure
+            for failure in catalog_failures
+            if failure.startswith(f"{repo.name}:")
+        ]
+        github_policy_failures: list[str] = []
+        if args.github:
+            try:
+                github_policy_failures = validate_github_policy(
+                    Path(args.policy), repos=[repo.name], check_secrets=False
+                )
+            except Exception as exc:
+                github_policy_failures = [f"{repo.name}: github policy unknown: {exc}"]
+        trunk_state = _trunk_state(repo.path) if args.trunk else "not-run"
+        open_prs = _open_prs(repo) if args.github else "not-run"
+        repo_report = {
+            "repo": repo.name,
+            "path": str(repo.path),
+            "dirty": dirty,
+            "ahead": ahead,
+            "behind": behind,
+            "publish": _publish_status(
+                repo,
+                dirty=dirty,
+                behind=behind,
+                policy_state=(
+                    " policy=ok" if not github_policy_failures else " policy=drift"
+                ),
+            ),
+            "workflow_drift": workflow_drift,
+            "boilerplate_drift": boilerplate_drift,
+            "catalog_failures": repo_catalog_failures,
+            "pinned_action_failures": pinned_action_failures(repo.path),
+            "tracked_artifacts": tracked_artifact_failures(repo.path),
+            "untracked_artifacts": _untracked_artifacts(repo.path),
+            "github_policy_failures": github_policy_failures,
+            "open_prs": open_prs,
+            "trunk": trunk_state,
+            "dify_launch": _dify_launch_state(repo, repo_catalog_failures),
+        }
+        report["repos"].append(repo_report)  # type: ignore[index]
+
+    repos = report["repos"]  # type: ignore[assignment]
+    report["summary"] = {
+        "repos": len(repos),
+        "workflow_drift": sum(bool(item["workflow_drift"]) for item in repos),
+        "boilerplate_drift": sum(bool(item["boilerplate_drift"]) for item in repos),
+        "catalog_failures": len(catalog_failures),
+        "tracked_artifacts": sum(bool(item["tracked_artifacts"]) for item in repos),
+        "untracked_artifacts": sum(bool(item["untracked_artifacts"]) for item in repos),
+    }
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.format == "markdown":
+        print(_debt_report_markdown(report))
+    else:
+        print(_debt_report_text(report))
+    return 0
+
+
+def _workflow_drift(repo: RepoConfig, manifest: FleetManifest, ref: str) -> list[str]:
+    drift: list[str] = []
+    for path, expected in rendered_workflows(manifest, repo, ref).items():
+        if not path.exists():
+            drift.append(str(path.relative_to(repo.path)))
+            continue
+        if path.read_text() != expected:
+            drift.append(str(path.relative_to(repo.path)))
+    return drift
+
+
+def _untracked_artifacts(repo_path: Path) -> list[str]:
+    result = _run(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo_path
+    )
+    if result.returncode != 0:
+        return [f"unable to inspect untracked files: {result.stderr.strip()}"]
+    artifacts: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("?? "):
+            continue
+        path = line[3:].strip()
+        if any(fnmatch.fnmatch(path, pattern) for pattern in TRACKED_ARTIFACT_PATTERNS):
+            artifacts.append(path)
+    return artifacts
+
+
+def _trunk_state(repo_path: Path) -> str:
+    if not (repo_path / ".trunk" / "trunk.yaml").exists():
+        return "skipped:no-config"
+    result = _run(
+        [
+            "trunk",
+            "check",
+            "--show-existing",
+            "--all",
+            "--no-fix",
+            "--no-progress",
+            "--color=false",
+        ],
+        cwd=repo_path,
+    )
+    if result.returncode == 0:
+        return "ok"
+    issue_line = next(
+        (
+            line.strip()
+            for line in result.stdout.splitlines()
+            if "issues" in line.lower()
+        ),
+        "",
+    )
+    return f"failed:{issue_line or result.returncode}"
+
+
+def _open_prs(repo: RepoConfig) -> str:
+    result = _run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo.github_repo,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--jq",
+            "length",
+        ],
+        cwd=repo.path,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def _dify_launch_state(repo: RepoConfig, catalog_failures: list[str]) -> str:
+    if repo.name != "dify-aio":
+        return "not-applicable"
+    if repo.raw.get("catalog_published") is not True:
+        return "held"
+    if catalog_failures:
+        return "blocked:catalog"
+    return "catalog-ready"
+
+
+def _debt_report_text(report: dict[str, object]) -> str:
+    lines = ["AIO fleet debt report"]
+    for item in report["repos"]:  # type: ignore[index]
+        problems = []
+        for key in [
+            "workflow_drift",
+            "boilerplate_drift",
+            "catalog_failures",
+            "pinned_action_failures",
+            "tracked_artifacts",
+            "untracked_artifacts",
+            "github_policy_failures",
+        ]:
+            if item[key]:  # type: ignore[index]
+                problems.append(key)
+        status = "ok" if not problems else ",".join(problems)
+        lines.append(
+            f"{item['repo']}: {status} publish={item['publish']} trunk={item['trunk']} open_prs={item['open_prs']}"  # type: ignore[index]
+        )
+    lines.append(f"summary: {report['summary']}")
+    return "\n".join(lines)
+
+
+def _debt_report_markdown(report: dict[str, object]) -> str:
+    lines = [
+        "# AIO Fleet Debt Report",
+        "",
+        "| Repo | Status | Publish | Trunk | Open PRs |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in report["repos"]:  # type: ignore[index]
+        problems = []
+        for key in [
+            "workflow_drift",
+            "boilerplate_drift",
+            "catalog_failures",
+            "pinned_action_failures",
+            "tracked_artifacts",
+            "untracked_artifacts",
+            "github_policy_failures",
+        ]:
+            if item[key]:  # type: ignore[index]
+                problems.append(key.replace("_", " "))
+        status = "ok" if not problems else ", ".join(problems)
+        lines.append(
+            f"| {item['repo']} | {status} | {item['publish']} | {item['trunk']} | {item['open_prs']} |"  # type: ignore[index]
+        )
+    return "\n".join(lines)
 
 
 def cmd_render_workflow(args: argparse.Namespace) -> int:
@@ -832,6 +1067,16 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--policy", default="infra/github/github-policy.yml")
     status.add_argument("--catalog-path")
     status.set_defaults(func=cmd_status)
+
+    debt = sub.add_parser("debt-report")
+    debt.add_argument("--catalog-path")
+    debt.add_argument("--github", action="store_true")
+    debt.add_argument("--policy", default="infra/github/github-policy.yml")
+    debt.add_argument("--boilerplate-config", default="boilerplate.yml")
+    debt.add_argument("--ref")
+    debt.add_argument("--trunk", action="store_true")
+    debt.add_argument("--format", choices=["text", "json", "markdown"], default="text")
+    debt.set_defaults(func=cmd_debt_report)
 
     render = sub.add_parser("render-workflow")
     render.add_argument("repo")

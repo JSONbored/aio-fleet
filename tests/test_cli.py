@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aio_fleet import cli
-from aio_fleet.cli import _repo_python, cmd_trunk_audit
+from aio_fleet.cli import _repo_python, cmd_debt_report, cmd_trunk_audit
 
 
 def test_repo_python_prefers_repo_virtualenv(tmp_path: Path) -> None:
@@ -53,3 +53,48 @@ repos:
 
     assert result == 0  # nosec B101
     assert "example-aio: trunk=ok" in capsys.readouterr().out  # nosec B101
+
+
+def test_debt_report_outputs_json_summary(tmp_path: Path, monkeypatch, capsys) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    boilerplate = tmp_path / "boilerplate.yml"
+    boilerplate.write_text("profiles:\n  aio:\n    files: []\n")
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["git", "rev-list"]:
+            return SimpleNamespace(returncode=0, stdout="0 0\n", stderr="")
+        if command[:2] == ["git", "ls-files"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_debt_report(
+        Namespace(
+            manifest=str(manifest),
+            catalog_path=None,
+            github=False,
+            policy="unused.yml",
+            boilerplate_config=str(boilerplate),
+            ref="0" * 40,
+            trunk=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert '"repos": 1' in capsys.readouterr().out  # nosec B101

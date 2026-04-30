@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess  # nosec B404
 import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
-from xml.etree.ElementTree import Element, ParseError  # nosec B405
+from xml.etree.ElementTree import Element, ParseError, tostring  # nosec B405
 
 import defusedxml.ElementTree as DefusedET
 
@@ -50,6 +52,23 @@ XML_PLACEHOLDER_CHECKS = [
     "Replace this with any real operational prerequisites or remove it.",
     "https://github.com/JSONbored/yourapp-aio/releases",
 ]
+
+TRACKED_ARTIFACT_PATTERNS = [
+    ".DS_Store",
+    "*.pyc",
+    "*/.DS_Store",
+    "*/__pycache__/*",
+    ".pytest_cache/*",
+    ".venv/*",
+    ".venv-ci/*",
+    ".venv-local/*",
+    "infra/github/*.tfstate",
+    "infra/github/*.tfstate.*",
+    "infra/github/*.tfvars",
+]
+
+CHANGELOG_HEADING = re.compile(r"^### \d{4}-\d{2}-\d{2}$")
+GIT_BIN = shutil.which("git")
 
 SERVICE_PLACEHOLDER_FILES = [
     "rootfs/etc/services.d/app/run",
@@ -148,6 +167,8 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
         if repo.publish_profile == "template":
             continue
 
+        failures.extend(_generic_xml_failures(repo, source, root))
+
         template_url = (root.findtext("TemplateURL") or "").strip()
         expected_template_url = f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/{target}"
         if template_url != expected_template_url:
@@ -164,6 +185,27 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
             )
 
     return failures
+
+
+def tracked_artifact_failures(repo_path: Path) -> list[str]:
+    if GIT_BIN is None:
+        return [f"{repo_path}: git is required to inspect tracked artifacts"]
+    result = subprocess.run(  # nosec B603
+        [GIT_BIN, "ls-files", *TRACKED_ARTIFACT_PATTERNS],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return [
+            f"{repo_path}: unable to inspect tracked artifacts: {result.stderr.strip()}"
+        ]
+    return [
+        f"{repo_path.name}: tracked generated/local artifact should be removed from git: {line.strip()}"
+        for line in result.stdout.splitlines()
+        if line.strip()
+    ]
 
 
 def publish_platform_failures(repo: RepoConfig) -> list[str]:
@@ -220,6 +262,7 @@ def repo_policy_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]
         *template_metadata_failures(repo, manifest),
         *publish_platform_failures(repo),
         *pinned_action_failures(repo.path),
+        *tracked_artifact_failures(repo.path),
     ]
 
 
@@ -450,3 +493,31 @@ def _dockerfile_mentions_arm64(text: str) -> bool:
 
 def _dockerfile_mentions_amd64(text: str) -> bool:
     return bool(re.search(r"\bamd64\b|\bx86_64\b", text))
+
+
+def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[str]:
+    failures: list[str] = []
+    changes = (root.findtext("Changes") or "").strip()
+    if changes:
+        first_line = changes.splitlines()[0].strip()
+        if not CHANGELOG_HEADING.match(first_line):
+            failures.append(
+                f"{repo.name}: {source} <Changes> must start with '### YYYY-MM-DD'"
+            )
+
+    for config in root.findall(".//Config"):
+        options = config.findall("Option")
+        if not options:
+            continue
+        name = config.attrib.get("Name", config.attrib.get("Target", "<unnamed>"))
+        failures.append(
+            f"{repo.name}: {source} Config {name} uses nested <Option> tags; use pipe-delimited values instead"
+        )
+
+    xml_text = tostring(root, encoding="unicode")
+    for placeholder in XML_PLACEHOLDER_CHECKS:
+        if placeholder in xml_text:
+            failures.append(
+                f"{repo.name}: {source} contains unresolved placeholder text: {placeholder}"
+            )
+    return failures

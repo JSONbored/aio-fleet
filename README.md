@@ -29,6 +29,7 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 python -m pip install -e ".[dev]"
 python -m aio_fleet doctor
 python -m aio_fleet status --github --catalog-path ../awesome-unraid
+python -m aio_fleet debt-report --catalog-path ../awesome-unraid --format markdown
 python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all

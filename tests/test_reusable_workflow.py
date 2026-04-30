@@ -69,6 +69,18 @@ def test_reusable_build_workflow_validates_caller_drift_centrally() -> None:
     assert "--repo-path ." in text  # nosec B101
 
 
+def test_reusable_build_workflow_checks_out_release_helpers_for_classification() -> (
+    None
+):
+    text = _workflow_text()
+    detect_job = text.split("  detect-changes:", 1)[1].split("  validate-template:", 1)[
+        0
+    ]
+
+    assert "Checkout aio-fleet release helpers" in detect_job  # nosec B101
+    assert "path: .aio-fleet" in detect_job  # nosec B101
+
+
 def test_reusable_build_workflow_runs_fleet_policy_validator() -> None:
     text = _workflow_text()
 
@@ -156,3 +168,13 @@ def test_release_and_upstream_reusable_workflows_exist() -> None:
     assert "aio-check-upstream.yml" in names  # nosec B101
     assert "aio-prepare-release.yml" in names  # nosec B101
     assert "aio-publish-release.yml" in names  # nosec B101
+
+
+def test_release_workflows_checkout_shared_release_helpers() -> None:
+    prepare = (ROOT / ".github/workflows/aio-prepare-release.yml").read_text()
+    publish = (ROOT / ".github/workflows/aio-publish-release.yml").read_text()
+
+    assert "Checkout aio-fleet release helpers" in prepare  # nosec B101
+    assert "Checkout aio-fleet release helpers" in publish  # nosec B101
+    assert "aio-prepare-release\\.yml@([0-9a-f]{40})" in prepare  # nosec B101
+    assert "aio-publish-release\\.yml@([0-9a-f]{40})" in publish  # nosec B101

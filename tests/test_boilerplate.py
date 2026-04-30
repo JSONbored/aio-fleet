@@ -171,3 +171,16 @@ def test_default_boilerplate_manages_trunk_configs() -> None:
 
     assert expected <= aio_targets  # nosec B101
     assert expected <= template_targets  # nosec B101
+
+
+def test_default_boilerplate_manages_release_shim() -> None:
+    config = yaml.safe_load((ROOT / "boilerplate.yml").read_text())
+    aio_targets = {item["target"] for item in config["profiles"]["aio"]["files"]}
+    template_targets = {
+        item["target"] for item in config["profiles"]["template"]["files"]
+    }
+
+    assert "scripts/release.py" in aio_targets  # nosec B101
+    assert "scripts/release.py" in template_targets  # nosec B101
+    assert "tests/unit/test_release_shim.py" in aio_targets  # nosec B101
+    assert "tests/unit/test_release_shim.py" in template_targets  # nosec B101
