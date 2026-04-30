@@ -70,6 +70,8 @@ def test_dify_caller_exposes_manual_extended_integration_input() -> None:
 
 def test_signoz_caller_keeps_component_publish_inputs() -> None:
     rendered = _render("signoz-aio")
+    parsed = _parse(rendered)
+    inputs = parsed["jobs"]["aio-build"]["with"]  # type: ignore[index]
 
     assert "publish_profile: signoz-suite" in rendered  # nosec B101
     assert "publish_platforms: linux/amd64" in rendered  # nosec B101
@@ -78,4 +80,5 @@ def test_signoz_caller_keeps_component_publish_inputs() -> None:
     assert "agent_context: components/signoz-agent" in rendered  # nosec B101
     assert "agent_dockerfile: components/signoz-agent/Dockerfile" in rendered  # nosec B101
     assert "agent_integration_pytest_args: tests/integration_agent -m integration" in rendered  # nosec B101
-
+    assert inputs["agent_image_name"] == "jsonbored/signoz-agent"  # nosec B101
+    assert inputs["catalog_assets"].strip().endswith("assets/app-icon.png|icons/signoz.png")  # nosec B101

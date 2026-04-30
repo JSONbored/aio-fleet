@@ -93,14 +93,14 @@ def render_caller_workflow(
         components = repo.raw["components"]
         agent = components["agent"]
         extra_inputs = f"""
-          agent_image_name: {agent['image_name']}
-          agent_docker_cache_scope: {agent['docker_cache_scope']}
-          agent_pytest_image_tag: {agent['pytest_image_tag']}
-          agent_integration_pytest_args: {agent['integration_pytest_args']}
-          agent_context: {agent['context']}
-          agent_dockerfile: {agent['dockerfile']}
-          agent_upstream_name: {agent['upstream_name']}
-          agent_image_description: {agent['image_description']}"""
+      agent_image_name: {agent['image_name']}
+      agent_docker_cache_scope: {agent['docker_cache_scope']}
+      agent_pytest_image_tag: {agent['pytest_image_tag']}
+      agent_integration_pytest_args: {agent['integration_pytest_args']}
+      agent_context: {agent['context']}
+      agent_dockerfile: {agent['dockerfile']}
+      agent_upstream_name: {agent['upstream_name']}
+      agent_image_description: {agent['image_description']}"""
 
     return f"""name: {repo.workflow_name}
 
