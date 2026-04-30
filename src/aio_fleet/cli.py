@@ -188,7 +188,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for repo in repos:
         print(f"== {repo.name} ==")
         for cmd in (
-            ["python3", "scripts/validate-template.py", "--all"],
+            [sys.executable, "scripts/validate-template.py", "--all"],
             ["bash", "scripts/validate-derived-repo.sh", "."],
         ):
             result = _run(cmd, cwd=repo.path)
