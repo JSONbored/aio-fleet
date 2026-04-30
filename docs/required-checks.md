@@ -1,28 +1,48 @@
 # Required Checks
 
-Use these as the default required status checks for app repos after they are on
-the shared `aio-fleet` workflows.
+Use these as the default required status checks after repos are on the shared
+`aio-fleet` workflows.
 
-## App Repos
+## AIO App Repos
 
 Require:
 
 - `aio-build / validate-template`
 - `aio-build / pinned-actions`
 - `aio-build / unit-tests`
+- `aio-build / integration-tests`
 - `aio-build / dependency-review`
-- `CodeQL` when CodeQL is enabled
-- `Analyze (actions)` when CodeQL is enabled
-- `Analyze (python)` when CodeQL is enabled
+- `CodeQL`
+- `Analyze (actions)`
+- `Analyze (python)`
 
-Require `aio-build / integration-tests` only for repos where branch protection
-should force Docker integration on every PR. The reusable workflow still gates
-publish paths behind integration success on `main`.
+Add language-specific CodeQL jobs only where they actually exist. Today that
+means `mem0-aio` also requires `Analyze (javascript-typescript)`.
+
+## unraid-aio-template
+
+Require:
+
+- `aio-build / validate-template`
+- `aio-build / pinned-actions`
+- `aio-build / unit-tests`
+- `aio-build / integration-tests`
+- `aio-build / dependency-review`
+
+Do not require CodeQL checks unless CodeQL is enabled for this repo.
+
+## awesome-unraid
+
+Require:
+
+- `validate-catalog`
+- `CodeQL`
+- `Analyze (actions)`
 
 ## SigNoz
 
-Add `aio-build / agent-integration-tests` after the agent lane is fully settled
-as a required check for agent-affecting PRs.
+Do not require `aio-build / agent-integration-tests` yet. Add it only after the
+agent lane is fully settled as a required check for agent-affecting PRs.
 
 ## Do Not Require
 
