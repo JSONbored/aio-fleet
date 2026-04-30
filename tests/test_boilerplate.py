@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess  # nosec B404
+import sys
 from pathlib import Path
 
 import yaml
@@ -184,3 +188,58 @@ def test_default_boilerplate_manages_release_shim() -> None:
     assert "scripts/release.py" in template_targets  # nosec B101
     assert "tests/unit/test_release_shim.py" in aio_targets  # nosec B101
     assert "tests/unit/test_release_shim.py" in template_targets  # nosec B101
+
+
+def test_release_shim_honors_explicit_aio_fleet_path(tmp_path: Path) -> None:
+    git_bin = shutil.which("git")
+    assert git_bin is not None  # nosec B101
+    repo_path = tmp_path / "isolated-repo"
+    scripts_path = repo_path / "scripts"
+    scripts_path.mkdir(parents=True)
+    shutil.copy2(ROOT / "boilerplate/common/scripts/release.py", scripts_path)
+
+    subprocess.run(
+        [git_bin, "init"], cwd=repo_path, check=True, capture_output=True
+    )  # nosec B603
+    subprocess.run(  # nosec B603
+        [git_bin, "config", "user.email", "tests@example.invalid"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(  # nosec B603
+        [git_bin, "config", "user.name", "Tests"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(  # nosec B603
+        [git_bin, "config", "commit.gpgsign", "false"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    (repo_path / "README.md").write_text("test\n")
+    subprocess.run(
+        [git_bin, "add", "."], cwd=repo_path, check=True, capture_output=True
+    )  # nosec B603
+    subprocess.run(  # nosec B603
+        [git_bin, "commit", "-m", "chore(test): initial"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+    env = os.environ.copy()
+    env["AIO_FLEET_PATH"] = str(ROOT)
+    result = subprocess.run(  # nosec B603
+        [sys.executable, "scripts/release.py", "has-unreleased-changes"],
+        cwd=repo_path,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr  # nosec B101
+    assert result.stdout.strip() in {"true", "false"}  # nosec B101
