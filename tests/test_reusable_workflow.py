@@ -75,6 +75,15 @@ def test_reusable_build_workflow_runs_fleet_policy_validator() -> None:
     assert "validate-actions --repo-path ." in text  # nosec B101
 
 
+def test_reusable_build_workflow_installs_fleet_validator_before_unit_tests() -> None:
+    text = _workflow_text()
+
+    unit_job = text.split("  unit-tests:", 1)[1].split("  integration-tests:", 1)[0]
+    assert "Checkout aio-fleet validator" in unit_job  # nosec B101
+    assert "Install aio-fleet validator" in unit_job  # nosec B101
+    assert unit_job.index("Install aio-fleet validator") < unit_job.index("Run unit and template tests")  # nosec B101
+
+
 def test_reusable_build_workflow_uses_fleet_catalog_sync() -> None:
     text = _workflow_text()
 
