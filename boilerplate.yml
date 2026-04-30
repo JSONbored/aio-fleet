@@ -5,6 +5,8 @@ profiles:
         target: scripts/validate-derived-repo.sh
       - source: boilerplate/common/scripts/release.py
         target: scripts/release.py
+      - source: boilerplate/common/tests/unit/test_release_shim.py
+        target: tests/unit/test_release_shim.py
       - source: boilerplate/aio/.github/pull_request_template.md
         target: .github/pull_request_template.md
         exclude_repos:
@@ -77,6 +79,8 @@ profiles:
         target: scripts/validate-derived-repo.sh
       - source: boilerplate/common/scripts/release.py
         target: scripts/release.py
+      - source: boilerplate/common/tests/unit/test_release_shim.py
+        target: tests/unit/test_release_shim.py
       - source: boilerplate/template/.github/pull_request_template.md
         target: .github/pull_request_template.md
       - source: boilerplate/aio/.github/ISSUE_TEMPLATE/config.yml

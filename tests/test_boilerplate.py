@@ -182,3 +182,5 @@ def test_default_boilerplate_manages_release_shim() -> None:
 
     assert "scripts/release.py" in aio_targets  # nosec B101
     assert "scripts/release.py" in template_targets  # nosec B101
+    assert "tests/unit/test_release_shim.py" in aio_targets  # nosec B101
+    assert "tests/unit/test_release_shim.py" in template_targets  # nosec B101
