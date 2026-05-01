@@ -69,6 +69,23 @@ TRACKED_ARTIFACT_PATTERNS = [
 
 CHANGELOG_HEADING = re.compile(r"^### \d{4}-\d{2}-\d{2}$")
 GIT_BIN = shutil.which("git")
+UNRAID_CATEGORY_ROOTS = {
+    "AI",
+    "Backup",
+    "Cloud",
+    "Downloaders",
+    "GameServers",
+    "HomeAutomation",
+    "MediaApp",
+    "MediaServer",
+    "Network",
+    "Productivity",
+    "Security",
+    "Tools",
+}
+UNRAID_CATEGORY_TOKEN = re.compile(
+    r"^[A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?:?$"
+)
 
 SERVICE_PLACEHOLDER_FILES = [
     "rootfs/etc/services.d/app/run",
@@ -160,6 +177,7 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
             "Category",
             "TemplateURL",
             "Icon",
+            "Changes",
         ]:
             if not (root.findtext(field) or "").strip():
                 failures.append(f"{repo.name}: {source} missing non-empty <{field}>")
@@ -167,6 +185,7 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
         if repo.publish_profile == "template":
             continue
 
+        failures.extend(_common_template_quality_failures(repo, source, target, root))
         failures.extend(_generic_xml_failures(repo, source, root))
 
         template_url = (root.findtext("TemplateURL") or "").strip()
@@ -374,6 +393,82 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
     return failures
 
 
+def catalog_quality_findings(
+    manifest: FleetManifest,
+    catalog_path: Path,
+) -> list[str]:
+    findings = list(catalog_repo_failures(manifest, catalog_path))
+    if not catalog_path.exists():
+        return findings
+
+    for repo in manifest.repos.values():
+        if repo.raw.get("catalog_published") is False:
+            continue
+        for _source, target in _catalog_xml_assets(repo):
+            xml_path = catalog_path / target
+            if not xml_path.exists():
+                continue
+            root = _parse_catalog_xml(repo.name, target, xml_path, findings)
+            if root is None:
+                continue
+
+            findings.extend(_catalog_xml_quality_findings(repo, target, root))
+
+            icon_target = catalog_target_from_icon(root.findtext("Icon") or "")
+            if icon_target:
+                findings.extend(
+                    _icon_quality_findings(repo.name, icon_target, catalog_path)
+                )
+    return sorted(dict.fromkeys(findings))
+
+
+def _catalog_xml_quality_findings(
+    repo: RepoConfig, target: str, root: Element
+) -> list[str]:
+    source = f"catalog {target}"
+    findings = _common_template_quality_failures(repo, source, target, root)
+    overview = (root.findtext("Overview") or "").strip()
+    lower_overview = overview.lower()
+    if len(overview) < 500:
+        findings.append(
+            f"{repo.name}: {source} <Overview> should include fuller CA-facing setup guidance"
+        )
+    if not any(
+        term in lower_overview for term in ["default", "first boot", "first install"]
+    ):
+        findings.append(
+            f"{repo.name}: {source} <Overview> should mention beginner/default setup guidance"
+        )
+    if not any(
+        term in lower_overview
+        for term in ["advanced", "power user", "external", "custom"]
+    ):
+        findings.append(
+            f"{repo.name}: {source} <Overview> should mention advanced or power-user configuration"
+        )
+    return findings
+
+
+def _icon_quality_findings(
+    repo_name: str, icon_target: str, catalog_path: Path
+) -> list[str]:
+    icon_path = catalog_path / icon_target
+    if not icon_path.exists():
+        return [f"{repo_name}: catalog icon missing: {icon_target}"]
+    try:
+        data = icon_path.read_bytes()[:16]
+    except OSError as exc:
+        return [f"{repo_name}: could not read catalog icon {icon_target}: {exc}"]
+    suffix = icon_path.suffix.lower()
+    if suffix == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return [f"{repo_name}: catalog icon {icon_target} is not a valid PNG"]
+    if suffix in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8"):
+        return [f"{repo_name}: catalog icon {icon_target} is not a valid JPEG"]
+    if suffix not in {".png", ".jpg", ".jpeg", ".svg"}:
+        return [f"{repo_name}: catalog icon {icon_target} should be PNG, JPEG, or SVG"]
+    return []
+
+
 def _require_file(repo_path: Path, relative_path: str, failures: list[str]) -> bool:
     if not (repo_path / relative_path).is_file():
         failures.append(f"missing required file: {relative_path}")
@@ -521,3 +616,74 @@ def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[
                 f"{repo.name}: {source} contains unresolved placeholder text: {placeholder}"
             )
     return failures
+
+
+def _common_template_quality_failures(
+    repo: RepoConfig, source: str, target: str, root: Element
+) -> list[str]:
+    failures: list[str] = []
+    name = (root.findtext("Name") or "").strip()
+    expected_name = Path(target).stem
+    if name:
+        if name != name.lower():
+            failures.append(f"{repo.name}: {source} <Name> must be lowercase")
+        if name != expected_name:
+            failures.append(
+                f"{repo.name}: {source} <Name> must match catalog target stem {expected_name}, got {name}"
+            )
+
+    for field in ["Project", "Support"]:
+        value = (root.findtext(field) or "").strip()
+        if value and not _is_http_url(value):
+            failures.append(f"{repo.name}: {source} <{field}> must be an HTTP(S) URL")
+
+    failures.extend(_category_failures(repo, source, root.findtext("Category") or ""))
+    failures.extend(_donate_failures(repo, source, root))
+    return failures
+
+
+def _category_failures(repo: RepoConfig, source: str, category: str) -> list[str]:
+    tokens = [token.strip() for token in category.split() if token.strip()]
+    if not tokens:
+        return [f"{repo.name}: {source} <Category> must contain at least one token"]
+
+    failures: list[str] = []
+    for token in tokens:
+        if not UNRAID_CATEGORY_TOKEN.fullmatch(token):
+            failures.append(
+                f"{repo.name}: {source} <Category> token has invalid syntax: {token}"
+            )
+            continue
+        root = token.rstrip(":").split(":", 1)[0]
+        if root not in UNRAID_CATEGORY_ROOTS:
+            failures.append(
+                f"{repo.name}: {source} <Category> token has unknown root: {token}"
+            )
+    return failures
+
+
+def _donate_failures(repo: RepoConfig, source: str, root: Element) -> list[str]:
+    donate_text = root.find("DonateText")
+    donate_link = root.find("DonateLink")
+    failures: list[str] = []
+    if donate_text is None:
+        failures.append(f"{repo.name}: {source} missing <DonateText> tag")
+    if donate_link is None:
+        failures.append(f"{repo.name}: {source} missing <DonateLink> tag")
+    if donate_text is None or donate_link is None:
+        return failures
+
+    text = (donate_text.text or "").strip()
+    link = (donate_link.text or "").strip()
+    if bool(text) != bool(link):
+        failures.append(
+            f"{repo.name}: {source} <DonateText> and <DonateLink> must be both blank or both populated"
+        )
+    if link and not _is_http_url(link):
+        failures.append(f"{repo.name}: {source} <DonateLink> must be an HTTP(S) URL")
+    return failures
+
+
+def _is_http_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)

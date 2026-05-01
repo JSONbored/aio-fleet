@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess  # nosec B404
 import sys
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
 from aio_fleet import cli
-from aio_fleet.cli import _repo_python, cmd_debt_report, cmd_trunk_audit
+from aio_fleet.cli import (
+    _repo_python,
+    cmd_debt_report,
+    cmd_infra_doctor,
+    cmd_onboard_repo,
+    cmd_trunk_audit,
+    cmd_validate_template_common,
+)
 from aio_fleet.manifest import load_manifest
 from aio_fleet.workflows import rendered_workflows
 
@@ -297,3 +306,118 @@ repos:
     assert result == 0  # nosec B101
     report = json.loads(capsys.readouterr().out)
     assert report["repos"][0]["github_policy_failures"] == []  # nosec B101
+
+
+def test_validate_template_common_accepts_manifest_repo(tmp_path: Path, capsys) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example defaults and advanced settings for operators.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText/>
+  <DonateLink/>
+  <Changes>### 2026-01-01</Changes>
+</Container>
+""")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+awesome_unraid_repository: JSONbored/awesome-unraid
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    catalog_assets:
+      - source: example-aio.xml
+        target: example-aio.xml
+""")
+
+    result = cmd_validate_template_common(
+        Namespace(manifest=str(manifest), repo="example-aio", repo_path=None, all=False)
+    )
+
+    assert result == 0  # nosec B101
+    assert "common template validation passed" in capsys.readouterr().out  # nosec B101
+
+
+def test_infra_doctor_checks_local_policy_without_tofu(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    git = shutil.which("git")
+    assert git  # nosec B101
+    subprocess.run(
+        [git, "init"], cwd=tmp_path, check=True, capture_output=True
+    )  # nosec B603
+    (tmp_path / ".gitignore").write_text(
+        "infra/github/*.tfstate\ninfra/github/*.tfstate.*\ninfra/github/*.tfvars\n"
+    )
+    infra = tmp_path / "infra" / "github"
+    infra.mkdir(parents=True)
+    (infra / ".terraform.lock.hcl").write_text("# lock\n")
+    (infra / ".terraform").mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {tmp_path / "example-aio"}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    policy = infra / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  actions:
+    patterns_allowed:
+      - JSONbored/aio-fleet/.github/workflows/aio-*.yml@*
+repositories:
+  awesome-unraid: {}
+  example-aio: {}
+""")
+
+    monkeypatch.chdir(tmp_path)
+
+    result = cmd_infra_doctor(
+        Namespace(
+            manifest=str(manifest),
+            path=str(infra),
+            policy=str(policy),
+            skip_tofu=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert "infra doctor passed" in capsys.readouterr().out  # nosec B101
+
+
+def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="example-aio",
+            profile="changelog-version",
+            image_name=None,
+            upstream_name="Example",
+            local_path_base="<local-checkout-path>",
+            format="text",
+            dry_run=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "example-aio:" in output  # nosec B101
+    assert "path: <local-checkout-path>/example-aio" in output  # nosec B101
+    assert "python -m aio_fleet render-workflow example-aio" in output  # nosec B101

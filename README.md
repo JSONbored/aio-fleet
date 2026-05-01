@@ -30,6 +30,12 @@ python -m pip install -e ".[dev]"
 python -m aio_fleet doctor
 python -m aio_fleet status --github --catalog-path ../awesome-unraid
 python -m aio_fleet debt-report --catalog-path ../awesome-unraid --format markdown
+python -m aio_fleet validate-template-common --all
+python -m aio_fleet catalog-audit --catalog-path ../awesome-unraid
+python -m aio_fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
+python -m aio_fleet infra doctor --skip-tofu
+python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
+python -m aio_fleet support-thread render --repo sure-aio
 python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all
