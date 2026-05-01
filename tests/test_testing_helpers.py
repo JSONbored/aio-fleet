@@ -63,7 +63,7 @@ def test_runtime_contract_helpers_cover_template_and_dockerfile(tmp_path: Path) 
     template.write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
-  <Repository>ghcr.io/jsonbored/example-aio:latest</Repository>
+  <Repository>jsonbored/example-aio:latest</Repository>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>

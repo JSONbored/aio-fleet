@@ -120,6 +120,8 @@ def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> Non
     (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
+  <Repository>ghcr.io/jsonbored/example-aio:latest</Repository>
+  <Registry>https://ghcr.io/jsonbored/example-aio</Registry>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
@@ -139,6 +141,14 @@ def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> Non
     assert (  # nosec B101
         "example-aio: example-aio.xml Icon must point at JSONbored/awesome-unraid/main/icons/"
     ) in failures
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <Repository> must use Docker Hub shorthand, got ghcr.io/jsonbored/example-aio:latest"
+        in failures
+    )
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <Registry> must point at Docker Hub, got https://ghcr.io/jsonbored/example-aio"
+        in failures
+    )
 
 
 def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
@@ -147,6 +157,8 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
     (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
@@ -176,6 +188,8 @@ def test_template_metadata_validation_rejects_common_quality_drift(
     (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>Example-AIO</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
   <Project>not-a-url</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example overview with defaults and advanced settings.</Overview>
@@ -267,6 +281,8 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
     (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
@@ -291,6 +307,8 @@ def test_catalog_quality_audit_reports_catalog_presentation_drift(
     (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>Example-AIO</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Too short.</Overview>

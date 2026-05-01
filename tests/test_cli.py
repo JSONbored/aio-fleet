@@ -314,6 +314,8 @@ def test_validate_template_common_accepts_manifest_repo(tmp_path: Path, capsys) 
     (repo_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example defaults and advanced settings for operators.</Overview>
