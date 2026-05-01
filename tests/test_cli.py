@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from argparse import Namespace
 from pathlib import Path
@@ -98,3 +99,107 @@ repos:
 
     assert result == 0  # nosec B101
     assert '"repos": 1' in capsys.readouterr().out  # nosec B101
+
+
+def test_debt_report_text_prints_publish_state_once(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    boilerplate = tmp_path / "boilerplate.yml"
+    boilerplate.write_text("profiles:\n  aio:\n    files: []\n")
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["git", "rev-list"]:
+            return SimpleNamespace(returncode=0, stdout="0 0\n", stderr="")
+        if command[:2] == ["git", "ls-files"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_debt_report(
+        Namespace(
+            manifest=str(manifest),
+            catalog_path=None,
+            github=False,
+            policy="unused.yml",
+            boilerplate_config=str(boilerplate),
+            ref="0" * 40,
+            trunk=False,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "publish=source-ready" in output  # nosec B101
+    assert "publish=publish=" not in output  # nosec B101
+
+
+def test_debt_report_treats_repos_missing_from_github_policy_as_manual(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  unraid-aio-template:
+    path: {repo_path}
+    app_slug: unraid-aio-template
+    image_name: jsonbored/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: aio-template:pytest
+    publish_profile: template
+""")
+    boilerplate = tmp_path / "boilerplate.yml"
+    boilerplate.write_text(
+        "profiles:\n  aio:\n    files: []\n  template:\n    files: []\n"
+    )
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("repositories: {}\n")
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["git", "rev-list"]:
+            return SimpleNamespace(returncode=0, stdout="0 0\n", stderr="")
+        if command[:2] == ["git", "ls-files"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:3] == ["gh", "pr", "list"]:
+            return SimpleNamespace(returncode=0, stdout="0\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_debt_report(
+        Namespace(
+            manifest=str(manifest),
+            catalog_path=None,
+            github=True,
+            policy=str(policy),
+            boilerplate_config=str(boilerplate),
+            ref="0" * 40,
+            trunk=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["repos"][0]["github_policy_failures"] == []  # nosec B101

@@ -259,6 +259,9 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
         "catalog_path": str(catalog_path) if catalog_path else None,
         "repos": [],
     }
+    policy_repos: set[str] = set()
+    if args.github:
+        policy_repos = set(load_policy(Path(args.policy))["repositories"])
 
     for repo in manifest.repos.values():
         git_status = _run(["git", "status", "--short"], cwd=repo.path)
@@ -287,7 +290,7 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
             if failure.startswith(f"{repo.name}:")
         ]
         github_policy_failures: list[str] = []
-        if args.github:
+        if args.github and repo.name in policy_repos:
             try:
                 github_policy_failures = validate_github_policy(
                     Path(args.policy), repos=[repo.name], check_secrets=False
@@ -444,7 +447,7 @@ def _debt_report_text(report: dict[str, object]) -> str:
                 problems.append(key)
         status = "ok" if not problems else ",".join(problems)
         lines.append(
-            f"{item['repo']}: {status} publish={item['publish']} trunk={item['trunk']} open_prs={item['open_prs']}"  # type: ignore[index]
+            f"{item['repo']}: {status} {item['publish']} trunk={item['trunk']} open_prs={item['open_prs']}"  # type: ignore[index]
         )
     lines.append(f"summary: {report['summary']}")
     return "\n".join(lines)
