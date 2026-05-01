@@ -171,6 +171,8 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
 
         for field in [
             "Name",
+            "Repository",
+            "Registry",
             "Project",
             "Support",
             "Overview",
@@ -181,6 +183,8 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
         ]:
             if not (root.findtext(field) or "").strip():
                 failures.append(f"{repo.name}: {source} missing non-empty <{field}>")
+
+        failures.extend(_repository_registry_failures(repo, source, root))
 
         if repo.publish_profile == "template":
             continue
@@ -360,6 +364,8 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
 
             for field in [
                 "Name",
+                "Repository",
+                "Registry",
                 "Project",
                 "Support",
                 "Overview",
@@ -371,6 +377,10 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
                     failures.append(
                         f"{repo.name}: catalog {target} missing non-empty <{field}>"
                     )
+
+            failures.extend(
+                _repository_registry_failures(repo, f"catalog {target}", root)
+            )
 
             expected_template_url = f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/{target}"
             template_url = (root.findtext("TemplateURL") or "").strip()
@@ -616,6 +626,56 @@ def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[
                 f"{repo.name}: {source} contains unresolved placeholder text: {placeholder}"
             )
     return failures
+
+
+def _repository_registry_failures(
+    repo: RepoConfig, source: str, root: Element
+) -> list[str]:
+    repository = (root.findtext("Repository") or "").strip()
+    registry = (root.findtext("Registry") or "").strip()
+    failures: list[str] = []
+
+    repository_host = _repository_registry_host(repository)
+    registry_host = urlparse(registry).netloc.lower()
+
+    if repository_host == "ghcr.io":
+        failures.append(
+            f"{repo.name}: {source} <Repository> must use Docker Hub shorthand, got {repository}"
+        )
+    elif repository_host in {"docker.io", "registry-1.docker.io"}:
+        failures.append(
+            f"{repo.name}: {source} <Repository> must omit the Docker Hub registry prefix, got {repository}"
+        )
+
+    if registry_host == "ghcr.io":
+        failures.append(
+            f"{repo.name}: {source} <Registry> must point at Docker Hub, got {registry}"
+        )
+
+    image_name = _repository_image_name(repository)
+    if image_name.startswith("jsonbored/"):
+        expected_registry = f"https://hub.docker.com/r/{image_name}"
+        if registry and registry != expected_registry:
+            failures.append(
+                f"{repo.name}: {source} <Registry> must be {expected_registry}, got {registry}"
+            )
+
+    return failures
+
+
+def _repository_registry_host(repository: str) -> str:
+    first_segment = repository.split("/", 1)[0].lower()
+    if "." in first_segment or ":" in first_segment:
+        return first_segment
+    return ""
+
+
+def _repository_image_name(repository: str) -> str:
+    image = repository.split("@", 1)[0]
+    tail = image.rsplit("/", 1)[-1]
+    if ":" in tail:
+        image = image.rsplit(":", 1)[0]
+    return image
 
 
 def _common_template_quality_failures(

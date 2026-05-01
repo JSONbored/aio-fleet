@@ -880,7 +880,7 @@ def _image_status(repo: RepoConfig) -> str:
     if docker is None:
         return "unknown:no-docker"
     result = _run(
-        [docker, "manifest", "inspect", f"ghcr.io/{repo.image_name}:latest"],
+        [docker, "manifest", "inspect", f"{repo.image_name}:latest"],
         cwd=repo.path,
     )
     return "ok" if result.returncode == 0 else "unknown:latest-not-inspected"
