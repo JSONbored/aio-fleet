@@ -11,7 +11,7 @@ It does not replace the existing source-of-truth repos:
 
 ## Control-Plane Layers
 
-The first layer is reusable GitHub Actions:
+The current layer is reusable GitHub Actions:
 
 1. App repos keep a small `.github/workflows/build.yml` caller.
 2. App repos also keep small callers for upstream checks and release workflows.
@@ -20,6 +20,18 @@ The first layer is reusable GitHub Actions:
 5. The reusable workflow checks the caller files against the manifest-rendered output, so workflow drift is caught centrally instead of through duplicated app-local unit tests.
 6. Publish gates, Docker cache behavior, integration test gating, release PRs, upstream monitoring, and catalog sync behavior live in reusable workflows.
 7. Shared policy checks live in `aio-fleet` validators: caller drift, pinned actions, declared catalog assets, template metadata, publish-platform sanity, and catalog readiness.
+
+The next control-plane layer is app manifest and check-run orchestration:
+
+- `export-app-manifest` renders the future app-local `.aio-fleet.yml` from the
+  central `fleet.yml` entry. During migration this is generated and verified
+  before app-local workflow files are removed.
+- `check run` renders or upserts the required `aio-fleet / required` check-run
+  for an app commit. The check-run external ID is
+  `<repo>:<sha>:<policy-hash>` so reruns update the matching policy result
+  instead of creating duplicate required checks.
+- The end-state branch protection target is one required GitHub App check named
+  `aio-fleet / required`; detail checks can remain informational.
 
 Current and later layers are deliberately separate:
 

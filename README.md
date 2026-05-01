@@ -14,6 +14,9 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   `aio-publish-release.yml` centralize upstream monitors and release workflows.
 - `aio-fleet` CLI validates the manifest, renders thin caller workflows, checks
   workflow drift, and reports fleet status.
+- `export-app-manifest` renders the future app-local `.aio-fleet.yml` contract.
+- `check run` creates or updates the future required GitHub App check-run named
+  `aio-fleet / required`.
 - OpenTofu policy under `infra/github` manages public repo metadata, branch
   protection, selected action allowlists, required checks, vulnerability alerts,
   and declared automation secret names.
@@ -33,6 +36,8 @@ python -m aio_fleet debt-report --catalog-path ../awesome-unraid --format markdo
 python -m aio_fleet validate-template-common --all
 python -m aio_fleet catalog-audit --catalog-path ../awesome-unraid
 python -m aio_fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
+python -m aio_fleet export-app-manifest --repo sure-aio
+python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet infra doctor --skip-tofu
 python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
 python -m aio_fleet support-thread render --repo sure-aio
