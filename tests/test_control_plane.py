@@ -34,6 +34,17 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     assert names[-2:] == ["trunk", "registry-publish"]  # nosec B101
 
 
+def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    steps = central_check_steps(repo, event="push", include_integration=False)
+
+    names = [step.name for step in steps]
+    assert "integration-tests" not in names  # nosec B101
+    assert "unit-tests" in names  # nosec B101
+    assert "trunk" in names  # nosec B101
+
+
 def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:
     raw = dict(repo.raw)
     raw["path"] = str(path)
