@@ -107,6 +107,8 @@ jobs:
           RUN_CHECKS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           set -euo pipefail
