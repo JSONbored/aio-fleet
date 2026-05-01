@@ -83,6 +83,21 @@ jobs:
       - name: Install Trunk
         uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
 
+      - name: Resolve GitHub App token
+        id: app-token
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
       - name: Poll active repos
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'poll' }}
         env:
@@ -119,6 +134,7 @@ jobs:
           ref: ${{ inputs.sha }}
           path: app-repo
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up QEMU
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
