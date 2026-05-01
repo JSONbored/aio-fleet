@@ -48,6 +48,7 @@ def app_manifest_from_repo(repo: RepoConfig) -> dict[str, Any]:
             "extended_integration": repo.get("extended_integration", None),
             "checkout_submodules": bool(repo.get("checkout_submodules", False)),
         },
+        "validation": repo.raw.get("validation", {}),
         "runtime_contract": repo.raw.get("runtime_contract", {}),
         "components": repo.raw.get("components", {}),
     }
@@ -55,10 +56,12 @@ def app_manifest_from_repo(repo: RepoConfig) -> dict[str, Any]:
 
 
 def render_app_manifest(repo: RepoConfig) -> str:
-    return yaml.safe_dump(
+    return yaml.dump(
         app_manifest_from_repo(repo),
+        Dumper=_IndentedSafeDumper,
         sort_keys=False,
         allow_unicode=False,
+        default_flow_style=False,
     )
 
 
@@ -106,3 +109,8 @@ def _drop_empty(value: Any) -> Any:
     if isinstance(value, list):
         return [_drop_empty(item) for item in value if _drop_empty(item) is not None]
     return value
+
+
+class _IndentedSafeDumper(yaml.SafeDumper):
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:  # type: ignore[override]
+        return super().increase_indent(flow, indentless=False)

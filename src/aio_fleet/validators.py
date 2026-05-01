@@ -191,6 +191,7 @@ def template_metadata_failures(repo: RepoConfig, manifest: FleetManifest) -> lis
 
         failures.extend(_common_template_quality_failures(repo, source, target, root))
         failures.extend(_generic_xml_failures(repo, source, root))
+        failures.extend(_manifest_declared_template_failures(repo, source, root))
 
         template_url = (root.findtext("TemplateURL") or "").strip()
         expected_template_url = f"{CATALOG_RAW_PREFIX}{catalog_repo}/main/{target}"
@@ -625,6 +626,44 @@ def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[
             failures.append(
                 f"{repo.name}: {source} contains unresolved placeholder text: {placeholder}"
             )
+    return failures
+
+
+def _manifest_declared_template_failures(
+    repo: RepoConfig, source: str, root: Element
+) -> list[str]:
+    validation = repo.raw.get("validation", {})
+    if not isinstance(validation, dict):
+        return [f"{repo.name}: validation must be a mapping"]
+    required_targets = {
+        str(target)
+        for target in validation.get("required_targets", [])
+        if str(target).strip()
+    }
+    forbidden_targets = {
+        str(target)
+        for target in validation.get("forbidden_targets", [])
+        if str(target).strip()
+    }
+    if not required_targets and not forbidden_targets:
+        return []
+
+    targets = {
+        config.attrib["Target"]
+        for config in root.findall(".//Config")
+        if config.attrib.get("Target")
+    }
+    failures: list[str] = []
+    missing = sorted(required_targets - targets)
+    if missing:
+        failures.append(
+            f"{repo.name}: {source} missing manifest-required Config Target(s): {', '.join(missing)}"
+        )
+    forbidden = sorted(forbidden_targets & targets)
+    if forbidden:
+        failures.append(
+            f"{repo.name}: {source} declares manifest-forbidden Config Target(s): {', '.join(forbidden)}"
+        )
     return failures
 
 

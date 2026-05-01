@@ -34,72 +34,22 @@ repositories:
       - AIO_FLEET_BOT_TOKEN
   sure-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required
   simplelogin-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required
   khoj-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required
   mem0-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
-      - Analyze (javascript-typescript)
+      - aio-fleet / required
   infisical-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required
   dify-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required
   signoz-aio:
     required_checks:
-      - CodeQL
-      - aio-build / validate-template
-      - aio-build / pinned-actions
-      - aio-build / unit-tests
-      - aio-build / integration-tests
-      - aio-build / dependency-review
-      - Analyze (actions)
-      - Analyze (python)
+      - aio-fleet / required

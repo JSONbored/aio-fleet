@@ -182,6 +182,40 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
     )
 
 
+def test_template_metadata_validation_applies_manifest_declared_targets(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Changes>### 2026-05-01</Changes>
+  <Config Name="Present" Target="PRESENT"/>
+</Container>
+""")
+
+    failures = template_metadata_failures(
+        _repo(
+            tmp_path,
+            validation={
+                "required_targets": ["PRESENT", "MISSING"],
+                "forbidden_targets": ["PRESENT"],
+            },
+        ),
+        _Manifest(),  # type: ignore[arg-type]
+    )
+
+    assert any("MISSING" in failure for failure in failures)  # nosec B101
+    assert any("manifest-forbidden" in failure for failure in failures)  # nosec B101
+
+
 def test_template_metadata_validation_rejects_common_quality_drift(
     tmp_path: Path,
 ) -> None:
