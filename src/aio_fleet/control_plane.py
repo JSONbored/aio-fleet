@@ -165,7 +165,7 @@ def registry_publish_command(repo: RepoConfig, *, sha: str) -> list[str]:
 def run_central_trunk(
     repo: RepoConfig, *, fix: bool = False
 ) -> subprocess.CompletedProcess[str]:
-    trunk = shutil.which("trunk")
+    trunk = os.environ.get("TRUNK_PATH") or shutil.which("trunk")
     if trunk is None:
         return subprocess.CompletedProcess(
             ["trunk"], 127, "", "trunk CLI is not installed"
