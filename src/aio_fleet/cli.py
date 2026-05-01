@@ -10,8 +10,10 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
+from aio_fleet.app_manifest import APP_MANIFEST_NAME, render_app_manifest
 from aio_fleet.boilerplate import sync_boilerplate
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
+from aio_fleet.checks import check_run_payload, upsert_check_run
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.validators import (
@@ -717,6 +719,48 @@ def cmd_validate_github(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_run(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    conclusion = args.conclusion
+    if args.status == "completed" and conclusion is None:
+        conclusion = "success"
+    payload = check_run_payload(
+        repo,
+        sha=args.sha,
+        event=args.event,
+        status=args.status,
+        conclusion=conclusion,
+        summary=args.summary,
+        details_url=args.details_url,
+    )
+    if args.dry_run:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    result = upsert_check_run(
+        repo,
+        sha=args.sha,
+        event=args.event,
+        status=args.status,
+        conclusion=conclusion,
+        summary=args.summary,
+        details_url=args.details_url,
+    )
+    print(
+        json.dumps(
+            {
+                "action": result.action,
+                "check_run_id": result.check_run_id,
+                "html_url": result.html_url,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_catalog_audit(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     findings = catalog_quality_findings(manifest, Path(args.catalog_path).resolve())
@@ -1269,6 +1313,21 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_app_manifest(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    rendered = render_app_manifest(repo)
+    output = (
+        Path(args.output).resolve() if args.output else repo.path / APP_MANIFEST_NAME
+    )
+    if args.write:
+        output.write_text(rendered)
+        print(f"wrote {output}")
+        return 0
+    print(rendered, end="")
+    return 0
+
+
 def _yaml_line(key: str, value: object, *, indent: int) -> str:
     prefix = " " * indent
     if isinstance(value, list):
@@ -1610,6 +1669,37 @@ def build_parser() -> argparse.ArgumentParser:
     github.add_argument("--check-secrets", action="store_true")
     github.set_defaults(func=cmd_validate_github)
 
+    check = sub.add_parser("check")
+    check_sub = check.add_subparsers(dest="check_command", required=True)
+    check_run = check_sub.add_parser("run")
+    check_run.add_argument("--repo", required=True)
+    check_run.add_argument("--sha", required=True)
+    check_run.add_argument(
+        "--event",
+        required=True,
+        choices=["pull_request", "push", "release", "workflow_dispatch"],
+    )
+    check_run.add_argument(
+        "--status", choices=["queued", "in_progress", "completed"], default="completed"
+    )
+    check_run.add_argument(
+        "--conclusion",
+        choices=[
+            "action_required",
+            "cancelled",
+            "failure",
+            "neutral",
+            "skipped",
+            "stale",
+            "success",
+            "timed_out",
+        ],
+    )
+    check_run.add_argument("--summary", default="")
+    check_run.add_argument("--details-url")
+    check_run.add_argument("--dry-run", action="store_true")
+    check_run.set_defaults(func=cmd_check_run)
+
     readiness = sub.add_parser("release-readiness")
     readiness.add_argument("--repo", required=True)
     readiness.add_argument("--catalog-path")
@@ -1636,6 +1726,12 @@ def build_parser() -> argparse.ArgumentParser:
     onboard.add_argument("--dry-run", action="store_true")
     onboard.add_argument("--format", choices=["text", "json"], default="text")
     onboard.set_defaults(func=cmd_onboard_repo)
+
+    export_app_manifest = sub.add_parser("export-app-manifest")
+    export_app_manifest.add_argument("--repo", required=True)
+    export_app_manifest.add_argument("--output")
+    export_app_manifest.add_argument("--write", action="store_true")
+    export_app_manifest.set_defaults(func=cmd_export_app_manifest)
 
     infra = sub.add_parser("infra")
     infra_sub = infra.add_subparsers(dest="infra_command", required=True)

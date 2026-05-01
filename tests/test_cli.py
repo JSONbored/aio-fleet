@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from aio_fleet import cli
 from aio_fleet.cli import (
     _repo_python,
+    cmd_check_run,
     cmd_debt_report,
+    cmd_export_app_manifest,
     cmd_infra_doctor,
     cmd_onboard_repo,
     cmd_trunk_audit,
@@ -113,6 +115,47 @@ repos:
 
     assert result == 0  # nosec B101
     assert '"repos": 1' in capsys.readouterr().out  # nosec B101
+
+
+def test_check_run_dry_run_outputs_payload(tmp_path: Path, capsys) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    result = cmd_check_run(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            sha="e" * 40,
+            event="pull_request",
+            status="completed",
+            conclusion=None,
+            summary="central validation passed",
+            details_url=None,
+            dry_run=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "aio-fleet / required"  # nosec B101
+    assert payload["conclusion"] == "success"  # nosec B101
+
+
+def test_export_app_manifest_prints_future_app_manifest(tmp_path: Path, capsys) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    result = cmd_export_app_manifest(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            output=None,
+            write=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "schema_version: 1" in output  # nosec B101
+    assert "repo: example-aio" in output  # nosec B101
 
 
 def _write_minimal_manifest(tmp_path: Path) -> tuple[Path, Path]:

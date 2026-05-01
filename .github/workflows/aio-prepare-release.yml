@@ -69,7 +69,7 @@ jobs:
         with:
           repository: JSONbored/aio-fleet
           ref: ${{ steps.aio_fleet_ref.outputs.ref }}
-          path: .aio-fleet
+          path: ${{ runner.temp }}/aio-fleet
 
       - name: Resolve release PR token
         id: release_pr_token
@@ -78,18 +78,20 @@ jobs:
           AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
           AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           AIO_FLEET_BOT_TOKEN: ${{ secrets.AIO_FLEET_BOT_TOKEN }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          if [[ -z "${AIO_FLEET_APP_ID}${AIO_FLEET_APP_INSTALLATION_ID}${AIO_FLEET_APP_PRIVATE_KEY}${AIO_FLEET_BOT_TOKEN}" ]]; then
+            echo "token=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           token="$(
-            PYTHONPATH=.aio-fleet/src python -m aio_fleet.github_app \
-              --fallback-env AIO_FLEET_BOT_TOKEN \
-              --fallback-env RELEASE_TOKEN \
-              --fallback-env GITHUB_TOKEN
+            PYTHONPATH="${RUNNER_TEMP}/aio-fleet/src" python -m aio_fleet.github_app \
+              --fallback-env AIO_FLEET_BOT_TOKEN
           )"
-          echo "::add-mask::${token}"
-          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+          if [[ -n "${token}" ]]; then
+            echo "::add-mask::${token}"
+            echo "token=${token}" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Install git-cliff
         env:
@@ -193,7 +195,7 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ steps.release_pr_token.outputs.token }}
+          token: ${{ steps.release_pr_token.outputs.token || github.token }}
           commit-message: "chore(release): ${{ steps.version.outputs.release_version }}"
           title: "chore(release): ${{ steps.version.outputs.release_version }}"
           body: ${{ steps.pr_body.outputs.body }}

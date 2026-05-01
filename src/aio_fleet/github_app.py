@@ -24,19 +24,36 @@ def main() -> int:
     parser.add_argument("--fallback-env", action="append", default=[])
     args = parser.parse_args()
 
-    app_id = os.environ.get(args.app_id_env, "").strip()
-    installation_id = os.environ.get(args.installation_id_env, "").strip()
-    private_key = os.environ.get(args.private_key_env, "").strip()
-    if app_id and installation_id and private_key:
-        print(create_installation_token(app_id, installation_id, private_key))
+    token = resolve_token(
+        app_id_env=args.app_id_env,
+        installation_id_env=args.installation_id_env,
+        private_key_env=args.private_key_env,
+        fallback_envs=tuple(args.fallback_env),
+    )
+    if token:
+        print(token)
         return 0
+    return 1
 
-    for env_name in args.fallback_env:
+
+def resolve_token(
+    *,
+    app_id_env: str = "AIO_FLEET_APP_ID",
+    installation_id_env: str = "AIO_FLEET_APP_INSTALLATION_ID",
+    private_key_env: str = "AIO_FLEET_APP_PRIVATE_KEY",
+    fallback_envs: tuple[str, ...] = (),
+) -> str:
+    app_id = os.environ.get(app_id_env, "").strip()
+    installation_id = os.environ.get(installation_id_env, "").strip()
+    private_key = os.environ.get(private_key_env, "").strip()
+    if app_id and installation_id and private_key:
+        return create_installation_token(app_id, installation_id, private_key)
+
+    for env_name in fallback_envs:
         value = os.environ.get(env_name, "").strip()
         if value:
-            print(value)
-            return 0
-    return 1
+            return value
+    return ""
 
 
 def create_installation_token(

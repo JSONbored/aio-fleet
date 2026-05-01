@@ -214,3 +214,30 @@ def test_release_workflows_checkout_shared_release_helpers() -> None:
     assert "Checkout aio-fleet release helpers" in publish  # nosec B101
     assert "aio-prepare-release\\.yml@([0-9a-f]{40})" in prepare  # nosec B101
     assert "aio-publish-release\\.yml@([0-9a-f]{40})" in publish  # nosec B101
+
+
+def test_prepare_release_keeps_helper_checkout_outside_caller_worktree() -> None:
+    prepare = (ROOT / ".github/workflows/aio-prepare-release.yml").read_text()
+    helper_checkout = prepare.split("Checkout aio-fleet release helpers", 1)[1].split(
+        "Resolve release PR token", 1
+    )[0]
+
+    assert "path: ${{ runner.temp }}/aio-fleet" in helper_checkout  # nosec B101
+    assert "path: .aio-fleet" not in helper_checkout  # nosec B101
+    assert 'PYTHONPATH="${RUNNER_TEMP}/aio-fleet/src"' in prepare  # nosec B101
+
+
+def test_prepare_release_does_not_use_release_token_for_pr_creation() -> None:
+    prepare = (ROOT / ".github/workflows/aio-prepare-release.yml").read_text()
+    token_step = prepare.split("Resolve release PR token", 1)[1].split(
+        "Install git-cliff", 1
+    )[0]
+    create_pr = prepare.split("Create release PR", 1)[1]
+
+    assert "RELEASE_TOKEN" not in token_step  # nosec B101
+    assert "--fallback-env AIO_FLEET_BOT_TOKEN" in token_step  # nosec B101
+    assert "--fallback-env GITHUB_TOKEN" not in token_step  # nosec B101
+    assert (  # nosec B101
+        "token: ${{ steps.release_pr_token.outputs.token || github.token }}"
+        in create_pr
+    )

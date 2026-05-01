@@ -20,6 +20,10 @@ Publish jobs still require:
 The reusable `aio-build.yml` owns those publish-gate decisions centrally. App
 repos pass only their publish profile and app-specific path exceptions.
 
+Prepare-release workflows check out `aio-fleet` helpers outside the caller
+repository workspace. Helper checkouts must never appear as `.aio-fleet`
+gitlinks in generated release branches.
+
 ## Generated Templates
 
 Generated-template repos run their generator check before XML validation. This prevents the source repo from publishing a stale Community Apps XML file that later breaks catalog sync.

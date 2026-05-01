@@ -13,7 +13,7 @@ Start with the smallest app permission set that supports the fleet jobs:
 - Metadata: read
 - Contents: write
 - Pull requests: write
-- Checks: read
+- Checks: write
 - Actions: read
 
 Only add broader administration permissions if the GitHub App later owns repo
@@ -39,6 +39,17 @@ The reusable workflows already resolve automation credentials through
 - The fallback stays in place until generated catalog and release PRs are proven
   to run required checks and remain mergeable under branch protection with the
   app identity.
+
+Release PR creation should not use `RELEASE_TOKEN` as a generic fallback. That
+token can be valid for release/tag operations while still lacking pull-request
+write access. Prepare-release workflows should prefer a GitHub App token, then
+`AIO_FLEET_BOT_TOKEN`, then the caller job `GITHUB_TOKEN` when no stronger
+automation identity is configured.
+
+Check-runs are stricter than release PRs. The required fleet check is created
+by `aio-fleet check run`, and the long-term path is a GitHub App installation
+token with Checks write access. The local `AIO_FLEET_CHECK_TOKEN` fallback is
+only for controlled operator use while bringing the App online.
 
 The private key secret should contain the PEM text. Escaped `\n` sequences are
 accepted so the value can be stored in GitHub Secrets without preserving literal
