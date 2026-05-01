@@ -5,6 +5,7 @@ import difflib
 import fnmatch
 import json
 import os
+import shutil
 import subprocess  # nosec B404
 import sys
 from pathlib import Path
@@ -17,10 +18,12 @@ from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
     TRACKED_ARTIFACT_PATTERNS,
     catalog_asset_failures,
+    catalog_quality_findings,
     catalog_repo_failures,
     derived_repo_failures,
     pinned_action_failures,
     repo_policy_failures,
+    template_metadata_failures,
     tracked_artifact_failures,
 )
 from aio_fleet.workflows import (
@@ -662,6 +665,35 @@ def cmd_validate_repo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_template_common(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    if args.all and args.repo_path:
+        print("--repo-path can only be used with --repo", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    failures: list[str] = []
+    for repo in repos:
+        repo_to_check = (
+            _repo_with_path(repo, Path(args.repo_path).resolve())
+            if args.repo_path
+            else repo
+        )
+        failures.extend(template_metadata_failures(repo_to_check, manifest))
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    checked = len(repos)
+    print(f"common template validation passed for {checked} repo(s)")
+    return 0
+
+
 def cmd_validate_catalog(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     failures = catalog_repo_failures(manifest, Path(args.catalog_path).resolve())
@@ -683,6 +715,175 @@ def cmd_validate_github(args: argparse.Namespace) -> int:
         return 1
     print("github policy checks passed")
     return 0
+
+
+def cmd_catalog_audit(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    findings = catalog_quality_findings(manifest, Path(args.catalog_path).resolve())
+    report = {
+        "catalog_path": str(Path(args.catalog_path).resolve()),
+        "findings": findings,
+        "summary": {"findings": len(findings)},
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.format == "markdown":
+        print("# Catalog Audit")
+        print()
+        if findings:
+            for finding in findings:
+                print(f"- {finding}")
+        else:
+            print("No catalog audit findings.")
+    else:
+        if findings:
+            print("\n".join(findings))
+        else:
+            print("catalog audit passed")
+    return 1 if findings else 0
+
+
+def cmd_release_readiness(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
+    policy_path = Path(args.policy)
+    findings: list[str] = []
+    warnings: list[str] = []
+
+    status = _run(["git", "status", "--short"], cwd=repo.path)
+    if status.stdout.strip():
+        findings.append(f"{repo.name}: worktree is dirty")
+
+    drift = _run(
+        ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
+        cwd=repo.path,
+    )
+    ahead = behind = "?"
+    if drift.returncode == 0:
+        ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
+        if behind != "0":
+            findings.append(f"{repo.name}: branch is behind origin/main by {behind}")
+    else:
+        warnings.append(f"{repo.name}: unable to inspect branch drift")
+
+    open_prs = _open_prs(repo)
+    if open_prs not in {"0", "not-run", "unknown"}:
+        findings.append(f"{repo.name}: has {open_prs} open PR(s)")
+
+    try:
+        policy_repos = set(load_policy(policy_path)["repositories"])
+        if repo.name in policy_repos:
+            findings.extend(
+                validate_github_policy(
+                    policy_path, repos=[repo.name], check_secrets=False
+                )
+            )
+        else:
+            warnings.append(f"{repo.name}: github policy is manual")
+    except Exception as exc:
+        warnings.append(f"{repo.name}: unable to validate GitHub policy: {exc}")
+
+    if catalog_path:
+        catalog_failures = [
+            failure
+            for failure in catalog_repo_failures(manifest, catalog_path)
+            if failure.startswith(f"{repo.name}:")
+        ]
+        findings.extend(catalog_failures)
+
+    latest_ci = _latest_main_ci(repo)
+    if latest_ci["state"] != "success":
+        findings.append(f"{repo.name}: latest main CI is {latest_ci['state']}")
+
+    release_version = _release_version(repo)
+    if not release_version:
+        findings.append(f"{repo.name}: unable to read latest changelog version")
+
+    image_status = _image_status(repo)
+    if image_status != "ok":
+        warnings.append(f"{repo.name}: image publish status is {image_status}")
+
+    report = {
+        "repo": repo.name,
+        "ahead": ahead,
+        "behind": behind,
+        "open_prs": open_prs,
+        "latest_ci": latest_ci,
+        "release_version": release_version,
+        "image_status": image_status,
+        "findings": findings,
+        "warnings": warnings,
+        "ready": not findings,
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        state = "ready" if not findings else "blocked"
+        print(f"{repo.name}: release-readiness={state}")
+        for finding in findings:
+            print(f"- {finding}")
+        for warning in warnings:
+            print(f"- warning: {warning}")
+    return 1 if findings else 0
+
+
+def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
+    result = _run(
+        [
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            repo.github_repo,
+            "--branch",
+            "main",
+            "--workflow",
+            "build.yml",
+            "--limit",
+            "1",
+            "--json",
+            "status,conclusion,headSha,url",
+        ],
+        cwd=repo.path,
+    )
+    if result.returncode != 0:
+        return {"state": "unknown", "detail": result.stderr.strip()}
+    try:
+        runs = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return {"state": "unknown", "detail": "unable to parse gh run output"}
+    if not runs:
+        return {"state": "missing", "detail": "no main build.yml run found"}
+    run = runs[0]
+    state = (
+        "success"
+        if run.get("status") == "completed" and run.get("conclusion") == "success"
+        else str(run.get("conclusion") or run.get("status") or "unknown")
+    )
+    return {
+        "state": state,
+        "head_sha": str(run.get("headSha") or ""),
+        "url": str(run.get("url") or ""),
+    }
+
+
+def _release_version(repo: RepoConfig) -> str:
+    result = _run(
+        ["python3", "scripts/release.py", "latest-changelog-version"], cwd=repo.path
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _image_status(repo: RepoConfig) -> str:
+    docker = shutil.which("docker")
+    if docker is None:
+        return "unknown:no-docker"
+    result = _run(
+        [docker, "manifest", "inspect", f"ghcr.io/{repo.image_name}:latest"],
+        cwd=repo.path,
+    )
+    return "ok" if result.returncode == 0 else "unknown:latest-not-inspected"
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -945,6 +1146,241 @@ def cmd_sync_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_infra_doctor(args: argparse.Namespace) -> int:
+    root = Path.cwd()
+    infra_path = Path(args.path).resolve()
+    manifest = load_manifest(Path(args.manifest))
+    policy_path = Path(args.policy)
+    failures: list[str] = []
+
+    if not args.skip_tofu and shutil.which("tofu") is None:
+        failures.append("OpenTofu CLI is not installed")
+    if not (infra_path / ".terraform.lock.hcl").exists():
+        failures.append(f"{infra_path}: missing .terraform.lock.hcl")
+    if not (infra_path / ".terraform").exists():
+        failures.append(f"{infra_path}: OpenTofu is not initialized; run tofu init")
+
+    failures.extend(tracked_artifact_failures(root))
+    for relative in [
+        "infra/github/terraform.tfstate",
+        "infra/github/terraform.tfstate.backup",
+        "infra/github/repos.tfvars",
+    ]:
+        if not _git_check_ignore(root, relative):
+            failures.append(f"{relative} is not ignored by git")
+
+    try:
+        policy = load_policy(policy_path)
+        policy_repos = set(policy["repositories"])
+        expected = {
+            repo.name
+            for repo in manifest.repos.values()
+            if repo.raw.get("public") is not False
+        }
+        expected.add("awesome-unraid")
+        missing = sorted(expected - policy_repos)
+        extra = sorted(policy_repos - expected)
+        if missing:
+            failures.append(f"github policy missing repos: {missing}")
+        if extra:
+            failures.append(f"github policy has unknown repos: {extra}")
+        patterns = set(
+            str(item)
+            for item in policy.get("defaults", {})
+            .get("actions", {})
+            .get("patterns_allowed", [])
+        )
+        if "JSONbored/aio-fleet/.github/workflows/aio-*.yml@*" not in patterns:
+            failures.append(
+                "github policy missing reusable workflow wildcard allowlist"
+            )
+    except Exception as exc:
+        failures.append(f"unable to load GitHub policy: {exc}")
+
+    if not args.skip_tofu and shutil.which("tofu") is not None:
+        for command in (["tofu", "fmt", "-check", "-recursive"], ["tofu", "validate"]):
+            result = _run(command, cwd=infra_path)
+            if result.returncode != 0:
+                failures.append(
+                    f"{' '.join(command)} failed: {(result.stderr or result.stdout).strip()}"
+                )
+
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print("infra doctor passed")
+    return 0
+
+
+def _git_check_ignore(repo_path: Path, relative_path: str) -> bool:
+    result = _run(["git", "check-ignore", "--quiet", relative_path], cwd=repo_path)
+    return result.returncode == 0
+
+
+def cmd_onboard_repo(args: argparse.Namespace) -> int:
+    image_name = args.image_name or f"jsonbored/{args.repo}"
+    upstream_name = args.upstream_name or args.repo.removesuffix("-aio").title()
+    local_path_base = args.local_path_base.rstrip("/")
+    manifest_entry = {
+        "path": f"{local_path_base}/{args.repo}",
+        "public": True,
+        "workflow_name": f"CI / {upstream_name} AIO",
+        "app_slug": args.repo,
+        "image_name": image_name,
+        "docker_cache_scope": f"{args.repo}-image",
+        "pytest_image_tag": f"{args.repo}:pytest",
+        "publish_profile": args.profile,
+        "release_name": f"{upstream_name} AIO",
+        "upstream_name": upstream_name,
+        "image_description": f"Unraid-first AIO wrapper image for {upstream_name}",
+        "xml_paths": [f"{args.repo}.xml"],
+        "catalog_assets": [
+            {"source": f"{args.repo}.xml", "target": f"{args.repo}.xml"}
+        ],
+    }
+    if args.format == "json":
+        print(
+            json.dumps({"repo": args.repo, "manifest_entry": manifest_entry}, indent=2)
+        )
+        return 0
+
+    print(f"# Onboard {args.repo}")
+    print()
+    print("## Manifest entry")
+    print()
+    print("```yaml")
+    print(f"  {args.repo}:")
+    for key, value in manifest_entry.items():
+        print(_yaml_line(key, value, indent=4))
+    print("```")
+    print()
+    print("## First commands")
+    print()
+    print(f"- `python -m aio_fleet render-workflow {args.repo} --ref <aio-fleet-sha>`")
+    print(
+        f"- `python -m aio_fleet sync-workflows --repo {args.repo} --ref <aio-fleet-sha>`"
+    )
+    print(
+        f"- `python -m aio_fleet validate-repo --repo {args.repo} --repo-path ../{args.repo}`"
+    )
+    print(
+        f"- `python -m aio_fleet sync-catalog --repo {args.repo} --catalog-path ../awesome-unraid --dry-run`"
+    )
+    return 0
+
+
+def _yaml_line(key: str, value: object, *, indent: int) -> str:
+    prefix = " " * indent
+    if isinstance(value, list):
+        lines = [f"{prefix}{key}:"]
+        for item in value:
+            if isinstance(item, dict):
+                entries = list(item.items())
+                if not entries:
+                    lines.append(f"{prefix}  - {{}}")
+                    continue
+                first_key, first_value = entries[0]
+                lines.append(f"{prefix}  - {first_key}: {first_value}")
+                for item_key, item_value in entries[1:]:
+                    lines.append(f"{prefix}    {item_key}: {item_value}")
+            else:
+                lines.append(f"{prefix}  - {item}")
+        return "\n".join(lines)
+    if isinstance(value, bool):
+        return f"{prefix}{key}: {str(value).lower()}"
+    return f"{prefix}{key}: {value}"
+
+
+def cmd_support_thread_render(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    xml_path = _first_xml_source(repo)
+    xml_values = _xml_text_values(repo.path / xml_path) if xml_path else {}
+    template_path = (
+        Path(__file__).resolve().parents[2]
+        / "boilerplate"
+        / "aio"
+        / "docs"
+        / "support-thread-template.md"
+    )
+    text = template_path.read_text()
+    replacements = {
+        "{{APP_NAME}}": repo.app_slug,
+        "{{SHORT_DESCRIPTOR}}": repo.get("upstream_name", repo.app_slug),
+        "{{ONE_SENTENCE_APP_DESCRIPTION}}": _app_description(
+            _first_sentence(xml_values.get("Overview", "")),
+            str(repo.get("upstream_name", repo.app_slug)),
+        ),
+        "{{UPSTREAM_APP_NAME}}": str(repo.get("upstream_name", repo.app_slug)),
+        "{{IMAGE_NAME}}": repo.image_name,
+        "{{WEBUI_URL_OR_NOTE}}": _webui_note(xml_values),
+        "{{APPDATA_PATHS}}": "/appdata",
+        "{{REQUIRED_FIELDS}}": "Use the default template values unless the app README says otherwise.",
+        "{{FIRST_BOOT_EXPECTATIONS}}": "First boot may take several minutes while bundled services initialize.",
+        "{{LIMITATION_1}}": "AIO packaging trades service separation for easier Unraid installation.",
+        "{{LIMITATION_2}}": "Advanced external dependencies remain app-specific.",
+        "{{LIMITATION_3}}": "Back up appdata before upgrades.",
+        "{{PATH_1}}": "/appdata",
+        "{{PATH_2}}": "See the Unraid template for app-specific persisted paths.",
+        "{{PATH_3}}": "See the source README for optional external service paths.",
+        "{{PROJECT_REPO_URL}}": f"https://github.com/{repo.github_repo}",
+        "{{UPSTREAM_URL}}": xml_values.get("Project", ""),
+        "{{CATALOG_REPO_URL}}": "https://github.com/JSONbored/awesome-unraid",
+        "{{GITHUB_SPONSORS_URL}}": "https://github.com/sponsors/JSONbored",
+        "{{KOFI_URL}}": "https://ko-fi.com/jsonbored",
+        "{{MAINTAINER_NAME}}": "JSONbored",
+        "{{GITHUB_PROFILE_URL}}": "https://github.com/JSONbored",
+        "{{PORTFOLIO_URL}}": "https://aethereal.dev",
+    }
+    for placeholder, value in replacements.items():
+        text = text.replace(placeholder, str(value))
+    print(text)
+    return 0
+
+
+def _first_xml_source(repo: RepoConfig) -> str:
+    assets = repo.raw.get("catalog_assets", [])
+    if not isinstance(assets, list):
+        return ""
+    for asset in assets:
+        if isinstance(asset, dict):
+            source = str(asset.get("source", ""))
+            if source.endswith(".xml"):
+                return source
+    return ""
+
+
+def _xml_text_values(xml_path: Path) -> dict[str, str]:
+    if not xml_path.exists():
+        return {}
+    import defusedxml.ElementTree as ET
+
+    root = ET.parse(xml_path).getroot()
+    return {child.tag: (child.text or "").strip() for child in root}
+
+
+def _first_sentence(text: str) -> str:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return ""
+    sentence = cleaned.split(". ", 1)[0].strip()
+    return sentence if sentence.endswith(".") else f"{sentence}."
+
+
+def _app_description(sentence: str, upstream_name: str) -> str:
+    prefix = f"{upstream_name} is "
+    if sentence.startswith(prefix):
+        return sentence[len(prefix) :].rstrip(".")
+    return (sentence[:1].lower() + sentence[1:]).rstrip(".") if sentence else ""
+
+
+def _webui_note(values: dict[str, str]) -> str:
+    for key, value in values.items():
+        if key == "WebUI" and value:
+            return value
+    return "Open the Web UI from the Unraid Docker page after the container starts."
+
+
 def _catalog_branch(repo: str | None, icon_only: bool) -> str:
     if repo:
         suffix = "icons" if icon_only else "catalog-assets"
@@ -1146,6 +1582,12 @@ def build_parser() -> argparse.ArgumentParser:
     derived.add_argument("--template-xml")
     derived.set_defaults(func=cmd_validate_derived)
 
+    common_template = sub.add_parser("validate-template-common")
+    common_template.add_argument("--repo")
+    common_template.add_argument("--repo-path")
+    common_template.add_argument("--all", action="store_true")
+    common_template.set_defaults(func=cmd_validate_template_common)
+
     repo = sub.add_parser("validate-repo")
     repo.add_argument("--repo", required=True)
     repo.add_argument("--repo-path", default=".")
@@ -1155,11 +1597,59 @@ def build_parser() -> argparse.ArgumentParser:
     catalog.add_argument("--catalog-path", required=True)
     catalog.set_defaults(func=cmd_validate_catalog)
 
+    catalog_audit = sub.add_parser("catalog-audit")
+    catalog_audit.add_argument("--catalog-path", required=True)
+    catalog_audit.add_argument(
+        "--format", choices=["text", "json", "markdown"], default="text"
+    )
+    catalog_audit.set_defaults(func=cmd_catalog_audit)
+
     github = sub.add_parser("validate-github")
     github.add_argument("--policy", default="infra/github/github-policy.yml")
     github.add_argument("--repo", action="append")
     github.add_argument("--check-secrets", action="store_true")
     github.set_defaults(func=cmd_validate_github)
+
+    readiness = sub.add_parser("release-readiness")
+    readiness.add_argument("--repo", required=True)
+    readiness.add_argument("--catalog-path")
+    readiness.add_argument("--policy", default="infra/github/github-policy.yml")
+    readiness.add_argument("--format", choices=["text", "json"], default="text")
+    readiness.set_defaults(func=cmd_release_readiness)
+
+    onboard = sub.add_parser("onboard-repo")
+    onboard.add_argument("--repo", required=True)
+    onboard.add_argument(
+        "--profile",
+        default="changelog-version",
+        choices=[
+            "template",
+            "upstream-aio-track",
+            "changelog-version",
+            "dify",
+            "signoz-suite",
+        ],
+    )
+    onboard.add_argument("--upstream-name")
+    onboard.add_argument("--image-name")
+    onboard.add_argument("--local-path-base", default="<local-checkout-path>")
+    onboard.add_argument("--dry-run", action="store_true")
+    onboard.add_argument("--format", choices=["text", "json"], default="text")
+    onboard.set_defaults(func=cmd_onboard_repo)
+
+    infra = sub.add_parser("infra")
+    infra_sub = infra.add_subparsers(dest="infra_command", required=True)
+    infra_doctor = infra_sub.add_parser("doctor")
+    infra_doctor.add_argument("--path", default="infra/github")
+    infra_doctor.add_argument("--policy", default="infra/github/github-policy.yml")
+    infra_doctor.add_argument("--skip-tofu", action="store_true")
+    infra_doctor.set_defaults(func=cmd_infra_doctor)
+
+    support = sub.add_parser("support-thread")
+    support_sub = support.add_subparsers(dest="support_command", required=True)
+    support_render = support_sub.add_parser("render")
+    support_render.add_argument("--repo", required=True)
+    support_render.set_defaults(func=cmd_support_thread_render)
 
     validate = sub.add_parser("validate")
     validate.add_argument("--all", action="store_true")

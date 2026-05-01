@@ -4,6 +4,7 @@ from pathlib import Path
 
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.validators import (
+    catalog_quality_findings,
     catalog_repo_failures,
     derived_repo_failures,
     pinned_action_failures,
@@ -169,6 +170,42 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
     )
 
 
+def test_template_metadata_validation_rejects_common_quality_drift(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>Example-AIO</Name>
+  <Project>not-a-url</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example overview with defaults and advanced settings.</Overview>
+  <Category>FakeCategory</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText>Support JSONbored</DonateText>
+  <DonateLink/>
+  <Changes>### 2026-01-01</Changes>
+</Container>
+""")
+
+    failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
+
+    assert (
+        "example-aio: example-aio.xml <Name> must be lowercase" in failures
+    )  # nosec B101
+    assert (
+        "example-aio: example-aio.xml <Project> must be an HTTP(S) URL" in failures
+    )  # nosec B101
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <Category> token has unknown root: FakeCategory"
+        in failures
+    )
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <DonateText> and <DonateLink> must be both blank or both populated"
+        in failures
+    )
+
+
 def test_tracked_artifact_validation_rejects_tfstate_and_pycache(
     tmp_path: Path,
 ) -> None:
@@ -240,3 +277,38 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
 """)
 
     assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
+
+
+def test_catalog_quality_audit_reports_catalog_presentation_drift(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"not-png")
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>Example-AIO</Name>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Too short.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText/>
+  <DonateLink/>
+  <Changes>### 2026-01-01</Changes>
+</Container>
+""")
+
+    findings = catalog_quality_findings(manifest, catalog_path)  # type: ignore[arg-type]
+
+    assert any(
+        "<Name> must be lowercase" in finding for finding in findings
+    )  # nosec B101
+    assert any(
+        "fuller CA-facing setup guidance" in finding for finding in findings
+    )  # nosec B101
+    assert any("not a valid PNG" in finding for finding in findings)  # nosec B101
