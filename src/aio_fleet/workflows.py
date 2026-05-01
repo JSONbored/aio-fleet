@@ -57,6 +57,7 @@ def _extra_publish_block(repo: RepoConfig) -> str:
 
 def _workflow_paths(repo: RepoConfig) -> list[str]:
     paths = [
+        ".aio-fleet.yml",
         "CHANGELOG.md",
         "Dockerfile",
         "cliff.toml",
