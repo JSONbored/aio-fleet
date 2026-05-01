@@ -36,10 +36,6 @@ on:
         required: false
         default: aethereal
         type: string
-      registry:
-        required: false
-        default: ghcr.io
-        type: string
       publish_platforms:
         required: false
         default: linux/amd64,linux/arm64
@@ -127,7 +123,6 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  REGISTRY: ${{ inputs.registry }}
   IMAGE_NAME: ${{ inputs.image_name }}
   AGENT_IMAGE_NAME: ${{ inputs.agent_image_name }}
   PYTHON_VERSION: ${{ inputs.python_version }}
@@ -994,12 +989,6 @@ jobs:
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-      - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Resolve Docker Hub publish settings
         id: dockerhub
         env:
@@ -1008,10 +997,13 @@ jobs:
           DOCKERHUB_IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE_NAME }}
           DOCKERHUB_IMAGE_NAME_SECRET: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
         run: |
+          set -euo pipefail
+
           if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "Docker Hub credentials are required for publishing." >&2
+            exit 1
           fi
 
           resolved_image_name="${DOCKERHUB_IMAGE_NAME:-${DOCKERHUB_IMAGE_NAME_SECRET}}"
@@ -1021,7 +1013,6 @@ jobs:
             echo "image_name=${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
           fi
       - name: Login to Docker Hub
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: docker.io
@@ -1030,7 +1021,6 @@ jobs:
       - name: Compute image tags and labels
         id: prep
         env:
-          DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
           DOCKERHUB_IMAGE_NAME: ${{ steps.dockerhub.outputs.image_name }}
           PUBLISH_PROFILE: ${{ inputs.publish_profile }}
           UPSTREAM_DIGEST_ARG: ${{ inputs.upstream_digest_arg }}
@@ -1040,10 +1030,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          image_ghcr="$(printf '%s' "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
           dockerhub_image_name="${DOCKERHUB_IMAGE_NAME:-${IMAGE_NAME}}"
           image_dockerhub="$(printf '%s' "${dockerhub_image_name}" | tr '[:upper:]' '[:lower:]')"
-          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
+          sha_tag_dockerhub="${image_dockerhub}:sha-${GITHUB_SHA}"
           upstream_version="$(python3 scripts/release.py upstream-version 2>/dev/null || true)"
           upstream_digest="$(sed -n "s/^ARG ${UPSTREAM_DIGEST_ARG}=//p" Dockerfile | head -n1)"
           changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
@@ -1077,28 +1066,16 @@ jobs:
             echo "version_label=${version_label}"
             echo "wrapper_track=${wrapper_track}"
             echo "wrapper_version=${wrapper_version}"
-            echo "ghcr_source=${sha_tag_ghcr}"
-            echo "ghcr_tags<<EOF"
-            echo "${image_ghcr}:latest"
-            if [[ -n "${upstream_version}" ]]; then
-              echo "${image_ghcr}:${upstream_version}"
-              if [[ -n "${release_package_tag}" ]]; then
-                echo "${image_ghcr}:${release_package_tag}"
-              fi
-            fi
-            echo "${sha_tag_ghcr}"
-            echo "EOF"
+            echo "dockerhub_source=${sha_tag_dockerhub}"
             echo "dockerhub_tags<<EOF"
-            if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
-              echo "${image_dockerhub}:latest"
-              if [[ -n "${upstream_version}" ]]; then
-                echo "${image_dockerhub}:${upstream_version}"
-                if [[ -n "${release_package_tag}" ]]; then
-                  echo "${image_dockerhub}:${release_package_tag}"
-                fi
+            echo "${image_dockerhub}:latest"
+            if [[ -n "${upstream_version}" ]]; then
+              echo "${image_dockerhub}:${upstream_version}"
+              if [[ -n "${release_package_tag}" ]]; then
+                echo "${image_dockerhub}:${release_package_tag}"
               fi
-              echo "${image_dockerhub}:sha-${GITHUB_SHA}"
             fi
+            echo "${sha_tag_dockerhub}"
             echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
@@ -1122,7 +1099,7 @@ jobs:
             echo "io.jsonbored.wrapper.version=${wrapper_version}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
-      - name: Build and push GHCR image
+      - name: Build and push Docker Hub image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -1130,54 +1107,18 @@ jobs:
           push: true
           cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
-          tags: ${{ steps.prep.outputs.ghcr_tags }}
+          tags: ${{ steps.prep.outputs.dockerhub_tags }}
           labels: ${{ steps.prep.outputs.labels }}
-      - name: Install Docker Hub mirror tooling
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
-      - name: Mirror GHCR image to Docker Hub
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
-        env:
-          DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          GHCR_SOURCE_TAG: ${{ steps.prep.outputs.ghcr_source }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USERNAME: ${{ github.actor }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${DOCKERHUB_TAGS}" ]]; then
-            echo "Docker Hub publishing is enabled but no Docker Hub tags were computed." >&2
-            exit 1
-          fi
-
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Mirroring ${GHCR_SOURCE_TAG} to ${tag}"
-            skopeo copy --all --retry-times 3 \
-              --src-creds "${GHCR_USERNAME}:${GHCR_TOKEN}" \
-              --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-              "docker://${GHCR_SOURCE_TAG}" \
-              "docker://${tag}"
-          done <<< "${DOCKERHUB_TAGS}"
       - name: Verify Docker Hub tags
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
         env:
           DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
 
           while IFS= read -r tag; do
             [[ -z "${tag}" ]] && continue
             echo "Verifying ${tag}"
-            skopeo inspect --raw \
-              --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-              "docker://${tag}" >/dev/null
+            docker buildx imagetools inspect "${tag}" >/dev/null
           done <<< "${DOCKERHUB_TAGS}"
 
   publish-agent:
@@ -1229,25 +1170,21 @@ jobs:
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-      - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Resolve Docker Hub publish settings
         id: dockerhub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "Docker Hub credentials are required for publishing." >&2
+            exit 1
           fi
       - name: Login to Docker Hub
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: docker.io
@@ -1255,14 +1192,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Compute agent image tags and labels
         id: prep
-        env:
-          DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
         run: |
           set -euo pipefail
 
-          image_ghcr="$(printf '%s' "${REGISTRY}/${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
           image_dockerhub="$(printf '%s' "${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
-          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
+          sha_tag_dockerhub="${image_dockerhub}:sha-${GITHUB_SHA}"
           upstream_version="$(python3 scripts/release.py --component signoz-agent upstream-version)"
           upstream_digest="$(sed -n 's/^ARG UPSTREAM_OTELCOL_DIGEST=//p' "${{ inputs.agent_dockerfile }}" | head -n1)"
           changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
@@ -1279,24 +1213,14 @@ jobs:
           fi
 
           {
-            echo "ghcr_source=${sha_tag_ghcr}"
-            echo "ghcr_tags<<EOF"
-            echo "${image_ghcr}:latest"
-            echo "${image_ghcr}:${upstream_version}"
-            if [[ -n "${release_package_tag}" ]]; then
-              echo "${image_ghcr}:${release_package_tag}"
-            fi
-            echo "${sha_tag_ghcr}"
-            echo "EOF"
+            echo "dockerhub_source=${sha_tag_dockerhub}"
             echo "dockerhub_tags<<EOF"
-            if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
-              echo "${image_dockerhub}:latest"
-              echo "${image_dockerhub}:${upstream_version}"
-              if [[ -n "${release_package_tag}" ]]; then
-                echo "${image_dockerhub}:${release_package_tag}"
-              fi
-              echo "${image_dockerhub}:sha-${GITHUB_SHA}"
+            echo "${image_dockerhub}:latest"
+            echo "${image_dockerhub}:${upstream_version}"
+            if [[ -n "${release_package_tag}" ]]; then
+              echo "${image_dockerhub}:${release_package_tag}"
             fi
+            echo "${sha_tag_dockerhub}"
             echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
@@ -1312,7 +1236,7 @@ jobs:
             echo "io.jsonbored.wrapper.version=${wrapper_version}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
-      - name: Build and push GHCR agent image
+      - name: Build and push Docker Hub agent image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ${{ inputs.agent_context }}
@@ -1321,54 +1245,18 @@ jobs:
           push: true
           cache-from: type=gha,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
-          tags: ${{ steps.prep.outputs.ghcr_tags }}
+          tags: ${{ steps.prep.outputs.dockerhub_tags }}
           labels: ${{ steps.prep.outputs.labels }}
-      - name: Install Docker Hub mirror tooling
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
-      - name: Mirror GHCR agent image to Docker Hub
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
-        env:
-          DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          GHCR_SOURCE_TAG: ${{ steps.prep.outputs.ghcr_source }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USERNAME: ${{ github.actor }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${DOCKERHUB_TAGS}" ]]; then
-            echo "Docker Hub publishing is enabled but no Docker Hub tags were computed." >&2
-            exit 1
-          fi
-
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Mirroring ${GHCR_SOURCE_TAG} to ${tag}"
-            skopeo copy --all --retry-times 3 \
-              --src-creds "${GHCR_USERNAME}:${GHCR_TOKEN}" \
-              --dest-creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-              "docker://${GHCR_SOURCE_TAG}" \
-              "docker://${tag}"
-          done <<< "${DOCKERHUB_TAGS}"
       - name: Verify Docker Hub agent tags
-        if: ${{ steps.dockerhub.outputs.enabled == 'true' }}
         env:
           DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
 
           while IFS= read -r tag; do
             [[ -z "${tag}" ]] && continue
             echo "Verifying ${tag}"
-            skopeo inspect --raw \
-              --creds "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-              "docker://${tag}" >/dev/null
+            docker buildx imagetools inspect "${tag}" >/dev/null
           done <<< "${DOCKERHUB_TAGS}"
 
   sync-awesome-unraid:

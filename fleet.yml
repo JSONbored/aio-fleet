@@ -8,7 +8,6 @@ reusable_workflow:
 defaults:
   python_version: "3.13"
   trunk_org_slug: aethereal
-  registry: ghcr.io
   publish_platforms: linux/amd64,linux/arm64
   integration_pytest_args: tests/integration -m integration
   unit_pytest_args: tests/unit tests/template

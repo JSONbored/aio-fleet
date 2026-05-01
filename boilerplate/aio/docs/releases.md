@@ -20,7 +20,7 @@ Every `main` build publishes:
 
 Release commits also publish the immutable packaging-line tag derived from the changelog release version. Ordinary `main` pushes do not overwrite that release tag.
 
-The Unraid template should use Docker Hub image names for Community Applications metadata. When Docker Hub credentials are configured, CI mirrors the same tag set there.
+The Unraid template uses Docker Hub image names for Community Applications metadata. Publish jobs require Docker Hub credentials and push the same tag set there directly.
 
 ## Release flow
 
