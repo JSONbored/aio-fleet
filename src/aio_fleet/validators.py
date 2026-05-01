@@ -68,6 +68,15 @@ TRACKED_ARTIFACT_PATTERNS = [
 ]
 
 CHANGELOG_HEADING = re.compile(r"^### \d{4}-\d{2}-\d{2}$")
+GENERATED_CHANGELOG_NOTE = (
+    "Generated from CHANGELOG.md during release preparation. Do not edit manually."
+)
+GENERATED_CHANGELOG_BULLET = f"- {GENERATED_CHANGELOG_NOTE}"
+LEGACY_CHANGELOG_MARKERS = (
+    "[b]Latest release[/b]",
+    "GitHub Releases",
+    "Full changelog and release notes:",
+)
 GIT_BIN = shutil.which("git")
 UNRAID_CATEGORY_ROOTS = {
     "AI",
@@ -610,15 +619,17 @@ def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[
             failures.append(
                 f"{repo.name}: {source} <Changes> must start with '### YYYY-MM-DD'"
             )
+        failures.extend(_generated_changes_failures(repo, source, changes))
 
     for config in root.findall(".//Config"):
         options = config.findall("Option")
         if not options:
-            continue
-        name = config.attrib.get("Name", config.attrib.get("Target", "<unnamed>"))
-        failures.append(
-            f"{repo.name}: {source} Config {name} uses nested <Option> tags; use pipe-delimited values instead"
-        )
+            failures.extend(_pipe_default_failures(repo, source, config))
+        else:
+            name = config.attrib.get("Name", config.attrib.get("Target", "<unnamed>"))
+            failures.append(
+                f"{repo.name}: {source} Config {name} uses nested <Option> tags; use pipe-delimited values instead"
+            )
 
     xml_text = tostring(root, encoding="unicode")
     for placeholder in XML_PLACEHOLDER_CHECKS:
@@ -629,12 +640,99 @@ def _generic_xml_failures(repo: RepoConfig, source: str, root: Element) -> list[
     return failures
 
 
+def _generated_changes_failures(
+    repo: RepoConfig, source: str, changes: str
+) -> list[str]:
+    failures: list[str] = []
+    for marker in LEGACY_CHANGELOG_MARKERS:
+        if marker in changes:
+            failures.append(
+                f"{repo.name}: {source} <Changes> still uses legacy release text: {marker}"
+            )
+
+    lines = [line.strip() for line in changes.splitlines() if line.strip()]
+    if len(lines) < 3:
+        failures.append(
+            f"{repo.name}: {source} <Changes> must include a date heading, generated note, and at least one bullet"
+        )
+        return failures
+    if lines[1] != GENERATED_CHANGELOG_BULLET:
+        failures.append(
+            f"{repo.name}: {source} <Changes> second line must be '{GENERATED_CHANGELOG_BULLET}'"
+        )
+    invalid_lines = [line for line in lines[1:] if not line.startswith("- ")]
+    if invalid_lines:
+        failures.append(
+            f"{repo.name}: {source} <Changes> must use bullet lines after the heading; found {invalid_lines[0]!r}"
+        )
+    return failures
+
+
+def _pipe_default_failures(repo: RepoConfig, source: str, config: Element) -> list[str]:
+    default = config.attrib.get("Default", "")
+    if "|" not in default:
+        return []
+
+    name = config.attrib.get("Name", config.attrib.get("Target", "<unnamed>"))
+    allowed_values = default.split("|")
+    if any(value == "" for value in allowed_values):
+        return [
+            f"{repo.name}: {source} Config {name} has an empty pipe-delimited option"
+        ]
+    selected_value = (config.text or "").strip()
+    if selected_value not in allowed_values:
+        return [
+            f"{repo.name}: {source} Config {name} selected value {selected_value!r} is not one of {allowed_values!r}"
+        ]
+    return []
+
+
 def _manifest_declared_template_failures(
     repo: RepoConfig, source: str, root: Element
 ) -> list[str]:
-    validation = repo.raw.get("validation", {})
+    validation = _template_validation(repo, source)
     if not isinstance(validation, dict):
         return [f"{repo.name}: validation must be a mapping"]
+    failures: list[str] = []
+
+    required_text_fields = [
+        str(field)
+        for field in validation.get("required_text_fields", [])
+        if str(field).strip()
+    ]
+    for field in required_text_fields:
+        if not (root.findtext(field) or "").strip():
+            failures.append(
+                f"{repo.name}: {source} missing manifest-required non-empty <{field}>"
+            )
+
+    category_tokens = {
+        token.strip()
+        for token in (root.findtext("Category") or "").split()
+        if token.strip()
+    }
+    allowed_category_tokens = {
+        str(token)
+        for token in validation.get("allowed_category_tokens", [])
+        if str(token).strip()
+    }
+    if allowed_category_tokens:
+        unknown = sorted(category_tokens - allowed_category_tokens)
+        if unknown:
+            failures.append(
+                f"{repo.name}: {source} contains category tokens outside manifest allowlist: {', '.join(unknown)}"
+            )
+
+    exact_category_tokens = {
+        str(token)
+        for token in validation.get("exact_category_tokens", [])
+        if str(token).strip()
+    }
+    if exact_category_tokens and category_tokens != exact_category_tokens:
+        failures.append(
+            f"{repo.name}: {source} category tokens must be exactly {', '.join(sorted(exact_category_tokens))}"
+        )
+
     required_targets = {
         str(target)
         for target in validation.get("required_targets", [])
@@ -646,14 +744,13 @@ def _manifest_declared_template_failures(
         if str(target).strip()
     }
     if not required_targets and not forbidden_targets:
-        return []
+        return failures
 
     targets = {
         config.attrib["Target"]
         for config in root.findall(".//Config")
         if config.attrib.get("Target")
     }
-    failures: list[str] = []
     missing = sorted(required_targets - targets)
     if missing:
         failures.append(
@@ -665,6 +762,45 @@ def _manifest_declared_template_failures(
             f"{repo.name}: {source} declares manifest-forbidden Config Target(s): {', '.join(forbidden)}"
         )
     return failures
+
+
+def _template_validation(repo: RepoConfig, source: str) -> dict[str, object]:
+    merged: dict[str, object] = {}
+    top_level = repo.raw.get("validation", {})
+    if isinstance(top_level, dict):
+        merged.update(top_level)
+
+    components = repo.raw.get("components", {})
+    if not isinstance(components, dict):
+        return merged
+    for component in components.values():
+        if not isinstance(component, dict):
+            continue
+        xml_paths = component.get("xml_paths", [])
+        if isinstance(xml_paths, str):
+            xml_sources = {xml_paths}
+        elif isinstance(xml_paths, list):
+            xml_sources = {str(item) for item in xml_paths}
+        else:
+            xml_sources = set()
+        if source not in xml_sources:
+            continue
+        component_validation = component.get("validation", {})
+        if isinstance(component_validation, dict):
+            merged = _merge_validation(merged, component_validation)
+    return merged
+
+
+def _merge_validation(
+    base: dict[str, object], override: dict[str, object]
+) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, list) and isinstance(merged.get(key), list):
+            merged[key] = [*merged[key], *value]  # type: ignore[operator]
+        else:
+            merged[key] = value
+    return merged
 
 
 def _repository_registry_failures(

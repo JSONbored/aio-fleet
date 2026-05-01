@@ -13,6 +13,7 @@ from pathlib import Path
 
 from aio_fleet.app_manifest import (
     APP_MANIFEST_NAME,
+    app_manifest_from_repo,
     load_app_manifest,
     render_app_manifest,
 )
@@ -99,6 +100,25 @@ def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:
     return RepoConfig(name=repo.name, raw=raw, defaults=repo.defaults, owner=repo.owner)
 
 
+def _app_manifest_failures(repo: RepoConfig) -> list[str]:
+    path = repo.path / APP_MANIFEST_NAME
+    if not path.exists():
+        return [f"{repo.name}: missing {APP_MANIFEST_NAME}"]
+    failures: list[str] = []
+    try:
+        actual = load_app_manifest(path)
+    except ManifestError as exc:
+        failures.append(f"{repo.name}: {APP_MANIFEST_NAME} invalid: {exc}")
+        return failures
+
+    expected = app_manifest_from_repo(repo)
+    if actual != expected:
+        failures.append(
+            f"{repo.name}: {APP_MANIFEST_NAME} drifted from fleet.yml; run aio-fleet export-app-manifest --repo {repo.name} --write"
+        )
+    return failures
+
+
 def _reusable_ref_from_caller(repo_path: Path) -> str:
     workflow = repo_path / ".github" / "workflows" / "build.yml"
     if not workflow.exists():
@@ -125,20 +145,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             continue
         for required in [
             "Dockerfile",
-            "scripts/validate-template.py",
-            "scripts/validate-derived-repo.sh",
+            "README.md",
+            "pyproject.toml",
+            APP_MANIFEST_NAME,
         ]:
             if not (repo.path / required).exists():
                 failures.append(f"{name}: missing {required}")
-        for workflow in rendered_workflows(manifest, repo, "0" * 40):
-            if not workflow.exists():
-                failures.append(f"{name}: missing {workflow.relative_to(repo.path)}")
-                continue
-            workflow_text = workflow.read_text()
-            if not PINNED_REUSABLE_WORKFLOW.search(workflow_text):
-                failures.append(
-                    f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
-                )
+        workflows_dir = repo.path / ".github" / "workflows"
+        if workflows_dir.exists():
+            for workflow in workflows_dir.glob("*.yml"):
+                workflow_text = workflow.read_text()
+                if (
+                    "JSONbored/aio-fleet/.github/workflows/" in workflow_text
+                    and not PINNED_REUSABLE_WORKFLOW.search(workflow_text)
+                ):
+                    failures.append(
+                        f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
+                    )
+        failures.extend(_app_manifest_failures(repo))
         failures.extend(catalog_asset_failures(repo))
         failures.extend(tracked_artifact_failures(repo.path))
     if args.github:
@@ -1120,10 +1144,12 @@ def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
 
 
 def _release_version(repo: RepoConfig) -> str:
-    result = _run(
-        ["python3", "scripts/release.py", "latest-changelog-version"], cwd=repo.path
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
+    try:
+        return latest_changelog_version(
+            repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
+        )
+    except Exception:
+        return ""
 
 
 def _image_status(repo: RepoConfig) -> str:
@@ -1261,25 +1287,26 @@ def cmd_validate(args: argparse.Namespace) -> int:
     failed = False
     for repo in repos:
         print(f"== {repo.name} ==")
-        for cmd in (
-            [_repo_python(repo.path), "scripts/validate-template.py", "--all"],
-            [
-                sys.executable,
-                "-m",
-                "aio_fleet.cli",
-                "validate-derived",
-                "--repo-path",
-                ".",
-            ],
-        ):
-            result = _run(cmd, cwd=repo.path)
+        failures = [
+            *_app_manifest_failures(repo),
+            *repo_policy_failures(repo, manifest),
+        ]
+        if failures:
+            print("\n".join(failures), file=sys.stderr)
+            failed = True
+            continue
+
+        generator = str(repo.get("generator_check_command", "") or "").strip()
+        if generator:
+            result = _run(shlex.split(generator), cwd=repo.path)
             if result.stdout:
                 print(result.stdout, end="")
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="")
             if result.returncode != 0:
                 failed = True
-                break
+                continue
+        print(f"{repo.name} central validation passed")
     return 1 if failed else 0
 
 

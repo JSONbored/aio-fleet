@@ -87,11 +87,14 @@ def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:
             return read_upstream_version(
                 repo.path / str(agent["dockerfile"]),
                 repo.path / "components" / "signoz-agent" / "upstream.toml",
+                version_key=str(agent.get("upstream_version_key", "UPSTREAM_VERSION")),
             )
         return read_upstream_version(
-            repo.path / "Dockerfile", repo.path / "upstream.toml"
+            repo.path / "Dockerfile",
+            repo.path / "upstream.toml",
+            version_key=str(repo.get("upstream_version_key", "UPSTREAM_VERSION")),
         )
-    except Exception:
+    except (Exception, SystemExit):
         return ""
 
 
@@ -100,7 +103,7 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
         changelog_version = latest_changelog_version(
             repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
         )
-    except Exception:
+    except (Exception, SystemExit):
         return ""
     try:
         release_target_commit = find_release_target_commit(repo.path, changelog_version)

@@ -367,7 +367,9 @@ def test_validate_template_common_accepts_manifest_repo(tmp_path: Path, capsys) 
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <DonateText/>
   <DonateLink/>
-  <Changes>### 2026-01-01</Changes>
+  <Changes>### 2026-01-01
+- Generated from CHANGELOG.md during release preparation. Do not edit manually.
+- Initial release.</Changes>
 </Container>
 """)
     manifest = tmp_path / "fleet.yml"

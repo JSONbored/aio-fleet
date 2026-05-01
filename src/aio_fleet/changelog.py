@@ -181,9 +181,11 @@ def encode_for_template(body: str) -> str:
 def _next_version(repo: RepoConfig) -> str:
     if repo.publish_profile == "template":
         return next_semver_release_version(repo.path)
-    upstream_config = repo.path / "upstream.toml"
     return next_aio_release_version(
-        repo.path, repo.path / "Dockerfile", upstream_config
+        repo.path,
+        repo.path / "Dockerfile",
+        repo.path / "upstream.toml",
+        version_key=str(repo.get("upstream_version_key", "UPSTREAM_VERSION")),
     )
 
 
