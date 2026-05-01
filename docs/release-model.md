@@ -1,6 +1,7 @@
 # Release Model
 
-The fleet keeps release ownership in the app repos.
+The fleet keeps release source ownership in the app repos, but release mechanics
+move to `aio-fleet`.
 
 App repos publish from `main` after required validation and integration gates pass. Formal changelog entries and GitHub Releases remain release-driven, not automatic for every merge.
 
@@ -23,8 +24,24 @@ Publish jobs still require:
 - a publish-related change;
 - successful integration tests.
 
-The reusable `aio-build.yml` owns those publish-gate decisions centrally. App
-repos pass only their publish profile and app-specific path exceptions.
+During the transitional layer, reusable `aio-build.yml` owns those publish-gate
+decisions centrally. In the control-plane layer, `aio-fleet registry publish`
+and `aio-fleet registry verify` compute the same tag set from `.aio-fleet.yml`
+and the release commit.
+
+Central release commands:
+
+```bash
+python -m aio_fleet release status --repo sure-aio
+python -m aio_fleet release prepare --repo sure-aio --dry-run
+python -m aio_fleet release publish --repo sure-aio --dry-run
+python -m aio_fleet registry verify --repo sure-aio --sha <release-sha>
+```
+
+`release prepare` generates a temporary git-cliff config from `aio-fleet`,
+updates `CHANGELOG.md`, and renders XML `<Changes>` from the release notes.
+Once this path is the active release path, app-local `cliff.toml`,
+`scripts/release.py`, and `scripts/update-template-changes.py` are retired.
 
 Prepare-release workflows check out `aio-fleet` helpers outside the caller
 repository workspace. Helper checkouts must never appear as `.aio-fleet`

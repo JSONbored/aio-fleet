@@ -1,7 +1,25 @@
 # Required Checks
 
-Use these as the default required status checks after repos are on the shared
-`aio-fleet` workflows.
+Use these as the migration map for required checks.
+
+## End State
+
+After GitHub App check-run orchestration is proven, app repos should require
+only:
+
+- `aio-fleet / required`
+
+`aio-fleet` may still post detail checks for validation, tests, registry, and
+catalog work, but those are diagnostic. Branch protection should key on the
+single required control-plane check.
+
+The check must be created by a GitHub App or another token with Checks write
+permission. GitHub documents that check-run write access is available for GitHub
+Apps, and the required permission is repository `Checks: write`.
+
+## Transitional App Repo Checks
+
+Use these while repos still run shared reusable workflows locally.
 
 ## AIO App Repos
 

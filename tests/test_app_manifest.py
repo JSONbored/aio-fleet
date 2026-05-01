@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
 
-    rendered = yaml.safe_load(render_app_manifest(repo))
+    content = render_app_manifest(repo)
+    rendered = yaml.safe_load(content)
 
     assert rendered["schema_version"] == 1  # nosec B101
     assert rendered["repo"] == "sure-aio"  # nosec B101
@@ -29,6 +30,7 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
     assert rendered["catalog"]["assets"] == [  # nosec B101
         {"source": "sure-aio.xml", "target": "sure-aio.xml"}
     ]
+    assert "  xml_paths:\n    - sure-aio.xml\n" in content  # nosec B101
 
 
 def test_load_app_manifest_validates_required_sections(tmp_path: Path) -> None:

@@ -51,10 +51,21 @@ by `aio-fleet check run`, and the long-term path is a GitHub App installation
 token with Checks write access. The local `AIO_FLEET_CHECK_TOKEN` fallback is
 only for controlled operator use while bringing the App online.
 
+GitHub's Checks API requires this app-shaped path for creating check-runs:
+OAuth apps and authenticated users can view checks, but creating check-runs is
+the GitHub App control-plane boundary. That is why the branch-protection
+migration waits until the App identity posts a real `aio-fleet / required`
+check on an app PR.
+
 GHCR package publishing is separate from GitHub App check-runs. Use
 `AIO_FLEET_GHCR_TOKEN` for the central publish identity; app-repo workflow
 callers can temporarily fall back to repo `GITHUB_TOKEN` only while builds still
 execute inside the app repository.
+
+GitHub Container Registry still expects either workflow-scoped `GITHUB_TOKEN`
+permission for the repository/package relationship or a classic package token.
+For the central build path, `AIO_FLEET_GHCR_TOKEN` is the explicit operator
+credential until a narrower App-only package path is proven.
 
 The private key secret should contain the PEM text. Escaped `\n` sequences are
 accepted so the value can be stored in GitHub Secrets without preserving literal
@@ -70,7 +81,10 @@ newlines.
    `AIO_FLEET_APP_PRIVATE_KEY` to the repos that call reusable fleet workflows.
 5. Verify generated PRs and catalog syncs pass required checks using the app
    identity.
-6. Remove PAT secrets after the GitHub App path is stable.
+6. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
+7. Update branch protection to require only `aio-fleet / required`.
+8. Remove app workflow files and run `aio-fleet cleanup-repo --verify`.
+9. Remove PAT secrets after the GitHub App path is stable.
 
 This is tracked as future work; the app itself is not created in the current
 consolidation pass.

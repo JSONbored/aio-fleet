@@ -5,17 +5,37 @@ import difflib
 import fnmatch
 import json
 import os
+import shlex
 import shutil
 import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
-from aio_fleet.app_manifest import APP_MANIFEST_NAME, render_app_manifest
+from aio_fleet.app_manifest import (
+    APP_MANIFEST_NAME,
+    load_app_manifest,
+    render_app_manifest,
+)
 from aio_fleet.boilerplate import sync_boilerplate
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
+from aio_fleet.changelog import (
+    build_release_plan,
+    update_template_changes,
+    write_temp_git_cliff_config,
+)
 from aio_fleet.checks import check_run_payload, upsert_check_run
+from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
+from aio_fleet.control_plane import (
+    central_check_steps,
+    registry_publish_command,
+    run_central_trunk,
+    run_steps,
+)
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
+from aio_fleet.poll import poll_targets
+from aio_fleet.registry import compute_registry_tags, verify_registry_tags
+from aio_fleet.release import latest_changelog_version
 from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
     TRACKED_ARTIFACT_PATTERNS,
@@ -54,6 +74,13 @@ def _current_ref() -> str:
     result = _run(["git", "rev-parse", "HEAD"])
     if result.returncode != 0:
         return "main"
+    return result.stdout.strip()
+
+
+def _git_head(repo_path: Path) -> str:
+    result = _run(["git", "rev-parse", "HEAD"], cwd=repo_path)
+    if result.returncode != 0:
+        raise ManifestError(f"unable to resolve HEAD in {repo_path}")
     return result.stdout.strip()
 
 
@@ -761,6 +788,110 @@ def cmd_check_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_poll(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    targets = poll_targets(
+        manifest,
+        include_prs=not args.no_prs,
+        include_main=not args.no_main,
+    )
+    emitted: list[dict[str, object]] = []
+    for target in targets:
+        row = {
+            "repo": target.repo.name,
+            "sha": target.sha,
+            "event": target.event,
+            "source": target.source,
+        }
+        emitted.append(row)
+        if args.create_checks:
+            if args.dry_run:
+                row["check_payload"] = check_run_payload(
+                    target.repo,
+                    sha=target.sha,
+                    event=target.event,
+                    status="queued",
+                    summary=f"Queued from aio-fleet poll source {target.source}",
+                )
+            else:
+                result = upsert_check_run(
+                    target.repo,
+                    sha=target.sha,
+                    event=target.event,
+                    status="queued",
+                    summary=f"Queued from aio-fleet poll source {target.source}",
+                )
+                row["check_run"] = {
+                    "action": result.action,
+                    "check_run_id": result.check_run_id,
+                    "html_url": result.html_url,
+                }
+    if args.format == "json":
+        print(json.dumps({"targets": emitted}, indent=2, sort_keys=True))
+    else:
+        for row in emitted:
+            print(f"{row['repo']} {row['source']} {row['event']} {row['sha']}")
+        print(f"poll targets: {len(emitted)}")
+    return 0
+
+
+def cmd_control_check(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    steps = central_check_steps(
+        repo,
+        event=args.event,
+        manifest_path=Path(args.manifest).resolve(),
+        publish=args.publish,
+        include_trunk=not args.no_trunk,
+    )
+    if args.check_run:
+        status = "completed" if args.dry_run else "in_progress"
+        summary = "aio-fleet central check started"
+        if args.dry_run:
+            print(
+                json.dumps(
+                    check_run_payload(
+                        repo,
+                        sha=args.sha,
+                        event=args.event,
+                        status=status,
+                        conclusion="success" if status == "completed" else None,
+                        summary="dry-run central check plan",
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            upsert_check_run(
+                repo,
+                sha=args.sha,
+                event=args.event,
+                status=status,
+                summary=summary,
+            )
+    failures = run_steps(steps, dry_run=args.dry_run)
+    if args.check_run and not args.dry_run:
+        conclusion = "failure" if failures else "success"
+        upsert_check_run(
+            repo,
+            sha=args.sha,
+            event=args.event,
+            status="completed",
+            conclusion=conclusion,
+            summary=(
+                "\n".join(failures) if failures else "aio-fleet central check passed"
+            ),
+        )
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_catalog_audit(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     findings = catalog_quality_findings(manifest, Path(args.catalog_path).resolve())
@@ -785,6 +916,82 @@ def cmd_catalog_audit(args: argparse.Namespace) -> int:
         else:
             print("catalog audit passed")
     return 1 if findings else 0
+
+
+def cmd_registry_verify(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+    failures: list[str] = []
+    report: dict[str, object] = {"repos": []}
+    for repo in repos:
+        sha = args.sha or _git_head(repo.path)
+        tags = compute_registry_tags(repo, sha=sha, component=args.component)
+        repo_failures = [] if args.dry_run else verify_registry_tags(tags.all_tags)
+        failures.extend(f"{repo.name}: {failure}" for failure in repo_failures)
+        report["repos"].append(  # type: ignore[index]
+            {
+                "repo": repo.name,
+                "sha": sha,
+                "dockerhub": tags.dockerhub,
+                "ghcr": tags.ghcr,
+                "failures": repo_failures,
+            }
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for item in report["repos"]:  # type: ignore[index]
+            state = "failed" if item["failures"] else "ok"  # type: ignore[index]
+            print(f"{item['repo']}: registry={state}")  # type: ignore[index]
+            if args.verbose or args.dry_run:
+                for tag in [*item["dockerhub"], *item["ghcr"]]:  # type: ignore[index]
+                    print(f"- {tag}")
+        if failures:
+            print("\n".join(failures), file=sys.stderr)
+    return 1 if failures else 0
+
+
+def cmd_registry_publish(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    sha = args.sha or _git_head(repo.path)
+    command = registry_publish_command(repo, sha=sha)
+    if args.dry_run:
+        print(" ".join(shlex.quote(part) for part in command))
+        return 0
+    result = _run(command, cwd=repo.path)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode != 0:
+        return result.returncode
+    return cmd_registry_verify(
+        argparse.Namespace(
+            manifest=args.manifest,
+            all=False,
+            repo=args.repo,
+            sha=sha,
+            component="aio",
+            dry_run=False,
+            format="text",
+            verbose=True,
+        )
+    )
 
 
 def cmd_release_readiness(args: argparse.Namespace) -> int:
@@ -930,6 +1137,124 @@ def _image_status(repo: RepoConfig) -> str:
     return "ok" if result.returncode == 0 else "unknown:latest-not-inspected"
 
 
+def cmd_release_status(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    plan = build_release_plan(repo)
+    tags = compute_registry_tags(repo, sha=_git_head(repo.path))
+    report = {
+        "repo": repo.name,
+        "version": plan.version,
+        "changelog": str(plan.changelog_path),
+        "xml_paths": [str(path) for path in plan.xml_paths],
+        "registry_tags": tags.all_tags,
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"{repo.name}: next_release={plan.version}")
+        print(f"changelog: {plan.changelog_path}")
+        for path in plan.xml_paths:
+            print(f"xml: {path}")
+    return 0
+
+
+def cmd_release_prepare(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    plan = build_release_plan(repo)
+    cliff_config = write_temp_git_cliff_config(repo)
+    commands = [
+        [
+            "git",
+            "cliff",
+            "--config",
+            str(cliff_config),
+            "--tag",
+            plan.version,
+            "--output",
+            str(plan.changelog_path),
+        ]
+    ]
+    if args.dry_run:
+        print(f"{repo.name}: would prepare release {plan.version}")
+        for command in commands:
+            print(" ".join(shlex.quote(part) for part in command))
+        for xml_path in plan.xml_paths:
+            print(f"would update <Changes> in {xml_path}")
+        return 0
+    for command in commands:
+        result = _run(command, cwd=repo.path)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        if result.returncode != 0:
+            return result.returncode
+    for xml_path in plan.xml_paths:
+        update_template_changes(
+            version=plan.version,
+            changelog=plan.changelog_path,
+            template=xml_path,
+        )
+        print(f"updated {xml_path}")
+    return 0
+
+
+def cmd_release_publish(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    latest_version = latest_changelog_version(
+        repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
+    )
+    notes = _run(
+        [
+            sys.executable,
+            "-m",
+            "aio_fleet.release",
+            "--repo-path",
+            str(repo.path),
+            "--release-profile",
+            "semver" if repo.publish_profile == "template" else "aio",
+            "extract-release-notes",
+            latest_version,
+        ],
+        cwd=repo.path,
+    )
+    if notes.returncode != 0:
+        print(notes.stderr or notes.stdout, file=sys.stderr, end="")
+        return notes.returncode
+    command = [
+        "gh",
+        "release",
+        "create",
+        latest_version,
+        "--repo",
+        repo.github_repo,
+        "--target",
+        _git_head(repo.path),
+        "--title",
+        latest_version,
+        "--notes",
+        notes.stdout.strip(),
+    ]
+    if args.dry_run:
+        print(" ".join(shlex.quote(part) for part in command))
+        return 0
+    result = _run(command, cwd=repo.path)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    return result.returncode
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = manifest.repos.values() if args.all else [manifest.repo(args.repo)]
@@ -955,6 +1280,54 @@ def cmd_validate(args: argparse.Namespace) -> int:
             if result.returncode != 0:
                 failed = True
                 break
+    return 1 if failed else 0
+
+
+def cmd_cleanup_repo(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+    failed = False
+    report: dict[str, object] = {"repos": []}
+    for repo in repos:
+        findings = cleanup_findings(repo)
+        if findings and args.remove and not args.dry_run:
+            remove_cleanup_findings(findings)
+            findings = cleanup_findings(repo)
+        if args.verify and findings:
+            failed = True
+        report["repos"].append(  # type: ignore[index]
+            {
+                "repo": repo.name,
+                "findings": [
+                    {
+                        "path": str(finding.path.relative_to(repo.path)),
+                        "reason": finding.reason,
+                    }
+                    for finding in findings
+                ],
+            }
+        )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for item in report["repos"]:  # type: ignore[index]
+            findings = item["findings"]  # type: ignore[index]
+            state = "ok" if not findings else f"{len(findings)} retired shared paths"
+            print(f"{item['repo']}: cleanup={state}")  # type: ignore[index]
+            for finding in findings:
+                print(f"- {finding['path']}: {finding['reason']}")
     return 1 if failed else 0
 
 
@@ -997,6 +1370,43 @@ def cmd_trunk_audit(args: argparse.Namespace) -> int:
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="")
     return 1 if failed else 0
+
+
+def cmd_trunk_run(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+    failed = False
+    for repo in repos:
+        result = run_central_trunk(repo, fix=args.fix)
+        if result.returncode == 0:
+            print(f"{repo.name}: trunk=ok")
+            continue
+        failed = True
+        print(f"{repo.name}: trunk=failed exit={result.returncode}")
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+    return 1 if failed else 0
+
+
+def cmd_import_app_manifest(args: argparse.Namespace) -> int:
+    path = Path(args.path).resolve()
+    data = load_app_manifest(path)
+    print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
@@ -1700,6 +2110,66 @@ def build_parser() -> argparse.ArgumentParser:
     check_run.add_argument("--dry-run", action="store_true")
     check_run.set_defaults(func=cmd_check_run)
 
+    poll = sub.add_parser("poll")
+    poll.add_argument("--no-prs", action="store_true")
+    poll.add_argument("--no-main", action="store_true")
+    poll.add_argument("--create-checks", action="store_true")
+    poll.add_argument("--dry-run", action="store_true")
+    poll.add_argument("--format", choices=["text", "json"], default="text")
+    poll.set_defaults(func=cmd_poll)
+
+    control = sub.add_parser("control-check")
+    control.add_argument("--repo", required=True)
+    control.add_argument("--repo-path")
+    control.add_argument("--sha", required=True)
+    control.add_argument(
+        "--event",
+        required=True,
+        choices=["pull_request", "push", "release", "workflow_dispatch"],
+    )
+    control.add_argument("--publish", action="store_true")
+    control.add_argument("--no-trunk", action="store_true")
+    control.add_argument("--check-run", action="store_true")
+    control.add_argument("--dry-run", action="store_true")
+    control.set_defaults(func=cmd_control_check)
+
+    registry = sub.add_parser("registry")
+    registry_sub = registry.add_subparsers(dest="registry_command", required=True)
+    registry_verify = registry_sub.add_parser("verify")
+    registry_verify.add_argument("--repo")
+    registry_verify.add_argument("--repo-path")
+    registry_verify.add_argument("--all", action="store_true")
+    registry_verify.add_argument("--sha")
+    registry_verify.add_argument("--component", default="aio")
+    registry_verify.add_argument("--dry-run", action="store_true")
+    registry_verify.add_argument("--verbose", action="store_true")
+    registry_verify.add_argument("--format", choices=["text", "json"], default="text")
+    registry_verify.set_defaults(func=cmd_registry_verify)
+    registry_publish = registry_sub.add_parser("publish")
+    registry_publish.add_argument("--repo", required=True)
+    registry_publish.add_argument("--repo-path")
+    registry_publish.add_argument("--sha")
+    registry_publish.add_argument("--dry-run", action="store_true")
+    registry_publish.set_defaults(func=cmd_registry_publish)
+
+    release = sub.add_parser("release")
+    release_sub = release.add_subparsers(dest="release_command", required=True)
+    release_status = release_sub.add_parser("status")
+    release_status.add_argument("--repo", required=True)
+    release_status.add_argument("--repo-path")
+    release_status.add_argument("--format", choices=["text", "json"], default="text")
+    release_status.set_defaults(func=cmd_release_status)
+    release_prepare = release_sub.add_parser("prepare")
+    release_prepare.add_argument("--repo", required=True)
+    release_prepare.add_argument("--repo-path")
+    release_prepare.add_argument("--dry-run", action="store_true")
+    release_prepare.set_defaults(func=cmd_release_prepare)
+    release_publish = release_sub.add_parser("publish")
+    release_publish.add_argument("--repo", required=True)
+    release_publish.add_argument("--repo-path")
+    release_publish.add_argument("--dry-run", action="store_true")
+    release_publish.set_defaults(func=cmd_release_publish)
+
     readiness = sub.add_parser("release-readiness")
     readiness.add_argument("--repo", required=True)
     readiness.add_argument("--catalog-path")
@@ -1733,6 +2203,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_app_manifest.add_argument("--write", action="store_true")
     export_app_manifest.set_defaults(func=cmd_export_app_manifest)
 
+    import_app_manifest = sub.add_parser("import-app-manifest")
+    import_app_manifest.add_argument("--path", required=True)
+    import_app_manifest.set_defaults(func=cmd_import_app_manifest)
+
     infra = sub.add_parser("infra")
     infra_sub = infra.add_subparsers(dest="infra_command", required=True)
     infra_doctor = infra_sub.add_parser("doctor")
@@ -1751,6 +2225,26 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--all", action="store_true")
     validate.add_argument("--repo")
     validate.set_defaults(func=cmd_validate)
+
+    cleanup = sub.add_parser("cleanup-repo")
+    cleanup.add_argument("--repo")
+    cleanup.add_argument("--repo-path")
+    cleanup.add_argument("--all", action="store_true")
+    cleanup.add_argument("--verify", action="store_true")
+    cleanup.add_argument("--remove", action="store_true")
+    cleanup.add_argument("--dry-run", action="store_true")
+    cleanup.add_argument("--format", choices=["text", "json"], default="text")
+    cleanup.set_defaults(func=cmd_cleanup_repo)
+
+    trunk = sub.add_parser("trunk")
+    trunk_sub = trunk.add_subparsers(dest="trunk_command", required=True)
+    trunk_run = trunk_sub.add_parser("run")
+    trunk_run.add_argument("--repo")
+    trunk_run.add_argument("--repo-path")
+    trunk_run.add_argument("--all", action="store_true")
+    trunk_run.add_argument("--fix", action="store_true")
+    trunk_run.add_argument("--no-fix", action="store_false", dest="fix")
+    trunk_run.set_defaults(func=cmd_trunk_run, fix=False)
 
     trunk_audit = sub.add_parser("trunk-audit")
     trunk_audit.add_argument("--repo")

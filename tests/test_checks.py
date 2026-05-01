@@ -94,7 +94,7 @@ def test_upsert_check_run_updates_matching_external_id(monkeypatch) -> None:
         event="push",
         status="completed",
         conclusion="success",
-        token="token",
+        token="token",  # nosec B106
     )
 
     assert result.action == "updated"  # nosec B101
