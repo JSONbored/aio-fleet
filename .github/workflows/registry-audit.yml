@@ -22,6 +22,10 @@ concurrency:
 jobs:
   registry-audit:
     runs-on: ubuntu-latest
+    env:
+      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -39,14 +43,132 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for registry audit checkouts" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
       - name: Verify registry tags
         id: verify
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
-          set +e
-          python -m aio_fleet registry verify --all --format json > registry-report.json
-          status=$?
-          echo "status=${status}" >> "${GITHUB_OUTPUT}"
-          exit 0
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          manifest = yaml.safe_load(Path("fleet.yml").read_text())
+          owner = manifest["owner"]
+          checkout_root = Path("registry-checkouts")
+          checkout_root.mkdir(exist_ok=True)
+          token = os.environ["APP_TOKEN"]
+          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+          report = {"repos": []}
+          status = 0
+
+          for repo in manifest["repos"]:
+              worktree = checkout_root / repo
+              if worktree.exists():
+                  shutil.rmtree(worktree)
+              clone = subprocess.run(
+                  [
+                      "git",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "clone",
+                      "--depth",
+                      "1",
+                      f"https://github.com/{owner}/{repo}.git",
+                      str(worktree),
+                  ],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              if clone.returncode != 0:
+                  status = 1
+                  detail = (clone.stderr or clone.stdout).strip() or "clone failed"
+                  report["repos"].append(
+                      {
+                          "repo": repo,
+                          "sha": "",
+                          "dockerhub": [],
+                          "ghcr": [],
+                          "failures": [detail],
+                      }
+                  )
+                  continue
+
+              sha = subprocess.check_output(
+                  ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+                  text=True,
+              ).strip()
+              verify = subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "aio_fleet",
+                      "registry",
+                      "verify",
+                      "--repo",
+                      repo,
+                      "--repo-path",
+                      str(worktree),
+                      "--sha",
+                      sha,
+                      "--format",
+                      "json",
+                  ],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              if verify.stderr:
+                  print(verify.stderr, file=sys.stderr, end="")
+              if verify.returncode != 0:
+                  status = 1
+              try:
+                  parsed = json.loads(verify.stdout)
+              except json.JSONDecodeError:
+                  status = 1
+                  report["repos"].append(
+                      {
+                          "repo": repo,
+                          "sha": sha,
+                          "dockerhub": [],
+                          "ghcr": [],
+                          "failures": [
+                              (verify.stdout or verify.stderr).strip()
+                              or "registry verify produced invalid JSON"
+                          ],
+                      }
+                  )
+                  continue
+              report["repos"].extend(parsed.get("repos", []))
+
+          Path("registry-report.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"status={status}\n")
+          PY
 
       - name: Publish registry summary
         env:
