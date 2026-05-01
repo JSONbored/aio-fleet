@@ -51,6 +51,11 @@ by `aio-fleet check run`, and the long-term path is a GitHub App installation
 token with Checks write access. The local `AIO_FLEET_CHECK_TOKEN` fallback is
 only for controlled operator use while bringing the App online.
 
+GHCR package publishing is separate from GitHub App check-runs. Use
+`AIO_FLEET_GHCR_TOKEN` for the central publish identity; app-repo workflow
+callers can temporarily fall back to repo `GITHUB_TOKEN` only while builds still
+execute inside the app repository.
+
 The private key secret should contain the PEM text. Escaped `\n` sequences are
 accepted so the value can be stored in GitHub Secrets without preserving literal
 newlines.

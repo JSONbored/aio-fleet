@@ -1018,10 +1018,42 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Resolve GHCR publish settings
+        id: ghcr
+        env:
+          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_IMAGE_NAME: ${{ vars.GHCR_IMAGE_NAME }}
+          GHCR_IMAGE_NAME_SECRET: ${{ secrets.GHCR_IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          token="${AIO_FLEET_GHCR_TOKEN:-${GHCR_TOKEN:-${GITHUB_TOKEN}}}"
+          if [[ -z "${token}" ]]; then
+            echo "AIO_FLEET_GHCR_TOKEN, GHCR_TOKEN, or GITHUB_TOKEN is required for GHCR publishing." >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
+          resolved_image_name="${GHCR_IMAGE_NAME:-${GHCR_IMAGE_NAME_SECRET}}"
+          if [[ -n "${resolved_image_name}" ]]; then
+            echo "image_name=${resolved_image_name}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "image_name=ghcr.io/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ steps.ghcr.outputs.token }}
       - name: Compute image tags and labels
         id: prep
         env:
           DOCKERHUB_IMAGE_NAME: ${{ steps.dockerhub.outputs.image_name }}
+          GHCR_IMAGE_NAME: ${{ steps.ghcr.outputs.image_name }}
           PUBLISH_PROFILE: ${{ inputs.publish_profile }}
           UPSTREAM_DIGEST_ARG: ${{ inputs.upstream_digest_arg }}
           UPSTREAM_NAME: ${{ inputs.upstream_name }}
@@ -1032,7 +1064,10 @@ jobs:
 
           dockerhub_image_name="${DOCKERHUB_IMAGE_NAME:-${IMAGE_NAME}}"
           image_dockerhub="$(printf '%s' "${dockerhub_image_name}" | tr '[:upper:]' '[:lower:]')"
+          ghcr_image_name="${GHCR_IMAGE_NAME:-ghcr.io/${IMAGE_NAME}}"
+          image_ghcr="$(printf '%s' "${ghcr_image_name}" | tr '[:upper:]' '[:lower:]')"
           sha_tag_dockerhub="${image_dockerhub}:sha-${GITHUB_SHA}"
+          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
           upstream_version="$(python3 scripts/release.py upstream-version 2>/dev/null || true)"
           upstream_digest="$(sed -n "s/^ARG ${UPSTREAM_DIGEST_ARG}=//p" Dockerfile | head -n1)"
           changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
@@ -1077,6 +1112,17 @@ jobs:
             fi
             echo "${sha_tag_dockerhub}"
             echo "EOF"
+            echo "ghcr_source=${sha_tag_ghcr}"
+            echo "ghcr_tags<<EOF"
+            echo "${image_ghcr}:latest"
+            if [[ -n "${upstream_version}" ]]; then
+              echo "${image_ghcr}:${upstream_version}"
+              if [[ -n "${release_package_tag}" ]]; then
+                echo "${image_ghcr}:${release_package_tag}"
+              fi
+            fi
+            echo "${sha_tag_ghcr}"
+            echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
             echo "org.opencontainers.image.title=${APP_SLUG}"
@@ -1099,7 +1145,7 @@ jobs:
             echo "io.jsonbored.wrapper.version=${wrapper_version}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
-      - name: Build and push Docker Hub image
+      - name: Build and push registry images
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -1107,19 +1153,24 @@ jobs:
           push: true
           cache-from: type=gha,scope=${{ env.DOCKER_CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.DOCKER_CACHE_SCOPE }}
-          tags: ${{ steps.prep.outputs.dockerhub_tags }}
+          tags: |
+            ${{ steps.prep.outputs.dockerhub_tags }}
+            ${{ steps.prep.outputs.ghcr_tags }}
           labels: ${{ steps.prep.outputs.labels }}
-      - name: Verify Docker Hub tags
+      - name: Verify registry tags
         env:
           DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
+          GHCR_TAGS: ${{ steps.prep.outputs.ghcr_tags }}
         run: |
           set -euo pipefail
 
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Verifying ${tag}"
-            docker buildx imagetools inspect "${tag}" >/dev/null
-          done <<< "${DOCKERHUB_TAGS}"
+          for tags in "${DOCKERHUB_TAGS}" "${GHCR_TAGS}"; do
+            while IFS= read -r tag; do
+              [[ -z "${tag}" ]] && continue
+              echo "Verifying ${tag}"
+              docker buildx imagetools inspect "${tag}" >/dev/null
+            done <<< "${tags}"
+          done
 
   publish-agent:
     if: ${{ inputs.publish_profile == 'signoz-suite' && needs.detect-changes.outputs.agent_publish_related == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.publish_requested == 'true' && needs.agent-integration-tests.result == 'success' }}
@@ -1190,13 +1241,37 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Resolve GHCR publish settings
+        id: ghcr
+        env:
+          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          token="${AIO_FLEET_GHCR_TOKEN:-${GHCR_TOKEN:-${GITHUB_TOKEN}}}"
+          if [[ -z "${token}" ]]; then
+            echo "AIO_FLEET_GHCR_TOKEN, GHCR_TOKEN, or GITHUB_TOKEN is required for GHCR publishing." >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ steps.ghcr.outputs.token }}
       - name: Compute agent image tags and labels
         id: prep
         run: |
           set -euo pipefail
 
           image_dockerhub="$(printf '%s' "${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          image_ghcr="$(printf 'ghcr.io/%s' "${AGENT_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
           sha_tag_dockerhub="${image_dockerhub}:sha-${GITHUB_SHA}"
+          sha_tag_ghcr="${image_ghcr}:sha-${GITHUB_SHA}"
           upstream_version="$(python3 scripts/release.py --component signoz-agent upstream-version)"
           upstream_digest="$(sed -n 's/^ARG UPSTREAM_OTELCOL_DIGEST=//p' "${{ inputs.agent_dockerfile }}" | head -n1)"
           changelog_version="$(python3 scripts/release.py latest-changelog-version 2>/dev/null || true)"
@@ -1222,6 +1297,15 @@ jobs:
             fi
             echo "${sha_tag_dockerhub}"
             echo "EOF"
+            echo "ghcr_source=${sha_tag_ghcr}"
+            echo "ghcr_tags<<EOF"
+            echo "${image_ghcr}:latest"
+            echo "${image_ghcr}:${upstream_version}"
+            if [[ -n "${release_package_tag}" ]]; then
+              echo "${image_ghcr}:${release_package_tag}"
+            fi
+            echo "${sha_tag_ghcr}"
+            echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
             echo "org.opencontainers.image.title=signoz-agent"
@@ -1236,7 +1320,7 @@ jobs:
             echo "io.jsonbored.wrapper.version=${wrapper_version}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
-      - name: Build and push Docker Hub agent image
+      - name: Build and push registry agent images
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ${{ inputs.agent_context }}
@@ -1245,19 +1329,24 @@ jobs:
           push: true
           cache-from: type=gha,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.AGENT_DOCKER_CACHE_SCOPE }}
-          tags: ${{ steps.prep.outputs.dockerhub_tags }}
+          tags: |
+            ${{ steps.prep.outputs.dockerhub_tags }}
+            ${{ steps.prep.outputs.ghcr_tags }}
           labels: ${{ steps.prep.outputs.labels }}
-      - name: Verify Docker Hub agent tags
+      - name: Verify registry agent tags
         env:
           DOCKERHUB_TAGS: ${{ steps.prep.outputs.dockerhub_tags }}
+          GHCR_TAGS: ${{ steps.prep.outputs.ghcr_tags }}
         run: |
           set -euo pipefail
 
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Verifying ${tag}"
-            docker buildx imagetools inspect "${tag}" >/dev/null
-          done <<< "${DOCKERHUB_TAGS}"
+          for tags in "${DOCKERHUB_TAGS}" "${GHCR_TAGS}"; do
+            while IFS= read -r tag; do
+              [[ -z "${tag}" ]] && continue
+              echo "Verifying ${tag}"
+              docker buildx imagetools inspect "${tag}" >/dev/null
+            done <<< "${tags}"
+          done
 
   sync-awesome-unraid:
     if: ${{ needs.detect-changes.outputs.xml_related == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}

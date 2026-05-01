@@ -171,18 +171,21 @@ def test_reusable_workflow_keeps_known_component_exceptions_explicit() -> None:
     assert "UPSTREAM_OTELCOL_DIGEST" in text  # nosec B101
 
 
-def test_reusable_workflow_publishes_docker_hub_directly() -> None:
+def test_reusable_workflow_publishes_docker_hub_and_ghcr_directly() -> None:
     text = _workflow_text()
 
-    assert "Build and push Docker Hub image" in text  # nosec B101
-    assert "Build and push Docker Hub agent image" in text  # nosec B101
-    assert "Build and push GHCR image" not in text  # nosec B101
+    assert "Build and push registry images" in text  # nosec B101
+    assert "Build and push registry agent images" in text  # nosec B101
+    assert "Login to GHCR" in text  # nosec B101
+    assert "AIO_FLEET_GHCR_TOKEN" in text  # nosec B101
     assert "Mirror GHCR image to Docker Hub" not in text  # nosec B101
-    assert "tags: ${{ steps.prep.outputs.dockerhub_tags }}" in text  # nosec B101
-    assert "tags: ${{ steps.prep.outputs.ghcr_tags }}" not in text  # nosec B101
+    assert "${{ steps.prep.outputs.dockerhub_tags }}" in text  # nosec B101
+    assert "${{ steps.prep.outputs.ghcr_tags }}" in text  # nosec B101
     assert "tags: ${{ steps.prep.outputs.tags }}" not in text  # nosec B101
     assert "Docker Hub credentials are required for publishing." in text  # nosec B101
+    assert "GHCR publishing" in text  # nosec B101
     assert "dockerhub_tags<<EOF" in text  # nosec B101
+    assert "ghcr_tags<<EOF" in text  # nosec B101
     assert "docker buildx imagetools inspect" in text  # nosec B101
 
 
