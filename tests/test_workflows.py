@@ -234,12 +234,24 @@ def _write_rendered_workflows(repo_name: str, tmp_path: Path) -> None:
         path.write_text(text)
 
 
+def _legacy_workflow_manifest(tmp_path: Path) -> Path:
+    data = yaml.safe_load((ROOT / "fleet.yml").read_text())
+    data["control_plane"] = {
+        "repo_local_workflows": True,
+        "repo_local_boilerplate": True,
+    }
+    path = tmp_path / "fleet.yml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return path
+
+
 def test_verify_caller_accepts_generated_workflows(tmp_path: Path) -> None:
     _write_rendered_workflows("sure-aio", tmp_path)
+    manifest_path = _legacy_workflow_manifest(tmp_path)
 
     result = cmd_verify_caller(
         Namespace(
-            manifest=str(ROOT / "fleet.yml"),
+            manifest=str(manifest_path),
             repo="sure-aio",
             repo_path=str(tmp_path),
             ref=PINNED_REF,
@@ -255,11 +267,12 @@ def test_verify_caller_rejects_drifted_workflows(
     capsys,
 ) -> None:
     _write_rendered_workflows("sure-aio", tmp_path)
+    manifest_path = _legacy_workflow_manifest(tmp_path)
     (tmp_path / ".github" / "workflows" / "build.yml").write_text("name: drifted\n")
 
     result = cmd_verify_caller(
         Namespace(
-            manifest=str(ROOT / "fleet.yml"),
+            manifest=str(manifest_path),
             repo="sure-aio",
             repo_path=str(tmp_path),
             ref=PINNED_REF,
