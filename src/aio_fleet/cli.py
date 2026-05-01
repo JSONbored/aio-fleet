@@ -24,7 +24,12 @@ from aio_fleet.changelog import (
     update_template_changes,
     write_temp_git_cliff_config,
 )
-from aio_fleet.checks import check_run_payload, check_run_satisfied, upsert_check_run
+from aio_fleet.checks import (
+    CHECK_NAME,
+    check_run_payload,
+    check_run_satisfied,
+    upsert_check_run,
+)
 from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
 from aio_fleet.control_plane import (
     central_check_steps,
@@ -36,7 +41,7 @@ from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
-from aio_fleet.release import latest_changelog_version
+from aio_fleet.release import find_release_target_commit, latest_changelog_version
 from aio_fleet.validators import (
     PINNED_REUSABLE_WORKFLOW,
     TRACKED_ARTIFACT_PATTERNS,
@@ -1142,32 +1147,33 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
 
 
 def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
+    sha_result = _run(
+        ["gh", "api", f"repos/{repo.github_repo}/commits/main", "--jq", ".sha"],
+        cwd=repo.path,
+    )
+    if sha_result.returncode != 0:
+        return {"state": "unknown", "detail": sha_result.stderr.strip()}
+    sha = sha_result.stdout.strip()
     result = _run(
         [
             "gh",
-            "run",
-            "list",
-            "--repo",
-            repo.github_repo,
-            "--branch",
-            "main",
-            "--workflow",
-            "build.yml",
-            "--limit",
-            "1",
-            "--json",
-            "status,conclusion,headSha,url",
+            "api",
+            f"repos/{repo.github_repo}/commits/{sha}/check-runs?check_name=aio-fleet%20%2F%20required",
         ],
         cwd=repo.path,
     )
     if result.returncode != 0:
         return {"state": "unknown", "detail": result.stderr.strip()}
     try:
-        runs = json.loads(result.stdout or "[]")
+        runs = json.loads(result.stdout or "{}").get("check_runs", [])
     except json.JSONDecodeError:
         return {"state": "unknown", "detail": "unable to parse gh run output"}
     if not runs:
-        return {"state": "missing", "detail": "no main build.yml run found"}
+        return {
+            "state": "missing",
+            "head_sha": sha,
+            "detail": f"no {CHECK_NAME} check found",
+        }
     run = runs[0]
     state = (
         "success"
@@ -1176,8 +1182,8 @@ def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
     )
     return {
         "state": state,
-        "head_sha": str(run.get("headSha") or ""),
-        "url": str(run.get("url") or ""),
+        "head_sha": sha,
+        "url": str(run.get("html_url") or ""),
     }
 
 
@@ -1277,6 +1283,7 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     latest_version = latest_changelog_version(
         repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
     )
+    release_target = find_release_target_commit(repo.path, latest_version)
     notes = _run(
         [
             sys.executable,
@@ -1302,7 +1309,7 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         "--repo",
         repo.github_repo,
         "--target",
-        _git_head(repo.path),
+        release_target,
         "--title",
         latest_version,
         "--notes",
