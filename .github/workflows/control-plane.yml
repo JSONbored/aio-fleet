@@ -80,6 +80,9 @@ jobs:
       - name: Install aio-fleet
         run: python -m pip install -e ".[dev]"
 
+      - name: Install Trunk
+        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
+
       - name: Poll active repos
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'poll' }}
         env:
