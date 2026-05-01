@@ -1148,7 +1148,7 @@ def cmd_cleanup_repo(args: argparse.Namespace) -> int:
     report: dict[str, object] = {"repos": []}
     for repo in repos:
         findings = cleanup_findings(repo)
-        if findings and args.remove and not args.dry_run:
+        if findings and (args.remove or args.fix) and not args.dry_run:
             remove_cleanup_findings(findings)
             findings = cleanup_findings(repo)
         if args.verify and findings:
@@ -1885,6 +1885,11 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--all", action="store_true")
     cleanup.add_argument("--verify", action="store_true")
     cleanup.add_argument("--remove", action="store_true")
+    cleanup.add_argument(
+        "--fix",
+        action="store_true",
+        help="Alias for --remove; deletes known retired shared files.",
+    )
     cleanup.add_argument("--dry-run", action="store_true")
     cleanup.add_argument("--format", choices=["text", "json"], default="text")
     cleanup.set_defaults(func=cmd_cleanup_repo)

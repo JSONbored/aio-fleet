@@ -34,6 +34,7 @@ After editing `fleet.yml`:
 python -m aio_fleet export-app-manifest --repo <repo> --write
 python -m aio_fleet validate-repo --repo <repo> --repo-path ../<repo>
 python -m aio_fleet cleanup-repo --repo <repo> --verify
+python -m aio_fleet cleanup-repo --repo <repo> --fix --verify
 python -m aio_fleet control-check --repo <repo> --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet doctor
 ```

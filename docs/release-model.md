@@ -26,12 +26,18 @@ Publish jobs still require:
 `aio-fleet registry publish` and `aio-fleet registry verify` compute the tag set
 from `.aio-fleet.yml` and the release commit.
 
+The `Registry Audit` workflow runs read-only verification for every active repo
+on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
+summary without blocking unrelated control-plane checks; manual runs can set
+`fail_on_missing` to make missing tags fail the workflow.
+
 Central release commands:
 
 ```bash
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
 python -m aio_fleet release publish --repo sure-aio --dry-run
+python -m aio_fleet registry verify --all --format json
 python -m aio_fleet registry verify --repo sure-aio --sha <release-sha>
 ```
 
