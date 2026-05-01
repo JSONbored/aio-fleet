@@ -52,14 +52,7 @@ repositories = {
       "sure-aio",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 
@@ -88,14 +81,7 @@ repositories = {
       "unraid-templates",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 
@@ -124,14 +110,7 @@ repositories = {
       "unraid-template",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 
@@ -160,15 +139,7 @@ repositories = {
       "unraid-template",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
-      "Analyze (javascript-typescript)",
+      "aio-fleet / required",
     ]
   }
 
@@ -197,14 +168,7 @@ repositories = {
       "unraid-ca",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 
@@ -233,14 +197,7 @@ repositories = {
       "unraid-template",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 
@@ -269,14 +226,7 @@ repositories = {
       "unraid-ca",
     ]
     required_checks = [
-      "CodeQL",
-      "aio-build / validate-template",
-      "aio-build / pinned-actions",
-      "aio-build / unit-tests",
-      "aio-build / integration-tests",
-      "aio-build / dependency-review",
-      "Analyze (actions)",
-      "Analyze (python)",
+      "aio-fleet / required",
     ]
   }
 }
