@@ -2,24 +2,16 @@ schema_version: 1
 owner: JSONbored
 default_branch: main
 awesome_unraid_repository: JSONbored/awesome-unraid
-reusable_workflow:
-  path: .github/workflows/aio-build.yml
-  ref: main
-control_plane:
-  repo_local_workflows: false
-  repo_local_boilerplate: false
 defaults:
   python_version: "3.13"
   trunk_org_slug: aethereal
   publish_platforms: linux/amd64,linux/arm64
   integration_pytest_args: tests/integration -m integration
-  unit_pytest_args: tests/template
 repos:
   unraid-aio-template:
     path: /Users/shadowbook/Documents/unraid-aio-template
     public: false
     catalog_published: false
-    boilerplate_profile: template
     workflow_name: CI / AIO Template
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template
@@ -243,7 +235,7 @@ repos:
     image_name: jsonbored/simplelogin-aio
     docker_cache_scope: simplelogin-aio-image
     pytest_image_tag: simplelogin-aio:pytest
-    unit_pytest_args: tests/unit tests/template
+    unit_pytest_args: tests/unit
     publish_profile: upstream-aio-track
     publish_platforms: linux/amd64
     release_name: SimpleLogin-AIO
@@ -455,6 +447,7 @@ repos:
     image_name: jsonbored/mem0-aio
     docker_cache_scope: mem0-aio-image
     pytest_image_tag: mem0-aio:pytest
+    unit_pytest_args: tests/template
     publish_profile: changelog-version
     release_name: Mem0-AIO
     upstream_name: Mem0
@@ -538,6 +531,7 @@ repos:
     image_name: jsonbored/infisical-aio
     docker_cache_scope: infisical-aio-image
     pytest_image_tag: infisical-aio:pytest
+    unit_pytest_args: tests/template
     publish_profile: changelog-version
     release_name: Infisical-AIO
     upstream_name: Infisical
@@ -561,6 +555,7 @@ repos:
     image_name: jsonbored/dify-aio
     docker_cache_scope: dify-aio-image
     pytest_image_tag: dify-aio:pytest
+    unit_pytest_args: tests/template
     publish_profile: dify
     release_name: Dify AIO
     upstream_name: Dify
@@ -618,6 +613,7 @@ repos:
     image_name: jsonbored/signoz-aio
     docker_cache_scope: signoz-aio-image
     pytest_image_tag: signoz-aio:pytest
+    unit_pytest_args: tests/template
     publish_profile: signoz-suite
     release_name: SigNoz-AIO
     check_upstream_name: Check SigNoz Upstream

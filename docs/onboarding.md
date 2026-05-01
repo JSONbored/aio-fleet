@@ -31,11 +31,9 @@ Optional fields:
 After editing `fleet.yml`:
 
 ```bash
-python -m aio_fleet render-workflow <repo> --ref <aio-fleet-commit-sha>
-python -m aio_fleet sync-workflows --repo <repo> --ref <aio-fleet-commit-sha>
-python -m aio_fleet verify-caller --repo <repo> --repo-path ../<repo> --ref <aio-fleet-commit-sha>
+python -m aio_fleet export-app-manifest --repo <repo> --write
 python -m aio_fleet validate-repo --repo <repo> --repo-path ../<repo>
+python -m aio_fleet cleanup-repo --repo <repo> --verify
+python -m aio_fleet control-check --repo <repo> --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet doctor
 ```
-
-Callers should pin the reusable workflow to a full commit SHA. Use `main` only for local experimentation.

@@ -39,18 +39,8 @@ def _write_minimal_derived_repo(tmp_path: Path) -> None:
         "Dockerfile",
         "README.md",
         "pyproject.toml",
-        "tests/template/test_validate_template.py",
+        ".aio-fleet.yml",
         "tests/integration/test_container_runtime.py",
-        "scripts/validate-template.py",
-        "scripts/update-template-changes.py",
-        ".github/FUNDING.yml",
-        "SECURITY.md",
-        ".github/pull_request_template.md",
-        ".github/ISSUE_TEMPLATE/bug_report.yml",
-        ".github/ISSUE_TEMPLATE/feature_request.yml",
-        ".github/ISSUE_TEMPLATE/installation_help.yml",
-        ".github/ISSUE_TEMPLATE/config.yml",
-        "renovate.json",
         "example-aio.xml",
     ]:
         file_path = tmp_path / path
@@ -96,7 +86,6 @@ def test_derived_repo_validation_loads_component_templates(tmp_path: Path) -> No
 [components.agent]
 template = "agent.xml"
 """)
-    (tmp_path / "scripts" / "components.py").write_text("ok\n")
 
     assert derived_repo_failures(tmp_path) == [
         "missing required file: agent.xml"

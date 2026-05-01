@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess  # nosec B404
@@ -12,30 +13,16 @@ import defusedxml.ElementTree as DefusedET
 
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
-PINNED_REUSABLE_WORKFLOW = re.compile(
-    r"uses:\s+JSONbored/aio-fleet/\.github/workflows/aio-[a-z-]+\.yml@([0-9a-f]{40})"
-)
-
 ACTION_REF = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
 SHA_REF = re.compile(r"^[0-9a-f]{40}$")
 CATALOG_RAW_PREFIX = "https://raw.githubusercontent.com/"
 
 DERIVED_REQUIRED_FILES = [
+    ".aio-fleet.yml",
     "Dockerfile",
     "README.md",
     "pyproject.toml",
-    "tests/template/test_validate_template.py",
     "tests/integration/test_container_runtime.py",
-    "scripts/validate-template.py",
-    "scripts/update-template-changes.py",
-    ".github/FUNDING.yml",
-    "SECURITY.md",
-    ".github/pull_request_template.md",
-    ".github/ISSUE_TEMPLATE/bug_report.yml",
-    ".github/ISSUE_TEMPLATE/feature_request.yml",
-    ".github/ISSUE_TEMPLATE/installation_help.yml",
-    ".github/ISSUE_TEMPLATE/config.yml",
-    "renovate.json",
 ]
 
 PLACEHOLDER_CHECKS = [
@@ -293,10 +280,41 @@ def repo_policy_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]
     return [
         *catalog_asset_failures(repo),
         *template_metadata_failures(repo, manifest),
+        *runtime_contract_failures(repo),
         *publish_platform_failures(repo),
         *pinned_action_failures(repo.path),
         *tracked_artifact_failures(repo.path),
     ]
+
+
+def runtime_contract_failures(repo: RepoConfig) -> list[str]:
+    failures: list[str] = []
+    dockerfile_cache: dict[Path, str] = {}
+    for source, _target in _catalog_xml_assets(repo):
+        root = _parse_xml(repo, source, failures)
+        if root is None:
+            continue
+        dockerfile = _dockerfile_for_xml(repo, source)
+        if not dockerfile.exists():
+            failures.append(
+                f"{repo.name}: {source} runtime Dockerfile missing: {dockerfile.relative_to(repo.path)}"
+            )
+            continue
+        text = dockerfile_cache.setdefault(dockerfile, dockerfile.read_text())
+        relative_dockerfile = dockerfile.relative_to(repo.path)
+        failures.extend(
+            _dockerfile_runtime_contract_failures(repo, relative_dockerfile, text)
+        )
+        failures.extend(
+            _xml_runtime_contract_failures(
+                repo,
+                source,
+                root,
+                relative_dockerfile,
+                text,
+            )
+        )
+    return sorted(dict.fromkeys(failures))
 
 
 def derived_repo_failures(
@@ -310,8 +328,6 @@ def derived_repo_failures(
 
     for required in DERIVED_REQUIRED_FILES:
         _require_file(repo_path, required, failures)
-    if (repo_path / "components.toml").exists():
-        _require_file(repo_path, "scripts/components.py", failures)
     _require_absent(repo_path, ".github/CODEOWNERS", failures)
 
     template_xml = template_xml or _effective_template_xml(repo_path)
@@ -535,6 +551,163 @@ def _component_templates(repo_path: Path, failures: list[str]) -> list[str]:
         if template:
             templates.append(template)
     return templates
+
+
+def _dockerfile_for_xml(repo: RepoConfig, source: str) -> Path:
+    components = repo.raw.get("components", {})
+    if isinstance(components, dict):
+        for component in components.values():
+            if not isinstance(component, dict):
+                continue
+            xml_paths = component.get("xml_paths", [])
+            if isinstance(xml_paths, str):
+                component_xml_paths = {xml_paths}
+            elif isinstance(xml_paths, list):
+                component_xml_paths = {str(item) for item in xml_paths}
+            else:
+                component_xml_paths = set()
+            if source in component_xml_paths and component.get("dockerfile"):
+                return repo.path / str(component["dockerfile"])
+    return repo.path / "Dockerfile"
+
+
+def _dockerfile_runtime_contract_failures(
+    repo: RepoConfig,
+    relative_dockerfile: Path,
+    text: str,
+) -> list[str]:
+    failures: list[str] = []
+    arg_defaults = _dockerfile_arg_defaults(text)
+    from_lines = [
+        line.split()[1]
+        for line in text.splitlines()
+        if line.startswith("FROM ") and len(line.split()) > 1
+    ]
+    if not from_lines:
+        failures.append(f"{repo.name}: {relative_dockerfile} must declare FROM")
+    for image in from_lines:
+        digest_arg = re.search(r"@\$\{([^}]+)\}", image)
+        if "@sha256:" in image:
+            continue
+        if digest_arg:
+            digest_default = arg_defaults.get(digest_arg.group(1), "")
+            if digest_default.startswith("sha256:") or "@sha256:" in digest_default:
+                continue
+        elif any(
+            "@sha256:" in arg_defaults.get(name, "")
+            for name in re.findall(r"\$\{([^}]+)\}", image)
+        ):
+            continue
+        failures.append(
+            f"{repo.name}: {relative_dockerfile} FROM image must be digest-pinned: {image}"
+        )
+
+    markers = ["HEALTHCHECK", "curl -fsS", "ENTRYPOINT ["]
+    if relative_dockerfile == Path("Dockerfile"):
+        markers.extend(
+            [
+                'ENTRYPOINT ["/init"]',
+                "S6_CMD_WAIT_FOR_SERVICES_MAXTIME",
+                "S6_BEHAVIOUR_IF_STAGE2_FAILS=2",
+            ]
+        )
+    for marker in markers:
+        if marker not in text:
+            failures.append(
+                f"{repo.name}: {relative_dockerfile} missing runtime safety marker: {marker}"
+            )
+    return failures
+
+
+def _xml_runtime_contract_failures(
+    repo: RepoConfig,
+    source: str,
+    root: Element,
+    relative_dockerfile: Path,
+    dockerfile_text: str,
+) -> list[str]:
+    failures: list[str] = []
+    volumes = _dockerfile_volumes(dockerfile_text)
+    exposed_ports = _dockerfile_exposed_ports(dockerfile_text)
+
+    for config in root.findall(".//Config"):
+        target = (config.attrib.get("Target") or "").strip()
+        if not target:
+            continue
+        if config.attrib.get("Type") == "Port" and target not in exposed_ports:
+            failures.append(
+                f"{repo.name}: {source} port target {target} is not exposed by {relative_dockerfile}"
+            )
+        if target == "/var/run/docker.sock":
+            description = (config.attrib.get("Description") or "").lower()
+            if config.attrib.get("Display") != "advanced":
+                failures.append(
+                    f"{repo.name}: {source} Docker socket mount must be advanced"
+                )
+            if config.attrib.get("Required") != "false":
+                failures.append(
+                    f"{repo.name}: {source} Docker socket mount must be optional"
+                )
+            if not any(term in description for term in ["socket", "docker"]) or (
+                "security" not in description and "control access" not in description
+            ):
+                failures.append(
+                    f"{repo.name}: {source} Docker socket mount must document security impact"
+                )
+        if (
+            config.attrib.get("Type") != "Path"
+            or config.attrib.get("Required") != "true"
+        ):
+            continue
+        default = config.attrib.get("Default") or config.text or ""
+        if not default.startswith("/mnt/user/appdata"):
+            continue
+        if not volumes:
+            failures.append(
+                f"{repo.name}: {relative_dockerfile} must declare VOLUME for required appdata paths"
+            )
+            continue
+        if not any(
+            target == volume or target.startswith(f"{volume.rstrip('/')}/")
+            for volume in volumes
+        ):
+            failures.append(
+                f"{repo.name}: {source} required path target {target} is not covered by {relative_dockerfile} VOLUME"
+            )
+
+    return failures
+
+
+def _dockerfile_arg_defaults(text: str) -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.startswith("ARG ") or "=" not in line:
+            continue
+        name, value = line.removeprefix("ARG ").split("=", 1)
+        defaults[name] = value
+    return defaults
+
+
+def _dockerfile_volumes(text: str) -> set[str]:
+    volumes: set[str] = set()
+    for match in re.finditer(r"(?m)^VOLUME\s+(\[[^\]]+\])", text):
+        try:
+            raw = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(raw, list):
+            volumes.update(str(item) for item in raw)
+    return volumes
+
+
+def _dockerfile_exposed_ports(text: str) -> set[str]:
+    ports: set[str] = set()
+    for line in text.splitlines():
+        if not line.startswith("EXPOSE "):
+            continue
+        for token in line.split()[1:]:
+            ports.add(token.split("/", 1)[0])
+    return ports
 
 
 def _is_template_repo(repo_path: Path) -> bool:

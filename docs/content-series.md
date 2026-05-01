@@ -9,7 +9,7 @@ Angle: each AIO repo starts small, then CI, release, template, and catalog behav
 Proof points:
 
 - duplicated workflow lines removed from app repos;
-- publish-gate behavior moved to one reusable workflow;
+- publish-gate behavior moved to one control-plane path;
 - repo exceptions made explicit in `fleet.yml`.
 
 ## Part 2: Designing A Control Plane For Unraid AIO Containers
@@ -23,16 +23,16 @@ Proof points:
 - `awesome-unraid` stays catalog-only;
 - `aio-fleet` manages policy and drift.
 
-## Part 3: Reusable CI/CD, Release Gates, And Drift Detection
+## Part 3: Control-Plane CI/CD, Release Gates, And Drift Detection
 
-Angle: a small caller workflow is easier to inspect and safer to change than hundreds of copied YAML lines.
+Angle: one GitHub App check-run is easier to govern than workflow copies spread across every app repo.
 
 Proof points:
 
-- central reusable `aio-build.yml`;
-- SHA-pinned callers;
-- manifest-driven workflow generation;
-- `doctor`, `validate`, and `status` commands.
+- `aio-fleet / required` check-run orchestration;
+- manifest-driven repo metadata;
+- central release, registry, Trunk, and validation commands;
+- `doctor`, `validate`, `cleanup-repo`, and `status` commands.
 
 ## Part 4: Managing GitHub Repo Infrastructure With Terraform/OpenTofu
 

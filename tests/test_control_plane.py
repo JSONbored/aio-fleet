@@ -20,7 +20,6 @@ def test_central_check_steps_for_pr_skip_publish_and_integration(
     assert names == [
         "validate-template-common",
         "install-test-deps",
-        "unit-tests",
     ]  # nosec B101
 
 
@@ -35,7 +34,7 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
 
 
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
-    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
 
     steps = central_check_steps(repo, event="push", include_integration=False)
 
