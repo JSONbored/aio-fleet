@@ -337,18 +337,24 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
         if drift.returncode == 0:
             ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
 
-        workflow_drift = _workflow_drift(
-            repo, manifest, target_ref or _workflow_ref_for_repo(repo)
+        workflow_drift = (
+            _workflow_drift(repo, manifest, target_ref or _workflow_ref_for_repo(repo))
+            if _repo_local_workflows_enabled(manifest)
+            else []
         )
-        boilerplate_drift = [
-            str(change.target.relative_to(repo.path))
-            for change in sync_boilerplate(
-                repo,
-                config_path=Path(args.boilerplate_config),
-                profile=str(repo.get("boilerplate_profile", "aio")),
-                dry_run=True,
-            )
-        ]
+        boilerplate_drift = (
+            [
+                str(change.target.relative_to(repo.path))
+                for change in sync_boilerplate(
+                    repo,
+                    config_path=Path(args.boilerplate_config),
+                    profile=str(repo.get("boilerplate_profile", "aio")),
+                    dry_run=True,
+                )
+            ]
+            if _repo_local_boilerplate_enabled(manifest)
+            else []
+        )
         repo_catalog_failures = [
             failure
             for failure in catalog_failures
@@ -419,6 +425,20 @@ def _workflow_drift(repo: RepoConfig, manifest: FleetManifest, ref: str) -> list
         if path.read_text() != expected:
             drift.append(str(path.relative_to(repo.path)))
     return drift
+
+
+def _repo_local_workflows_enabled(manifest: FleetManifest) -> bool:
+    control_plane = manifest.raw.get("control_plane", {})
+    if not isinstance(control_plane, dict):
+        return True
+    return bool(control_plane.get("repo_local_workflows", True))
+
+
+def _repo_local_boilerplate_enabled(manifest: FleetManifest) -> bool:
+    control_plane = manifest.raw.get("control_plane", {})
+    if not isinstance(control_plane, dict):
+        return True
+    return bool(control_plane.get("repo_local_boilerplate", True))
 
 
 def _untracked_artifacts(repo_path: Path) -> list[str]:
@@ -628,6 +648,9 @@ def _git_commit_and_pr(
 
 def cmd_sync_workflows(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
+    if not _repo_local_workflows_enabled(manifest):
+        print("workflow changes: 0")
+        return 0
     repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
     changed = 0
     for repo in repos:
@@ -650,6 +673,16 @@ def cmd_verify_caller(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
     repo_path = Path(args.repo_path).resolve()
+    if not _repo_local_workflows_enabled(manifest):
+        workflow_dir = repo_path / ".github" / "workflows"
+        if workflow_dir.exists():
+            print(
+                ".github/workflows: repo-local workflows are disabled by aio-fleet control_plane policy",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{repo.name} repo-local workflows are disabled by aio-fleet policy")
+        return 0
     ref = args.ref or _reusable_ref_from_caller(repo_path)
     repo_at_path = _repo_with_path(repo, repo_path)
     failures: list[str] = []
@@ -1442,6 +1475,9 @@ def cmd_import_app_manifest(args: argparse.Namespace) -> int:
 
 def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
+    if not _repo_local_boilerplate_enabled(manifest):
+        print("boilerplate changes: 0")
+        return 0
     repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
     changed = 0
     for repo in repos:

@@ -5,6 +5,9 @@ awesome_unraid_repository: JSONbored/awesome-unraid
 reusable_workflow:
   path: .github/workflows/aio-build.yml
   ref: main
+control_plane:
+  repo_local_workflows: false
+  repo_local_boilerplate: false
 defaults:
   python_version: "3.13"
   trunk_org_slug: aethereal
