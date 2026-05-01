@@ -153,6 +153,43 @@ def upsert_check_run(
     )
 
 
+def existing_check_run(
+    repo: RepoConfig,
+    *,
+    sha: str,
+    event: str,
+    token: str | None = None,
+) -> dict[str, Any] | None:
+    token = token or resolve_token(fallback_envs=("AIO_FLEET_CHECK_TOKEN",))
+    if not token:
+        return None
+    payload = check_run_payload(repo, sha=sha, event=event, status="queued")
+    owner, repo_name = repo.github_repo.split("/", 1)
+    return _find_existing_check_run(
+        owner,
+        repo_name,
+        sha,
+        token,
+        external_id=str(payload["external_id"]),
+        name=str(payload["name"]),
+    )
+
+
+def check_run_satisfied(
+    repo: RepoConfig,
+    *,
+    sha: str,
+    event: str,
+    token: str | None = None,
+) -> bool:
+    existing = existing_check_run(repo, sha=sha, event=event, token=token)
+    return bool(
+        existing
+        and existing.get("status") == "completed"
+        and existing.get("conclusion") == "success"
+    )
+
+
 def _find_existing_check_run(
     owner: str,
     repo_name: str,

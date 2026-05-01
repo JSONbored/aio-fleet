@@ -16,10 +16,12 @@ from aio_fleet.cli import (
     cmd_export_app_manifest,
     cmd_infra_doctor,
     cmd_onboard_repo,
+    cmd_poll,
     cmd_trunk_audit,
     cmd_validate_template_common,
 )
 from aio_fleet.manifest import load_manifest
+from aio_fleet.poll import PollTarget
 from aio_fleet.workflows import rendered_workflows
 
 OLD_REF = "1" * 40
@@ -138,6 +140,42 @@ def test_check_run_dry_run_outputs_payload(tmp_path: Path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["name"] == "aio-fleet / required"  # nosec B101
     assert payload["conclusion"] == "success"  # nosec B101
+
+
+def test_poll_missing_checks_only_skips_satisfied_targets(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    repo = load_manifest(manifest).repo("example-aio")
+
+    monkeypatch.setattr(
+        cli,
+        "poll_targets",
+        lambda *args, **kwargs: [
+            PollTarget(
+                repo=repo,
+                sha="f" * 40,
+                event="pull_request",
+                source="pr:1",
+            )
+        ],
+    )
+    monkeypatch.setattr(cli, "check_run_satisfied", lambda *args, **kwargs: True)
+
+    result = cmd_poll(
+        Namespace(
+            manifest=str(manifest),
+            no_prs=False,
+            no_main=False,
+            create_checks=False,
+            missing_checks_only=True,
+            dry_run=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert json.loads(capsys.readouterr().out) == {"targets": []}  # nosec B101
 
 
 def test_export_app_manifest_prints_future_app_manifest(tmp_path: Path, capsys) -> None:

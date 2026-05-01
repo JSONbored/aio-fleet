@@ -100,3 +100,28 @@ def test_upsert_check_run_updates_matching_external_id(monkeypatch) -> None:
     assert result.action == "updated"  # nosec B101
     assert result.check_run_id == 123  # nosec B101
     assert [call[1] for call in calls] == ["GET", "PATCH"]  # nosec B101
+
+
+def test_check_run_satisfied_requires_completed_success(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    monkeypatch.setattr(
+        checks,
+        "_github_request",
+        lambda *args, **kwargs: {
+            "check_runs": [
+                {
+                    "id": 123,
+                    "external_id": checks.check_external_id(
+                        repo, sha="e" * 40, event="pull_request"
+                    ),
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        },
+    )
+
+    assert checks.check_run_satisfied(  # nosec B101
+        repo, sha="e" * 40, event="pull_request", token="token"  # nosec B106
+    )
