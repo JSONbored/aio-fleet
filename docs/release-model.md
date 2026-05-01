@@ -11,6 +11,12 @@ Most app repos use one of two publish profiles:
 - `upstream-aio-track`: wrapper tags are normalized as `<upstream>-aio-v<revision>`.
 - `changelog-version`: wrapper tags follow the changelog version exactly.
 
+Publish jobs push and verify Docker Hub plus GHCR tags. Docker Hub remains the
+template/catalog-preferred image reference; GHCR is a second registry surface
+for package availability and operator fallback. Central GHCR publishing should
+use `AIO_FLEET_GHCR_TOKEN`; app-repo reusable workflow callers may fall back to
+repo `GITHUB_TOKEN` while the build still runs in the app repository.
+
 Publish jobs still require:
 
 - push to `main`;
