@@ -77,6 +77,13 @@ def _reusable_ref_from_caller(repo_path: Path) -> str:
     return match.group(1)
 
 
+def _workflow_ref_for_repo(repo: RepoConfig) -> str:
+    try:
+        return _reusable_ref_from_caller(repo.path)
+    except ManifestError:
+        return _current_ref()
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     failures: list[str] = []
@@ -250,12 +257,12 @@ def _publish_status(
 def cmd_debt_report(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
-    current_ref = args.ref or _current_ref()
+    target_ref = args.ref
     catalog_failures = (
         catalog_repo_failures(manifest, catalog_path) if catalog_path else []
     )
     report: dict[str, object] = {
-        "ref": current_ref,
+        "ref": target_ref or "caller-pins",
         "catalog_path": str(catalog_path) if catalog_path else None,
         "repos": [],
     }
@@ -274,7 +281,9 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
         if drift.returncode == 0:
             ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
 
-        workflow_drift = _workflow_drift(repo, manifest, current_ref)
+        workflow_drift = _workflow_drift(
+            repo, manifest, target_ref or _workflow_ref_for_repo(repo)
+        )
         boilerplate_drift = [
             str(change.target.relative_to(repo.path))
             for change in sync_boilerplate(
@@ -563,10 +572,10 @@ def _git_commit_and_pr(
 
 def cmd_sync_workflows(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
-    ref = args.ref or _current_ref()
     repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
     changed = 0
     for repo in repos:
+        ref = args.ref or _workflow_ref_for_repo(repo)
         did_change = _sync_repo(repo, manifest, ref, args.dry_run)
         changed += int(did_change)
         if did_change and args.create_pr:
