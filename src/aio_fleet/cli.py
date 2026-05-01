@@ -24,7 +24,7 @@ from aio_fleet.changelog import (
     update_template_changes,
     write_temp_git_cliff_config,
 )
-from aio_fleet.checks import check_run_payload, upsert_check_run
+from aio_fleet.checks import check_run_payload, check_run_satisfied, upsert_check_run
 from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
 from aio_fleet.control_plane import (
     central_check_steps,
@@ -821,6 +821,10 @@ def cmd_poll(args: argparse.Namespace) -> int:
     )
     emitted: list[dict[str, object]] = []
     for target in targets:
+        if args.missing_checks_only and check_run_satisfied(
+            target.repo, sha=target.sha, event=target.event
+        ):
+            continue
         row = {
             "repo": target.repo.name,
             "sha": target.sha,
@@ -2141,6 +2145,7 @@ def build_parser() -> argparse.ArgumentParser:
     poll.add_argument("--no-prs", action="store_true")
     poll.add_argument("--no-main", action="store_true")
     poll.add_argument("--create-checks", action="store_true")
+    poll.add_argument("--missing-checks-only", action="store_true")
     poll.add_argument("--dry-run", action="store_true")
     poll.add_argument("--format", choices=["text", "json"], default="text")
     poll.set_defaults(func=cmd_poll)

@@ -1,6 +1,7 @@
 name: AIO Fleet Control Plane
 
 #checkov:skip=CKV_GHA_7:workflow_dispatch inputs are the intentional control-plane entry point; repo and sha are validated before checkout
+#checkov:skip=CKV_SECRET_6:poll checkout auth is a runtime-generated masked GitHub App token, not a literal secret
 on:
   schedule:
     - cron: 17 * * * *
@@ -85,7 +86,7 @@ jobs:
 
       - name: Resolve GitHub App token
         id: app-token
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -102,17 +103,93 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'poll' }}
         env:
           CREATE_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.create_checks || false }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || true }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          RUN_CHECKS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           set -euo pipefail
           args=(poll --format json)
-          if [[ "${CREATE_CHECKS}" == "true" ]]; then
+          if [[ "${RUN_CHECKS}" == "true" ]]; then
+            args+=(--missing-checks-only)
+          fi
+          if [[ "${CREATE_CHECKS}" == "true" && "${RUN_CHECKS}" != "true" ]]; then
             args+=(--create-checks)
           fi
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
           fi
-          python -m aio_fleet "${args[@]}"
+          python -m aio_fleet "${args[@]}" | tee poll-targets.json
+          if [[ "${RUN_CHECKS}" != "true" ]]; then
+            exit 0
+          fi
+          if [[ -z "${APP_TOKEN}" ]]; then
+            echo "Unable to resolve a GitHub App token for poll checkouts" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          targets = json.loads(Path("poll-targets.json").read_text())["targets"]
+          if not targets:
+              print("No missing aio-fleet checks found.")
+              raise SystemExit(0)
+
+          token = os.environ["APP_TOKEN"]
+          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+          checkout_root = Path("poll-checkouts")
+          checkout_root.mkdir(exist_ok=True)
+
+          for target in targets:
+              repo = target["repo"]
+              sha = target["sha"]
+              event = target["event"]
+              worktree = checkout_root / f"{repo}-{sha[:12]}"
+              if worktree.exists():
+                  shutil.rmtree(worktree)
+              print(f"Running aio-fleet check for {repo} {event} {sha}")
+              subprocess.run(
+                  [
+                      "git",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "clone",
+                      "--filter=blob:none",
+                      f"https://github.com/JSONbored/{repo}.git",
+                      str(worktree),
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  ["git", "-C", str(worktree), "checkout", "--detach", sha],
+                  check=True,
+              )
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "aio_fleet",
+                      "control-check",
+                      "--repo",
+                      repo,
+                      "--repo-path",
+                      str(worktree),
+                      "--sha",
+                      sha,
+                      "--event",
+                      event,
+                      "--check-run",
+                  ],
+                  check=True,
+              )
+          PY
 
       - name: Validate control-check inputs
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
