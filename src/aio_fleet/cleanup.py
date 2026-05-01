@@ -17,6 +17,14 @@ RETIRED_SHARED_PATHS: dict[str, str] = {
     "scripts/update-template-changes.py": "XML Changes rendering is centralized",
     "scripts/check-upstream.py": "upstream monitoring is centralized",
     "scripts/validate-derived-repo.sh": "derived repo validation is centralized",
+    "scripts/validate-template.py": "template validation is centralized",
+    "scripts/components.py": "component metadata is read from .aio-fleet.yml",
+    "tests/template/test_update_template_changes.py": "XML Changes tests move to aio-fleet",
+    "tests/template/test_validate_derived_repo.py": "derived repo policy tests move to aio-fleet",
+    "tests/template/test_validate_template.py": "template validator tests move to aio-fleet",
+    "tests/unit/test_check_upstream.py": "upstream check tests move to aio-fleet",
+    "tests/unit/test_components.py": "component metadata tests move to aio-fleet",
+    "tests/unit/test_release_shim.py": "release helper tests move to aio-fleet",
 }
 
 

@@ -124,8 +124,13 @@ def main(argv: list[str] | None = None) -> int:
     raise SystemExit(f"unknown command: {args.command}")
 
 
-def read_upstream_version(dockerfile: Path, upstream_config: Path) -> str:
-    version_key = load_upstream_version_key(upstream_config)
+def read_upstream_version(
+    dockerfile: Path,
+    upstream_config: Path | None = None,
+    *,
+    version_key: str | None = None,
+) -> str:
+    version_key = version_key or load_upstream_version_key(upstream_config)
     pattern = re.compile(rf"^ARG {re.escape(version_key)}=(.+)$")
     for line in dockerfile.read_text().splitlines():
         match = pattern.match(line.strip())
@@ -134,8 +139,8 @@ def read_upstream_version(dockerfile: Path, upstream_config: Path) -> str:
     raise SystemExit(f"Unable to find ARG {version_key} in {dockerfile}")
 
 
-def load_upstream_version_key(path: Path) -> str:
-    if not path.exists():
+def load_upstream_version_key(path: Path | None) -> str:
+    if path is None or not path.exists():
         return "UPSTREAM_VERSION"
     data = tomllib.loads(path.read_text())
     upstream = data.get("upstream", {})
@@ -161,9 +166,15 @@ def latest_component_release_tag(repo_path: Path, suffix: str = "aio") -> str | 
 
 
 def latest_aio_release_tag(
-    repo_path: Path, dockerfile: Path, upstream_config: Path, suffix: str = "aio"
+    repo_path: Path,
+    dockerfile: Path,
+    upstream_config: Path | None,
+    suffix: str = "aio",
+    version_key: str | None = None,
 ) -> str | None:
-    upstream_version = read_upstream_version(dockerfile, upstream_config)
+    upstream_version = read_upstream_version(
+        dockerfile, upstream_config, version_key=version_key
+    )
     pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
     matches: list[tuple[int, str]] = []
     for tag in git_tags(repo_path):
@@ -184,9 +195,15 @@ def has_aio_unreleased_changes(repo_path: Path, suffix: str = "aio") -> bool:
 
 
 def next_aio_release_version(
-    repo_path: Path, dockerfile: Path, upstream_config: Path, suffix: str = "aio"
+    repo_path: Path,
+    dockerfile: Path,
+    upstream_config: Path | None,
+    suffix: str = "aio",
+    version_key: str | None = None,
 ) -> str:
-    upstream_version = read_upstream_version(dockerfile, upstream_config)
+    upstream_version = read_upstream_version(
+        dockerfile, upstream_config, version_key=version_key
+    )
     pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
     revisions = []
     for tag in git_tags(repo_path):

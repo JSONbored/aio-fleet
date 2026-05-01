@@ -29,6 +29,7 @@ def app_manifest_from_repo(repo: RepoConfig) -> dict[str, Any]:
         },
         "upstream": {
             "name": repo.get("upstream_name", repo.app_slug),
+            "version_key": repo.get("upstream_version_key", "UPSTREAM_VERSION"),
             "digest_arg": repo.get("upstream_digest_arg", "UPSTREAM_IMAGE_DIGEST"),
             "commit_paths": repo.list_value("upstream_commit_paths"),
             "components": repo.raw.get("upstream_components", []),
