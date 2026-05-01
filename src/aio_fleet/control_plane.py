@@ -27,6 +27,7 @@ def central_check_steps(
     manifest_path: Path | None = None,
     publish: bool = False,
     include_trunk: bool = True,
+    include_integration: bool = True,
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
     steps = [
@@ -62,7 +63,11 @@ def central_check_steps(
             )
         )
     integration_args = str(repo.get("integration_pytest_args", "") or "").strip()
-    if event in {"push", "release", "workflow_dispatch"} and integration_args:
+    if (
+        include_integration
+        and event in {"push", "release", "workflow_dispatch"}
+        and integration_args
+    ):
         steps.append(
             Step(
                 "integration-tests",

@@ -907,6 +907,7 @@ def cmd_control_check(args: argparse.Namespace) -> int:
         manifest_path=Path(args.manifest).resolve(),
         publish=args.publish,
         include_trunk=not args.no_trunk,
+        include_integration=not args.no_integration,
     )
     if args.check_run:
         status = "completed" if args.dry_run else "in_progress"
@@ -2197,6 +2198,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     control.add_argument("--publish", action="store_true")
     control.add_argument("--no-trunk", action="store_true")
+    control.add_argument("--no-integration", action="store_true")
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
     control.set_defaults(func=cmd_control_check)

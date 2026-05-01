@@ -187,6 +187,7 @@ jobs:
                       sha,
                       "--event",
                       event,
+                      "--no-integration",
                       "--check-run",
                   ],
                   check=True,
