@@ -81,7 +81,8 @@ newlines.
    identity.
 6. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
 7. Update branch protection to require only `aio-fleet / required`.
-8. Run `aio-fleet cleanup-repo --verify`.
+8. Run `aio-fleet cleanup-repo --verify`, or `aio-fleet cleanup-repo --fix --verify`
+   when removing known retired shared files.
 9. Remove PAT secrets after the GitHub App path is stable.
 
 The GitHub App is now the intended control-plane identity; PAT secrets are

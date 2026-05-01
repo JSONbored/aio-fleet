@@ -22,11 +22,12 @@ It does not replace the existing source-of-truth repos:
   instead of creating duplicate required checks.
 - The end-state branch protection target is one required GitHub App check named
   `aio-fleet / required`; detail checks can remain informational.
-- `registry verify/publish`, `release status/prepare/publish`, and `trunk run`
-  provide the Python-driven control-plane jobs.
-- `cleanup-repo --verify` is the guardrail that app repos no longer carry local
-  workflows, Trunk config, git-cliff config, upstream scripts, release shims,
-  or copied community-health boilerplate.
+- `registry verify/publish`, the scheduled `Registry Audit` workflow,
+  `release status/prepare/publish`, and `trunk run` provide the Python-driven
+  control-plane jobs.
+- `cleanup-repo --verify` and `cleanup-repo --fix` are the guardrails that app
+  repos no longer carry local workflows, Trunk config, git-cliff config,
+  upstream scripts, release shims, or copied community-health boilerplate.
 
 GitHub-owned state and source-owned state stay separate:
 

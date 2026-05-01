@@ -18,11 +18,14 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   the required GitHub App check-run named `aio-fleet / required`.
 - `registry verify/publish` computes and verifies Docker Hub plus GHCR tags from
   the manifest and release state.
+- The `Registry Audit` workflow runs read-only Docker Hub/GHCR verification on
+  a schedule and can be manually enforced with `fail_on_missing`.
 - `release status/prepare/publish` uses central changelog and XML `<Changes>`
   rendering instead of app-local release scripts.
 - `trunk run` overlays the central `.trunk` config into scratch checkouts so
   app repos can drop local Trunk config after the check-run migration is proven.
-- `cleanup-repo` verifies that retired app-local shared files have been removed.
+- `cleanup-repo` verifies and, with `--fix`, removes retired app-local shared
+  files.
 - OpenTofu policy under `infra/github` manages public repo metadata, branch
   protection, selected action allowlists, required checks, vulnerability alerts,
   and declared automation secret names.
@@ -48,7 +51,9 @@ python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
 python -m aio_fleet release publish --repo sure-aio --dry-run
+python -m aio_fleet registry verify --all --format json
 python -m aio_fleet cleanup-repo --repo sure-aio --verify
+python -m aio_fleet cleanup-repo --repo sure-aio --fix --verify
 python -m aio_fleet trunk run --repo sure-aio --no-fix
 python -m aio_fleet export-app-manifest --repo sure-aio
 python -m aio_fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml

@@ -1,0 +1,110 @@
+name: Registry Audit
+
+#checkov:skip=CKV_GHA_7:workflow_dispatch input only controls whether this reporting job fails after read-only verification
+on:
+  schedule:
+    - cron: 37 9 * * *
+  workflow_dispatch:
+    inputs:
+      fail_on_missing:
+        description: Fail the run if any expected registry tag is missing
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  registry-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: python -m pip install -e ".[dev]"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Verify registry tags
+        id: verify
+        run: |
+          set +e
+          python -m aio_fleet registry verify --all --format json > registry-report.json
+          status=$?
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Publish registry summary
+        env:
+          VERIFY_STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("registry-report.json")
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          status = os.environ.get("VERIFY_STATUS", "")
+          lines = ["# Registry Audit", "", f"Verify command exit status: `{status}`", ""]
+          if not report_path.exists():
+              lines.extend(["Registry report was not generated.", ""])
+              summary_path.write_text("\n".join(lines))
+              raise SystemExit(0)
+
+          report = json.loads(report_path.read_text())
+          lines.extend(
+              [
+                  "| Repo | SHA | State | Docker Hub tags | GHCR tags |",
+                  "| --- | --- | --- | ---: | ---: |",
+              ]
+          )
+          failures = []
+          for item in report.get("repos", []):
+              repo_failures = item.get("failures", [])
+              state = "failed" if repo_failures else "ok"
+              sha = str(item.get("sha", ""))[:12]
+              lines.append(
+                  "| {repo} | `{sha}` | {state} | {dockerhub} | {ghcr} |".format(
+                      repo=item.get("repo", ""),
+                      sha=sha,
+                      state=state,
+                      dockerhub=len(item.get("dockerhub", [])),
+                      ghcr=len(item.get("ghcr", [])),
+                  )
+              )
+              for failure in repo_failures:
+                  failures.append(f"{item.get('repo', '')}: {failure}")
+
+          if failures:
+              lines.extend(["", "## Missing Or Failed Tags", ""])
+              lines.extend(f"- `{failure}`" for failure in failures)
+          else:
+              lines.extend(["", "All expected registry tags resolved."])
+          summary_path.write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Enforce manual registry audit
+        env:
+          FAIL_ON_MISSING: ${{ github.event_name == 'workflow_dispatch' && inputs.fail_on_missing || false }}
+          VERIFY_STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          set -euo pipefail
+          if [[ "${FAIL_ON_MISSING}" == "true" && "${VERIFY_STATUS}" != "0" ]]; then
+            echo "Registry audit found missing or failed tags." >&2
+            exit 1
+          fi
