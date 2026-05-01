@@ -25,17 +25,17 @@ settings through the OpenTofu layer:
 Do not grant secret-read permissions. GitHub does not expose secret values, and
 the fleet should only validate secret names/presence.
 
-## Current Workflow Support
+## Current Control-Plane Support
 
-The reusable workflows already resolve automation credentials through
+The control-plane workflows resolve automation credentials through
 `aio_fleet.github_app`:
 
 - If `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
-  `AIO_FLEET_APP_PRIVATE_KEY` are present, the workflow mints a short-lived
+  `AIO_FLEET_APP_PRIVATE_KEY` are present, `aio-fleet` mints a short-lived
   installation token.
-- If app credentials are absent, the workflow falls back to existing token
-  secrets such as `AIO_FLEET_BOT_TOKEN`, `SYNC_TOKEN`, `RELEASE_TOKEN`, or the
-  built-in `GITHUB_TOKEN`, depending on the workflow.
+- If app credentials are absent, release/catalog paths may fall back to existing
+  token secrets such as `AIO_FLEET_BOT_TOKEN` while the App path is brought
+  online.
 - The fallback stays in place until generated catalog and release PRs are proven
   to run required checks and remain mergeable under branch protection with the
   app identity.
@@ -58,9 +58,7 @@ migration waits until the App identity posts a real `aio-fleet / required`
 check on an app PR.
 
 GHCR package publishing is separate from GitHub App check-runs. Use
-`AIO_FLEET_GHCR_TOKEN` for the central publish identity; app-repo workflow
-callers can temporarily fall back to repo `GITHUB_TOKEN` only while builds still
-execute inside the app repository.
+`AIO_FLEET_GHCR_TOKEN` for the central publish identity.
 
 GitHub Container Registry still expects either workflow-scoped `GITHUB_TOKEN`
 permission for the repository/package relationship or a classic package token.
@@ -78,13 +76,14 @@ newlines.
 2. Create the GitHub App with the minimal permission set above.
 3. Install it only on active fleet repos and `awesome-unraid`.
 4. Add `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
-   `AIO_FLEET_APP_PRIVATE_KEY` to the repos that call reusable fleet workflows.
+   `AIO_FLEET_APP_PRIVATE_KEY` to `aio-fleet`.
 5. Verify generated PRs and catalog syncs pass required checks using the app
    identity.
 6. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
 7. Update branch protection to require only `aio-fleet / required`.
-8. Remove app workflow files and run `aio-fleet cleanup-repo --verify`.
+8. Run `aio-fleet cleanup-repo --verify`.
 9. Remove PAT secrets after the GitHub App path is stable.
 
-This is tracked as future work; the app itself is not created in the current
-consolidation pass.
+The GitHub App is now the intended control-plane identity; PAT secrets are
+temporary fallbacks for any release or registry edge cases that still need
+operator verification.

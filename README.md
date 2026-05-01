@@ -9,17 +9,13 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 ## Current slice
 
 - `fleet.yml` is the canonical manifest for app repo metadata and exceptions.
-- `.github/workflows/aio-build.yml` is the reusable CI/publish workflow.
 - Publish jobs push and verify Docker Hub plus GHCR tags while Unraid templates
   continue to prefer Docker Hub image metadata.
-- `.github/workflows/aio-check-upstream.yml`, `aio-prepare-release.yml`, and
-  `aio-publish-release.yml` centralize upstream monitors and release workflows.
-- `aio-fleet` CLI validates the manifest, renders thin caller workflows, checks
-  workflow drift, reports fleet status, and now exposes the Python-driven
-  control-plane path that will replace app-local workflow callers.
+- `aio-fleet` CLI validates the manifest, reports fleet status, and runs the
+  Python-driven control-plane path that replaced app-local workflow callers.
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` contract.
 - `poll`, `control-check`, and `check run` scan app repos and create or update
-  the future required GitHub App check-run named `aio-fleet / required`.
+  the required GitHub App check-run named `aio-fleet / required`.
 - `registry verify/publish` computes and verifies Docker Hub plus GHCR tags from
   the manifest and release state.
 - `release status/prepare/publish` uses central changelog and XML `<Changes>`
@@ -60,8 +56,6 @@ python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_re
 python -m aio_fleet infra doctor --skip-tofu
 python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
 python -m aio_fleet support-thread render --repo sure-aio
-python -m aio_fleet render-workflow sure-aio --ref <aio-fleet-commit-sha>
-python -m aio_fleet verify-caller --repo sure-aio --repo-path ../sure-aio --ref <aio-fleet-commit-sha>
 python -m aio_fleet validate --all
 python -m aio_fleet validate-derived --repo-path ../sure-aio
 python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
@@ -69,8 +63,6 @@ python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
 python -m aio_fleet validate-github --check-secrets
 python -m aio_fleet trunk-audit
 python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run
-python -m aio_fleet sync-boilerplate --repo sure-aio --dry-run
-python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>
 ```
 
 ## Source model
@@ -83,9 +75,8 @@ python -m aio_fleet sync-workflows --dry-run --ref <aio-fleet-commit-sha>
 ## Case-study angle
 
 This repo is intentionally public. It demonstrates how a growing homelab
-packaging fleet can move from copied repo scaffolding to reusable CI,
-manifest-driven repo metadata, drift detection, and eventually GitHub
-infrastructure as code.
+packaging fleet can move from copied repo scaffolding to manifest-driven
+control-plane automation, drift detection, and GitHub infrastructure as code.
 
 ## Docs
 

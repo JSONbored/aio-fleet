@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 import fnmatch
 import json
 import os
@@ -17,7 +16,6 @@ from aio_fleet.app_manifest import (
     load_app_manifest,
     render_app_manifest,
 )
-from aio_fleet.boilerplate import sync_boilerplate
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
 from aio_fleet.changelog import (
     build_release_plan,
@@ -43,7 +41,6 @@ from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import find_release_target_commit, latest_changelog_version
 from aio_fleet.validators import (
-    PINNED_REUSABLE_WORKFLOW,
     TRACKED_ARTIFACT_PATTERNS,
     catalog_asset_failures,
     catalog_quality_findings,
@@ -53,10 +50,6 @@ from aio_fleet.validators import (
     repo_policy_failures,
     template_metadata_failures,
     tracked_artifact_failures,
-)
-from aio_fleet.workflows import (
-    render_caller_workflow,
-    rendered_workflows,
 )
 
 
@@ -124,23 +117,6 @@ def _app_manifest_failures(repo: RepoConfig) -> list[str]:
     return failures
 
 
-def _reusable_ref_from_caller(repo_path: Path) -> str:
-    workflow = repo_path / ".github" / "workflows" / "build.yml"
-    if not workflow.exists():
-        raise ManifestError(f"caller workflow missing: {workflow}")
-    match = PINNED_REUSABLE_WORKFLOW.search(workflow.read_text())
-    if not match:
-        raise ManifestError(f"{workflow} does not call aio-fleet at a pinned SHA")
-    return match.group(1)
-
-
-def _workflow_ref_for_repo(repo: RepoConfig) -> str:
-    try:
-        return _reusable_ref_from_caller(repo.path)
-    except ManifestError:
-        return _current_ref()
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     failures: list[str] = []
@@ -156,17 +132,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ]:
             if not (repo.path / required).exists():
                 failures.append(f"{name}: missing {required}")
-        workflows_dir = repo.path / ".github" / "workflows"
-        if workflows_dir.exists():
-            for workflow in workflows_dir.glob("*.yml"):
-                workflow_text = workflow.read_text()
-                if (
-                    "JSONbored/aio-fleet/.github/workflows/" in workflow_text
-                    and not PINNED_REUSABLE_WORKFLOW.search(workflow_text)
-                ):
-                    failures.append(
-                        f"{name}: {workflow.relative_to(repo.path)} does not call aio-fleet at a pinned SHA"
-                    )
         failures.extend(_app_manifest_failures(repo))
         failures.extend(catalog_asset_failures(repo))
         failures.extend(tracked_artifact_failures(repo.path))
@@ -318,12 +283,11 @@ def _publish_status(
 def cmd_debt_report(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
-    target_ref = args.ref
     catalog_failures = (
         catalog_repo_failures(manifest, catalog_path) if catalog_path else []
     )
     report: dict[str, object] = {
-        "ref": target_ref or "caller-pins",
+        "ref": "control-plane",
         "catalog_path": str(catalog_path) if catalog_path else None,
         "repos": [],
     }
@@ -342,24 +306,10 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
         if drift.returncode == 0:
             ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
 
-        workflow_drift = (
-            _workflow_drift(repo, manifest, target_ref or _workflow_ref_for_repo(repo))
-            if _repo_local_workflows_enabled(manifest)
-            else []
-        )
-        boilerplate_drift = (
-            [
-                str(change.target.relative_to(repo.path))
-                for change in sync_boilerplate(
-                    repo,
-                    config_path=Path(args.boilerplate_config),
-                    profile=str(repo.get("boilerplate_profile", "aio")),
-                    dry_run=True,
-                )
-            ]
-            if _repo_local_boilerplate_enabled(manifest)
-            else []
-        )
+        retired_shared_paths = [
+            str(finding.path.relative_to(repo.path))
+            for finding in cleanup_findings(repo)
+        ]
         repo_catalog_failures = [
             failure
             for failure in catalog_failures
@@ -389,8 +339,7 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
                     " policy=ok" if not github_policy_failures else " policy=drift"
                 ),
             ),
-            "workflow_drift": workflow_drift,
-            "boilerplate_drift": boilerplate_drift,
+            "retired_shared_paths": retired_shared_paths,
             "catalog_failures": repo_catalog_failures,
             "pinned_action_failures": pinned_action_failures(repo.path),
             "tracked_artifacts": tracked_artifact_failures(repo.path),
@@ -405,8 +354,9 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
     repos = report["repos"]  # type: ignore[assignment]
     report["summary"] = {
         "repos": len(repos),
-        "workflow_drift": sum(bool(item["workflow_drift"]) for item in repos),
-        "boilerplate_drift": sum(bool(item["boilerplate_drift"]) for item in repos),
+        "retired_shared_paths": sum(
+            bool(item["retired_shared_paths"]) for item in repos
+        ),
         "catalog_failures": len(catalog_failures),
         "tracked_artifacts": sum(bool(item["tracked_artifacts"]) for item in repos),
         "untracked_artifacts": sum(bool(item["untracked_artifacts"]) for item in repos),
@@ -419,31 +369,6 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
     else:
         print(_debt_report_text(report))
     return 0
-
-
-def _workflow_drift(repo: RepoConfig, manifest: FleetManifest, ref: str) -> list[str]:
-    drift: list[str] = []
-    for path, expected in rendered_workflows(manifest, repo, ref).items():
-        if not path.exists():
-            drift.append(str(path.relative_to(repo.path)))
-            continue
-        if path.read_text() != expected:
-            drift.append(str(path.relative_to(repo.path)))
-    return drift
-
-
-def _repo_local_workflows_enabled(manifest: FleetManifest) -> bool:
-    control_plane = manifest.raw.get("control_plane", {})
-    if not isinstance(control_plane, dict):
-        return True
-    return bool(control_plane.get("repo_local_workflows", True))
-
-
-def _repo_local_boilerplate_enabled(manifest: FleetManifest) -> bool:
-    control_plane = manifest.raw.get("control_plane", {})
-    if not isinstance(control_plane, dict):
-        return True
-    return bool(control_plane.get("repo_local_boilerplate", True))
 
 
 def _untracked_artifacts(repo_path: Path) -> list[str]:
@@ -525,8 +450,7 @@ def _debt_report_text(report: dict[str, object]) -> str:
     for item in report["repos"]:  # type: ignore[index]
         problems = []
         for key in [
-            "workflow_drift",
-            "boilerplate_drift",
+            "retired_shared_paths",
             "catalog_failures",
             "pinned_action_failures",
             "tracked_artifacts",
@@ -553,8 +477,7 @@ def _debt_report_markdown(report: dict[str, object]) -> str:
     for item in report["repos"]:  # type: ignore[index]
         problems = []
         for key in [
-            "workflow_drift",
-            "boilerplate_drift",
+            "retired_shared_paths",
             "catalog_failures",
             "pinned_action_failures",
             "tracked_artifacts",
@@ -568,155 +491,6 @@ def _debt_report_markdown(report: dict[str, object]) -> str:
             f"| {item['repo']} | {status} | {item['publish']} | {item['trunk']} | {item['open_prs']} |"  # type: ignore[index]
         )
     return "\n".join(lines)
-
-
-def cmd_render_workflow(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    repo = manifest.repo(args.repo)
-    ref = args.ref or _current_ref()
-    print(render_caller_workflow(manifest, repo, ref))
-    return 0
-
-
-def _sync_repo(
-    repo: RepoConfig, manifest: FleetManifest, ref: str, dry_run: bool
-) -> bool:
-    changes = 0
-    for path, rendered in rendered_workflows(manifest, repo, ref).items():
-        current = path.read_text() if path.exists() else ""
-        if current == rendered:
-            continue
-        changes += 1
-        if dry_run:
-            print(f"would update {repo.name}: {path}")
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered)
-        print(f"updated {repo.name}: {path}")
-    return changes > 0
-
-
-def _git_commit_and_pr(
-    repo: RepoConfig,
-    *,
-    branch: str,
-    base: str,
-    draft: bool,
-    dry_run: bool,
-) -> None:
-    title = "ci(fleet): use shared AIO workflows"
-    body = """## Summary
-- Converts this repository to the shared AIO fleet workflows.
-
-## What changed
-- Replaces duplicated build, upstream-check, and release workflow logic with pinned aio-fleet reusable workflows
-- Keeps repo-specific inputs in small local caller workflows
-
-## Why
-- Centralizes CI, publish gates, upstream monitoring, release preparation, Docker cache behavior, and catalog sync behavior across the AIO fleet
-
-## Validation
-- Generated from JSONbored/aio-fleet manifest
-"""
-    commands = [
-        ["git", "checkout", "-B", branch],
-        ["git", "add", ".github/workflows"],
-        ["git", "commit", "-m", title],
-        ["git", "push", "-u", "origin", branch],
-        [
-            "gh",
-            "pr",
-            "create",
-            "--base",
-            base,
-            "--head",
-            branch,
-            "--title",
-            title,
-            "--body",
-            body,
-            *(["--draft"] if draft else []),
-        ],
-    ]
-    for command in commands:
-        if dry_run:
-            print(f"{repo.name}: would run {' '.join(command)}")
-            continue
-        result = _run(command, cwd=repo.path)
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end="")
-        if result.returncode != 0:
-            raise RuntimeError(f"{repo.name}: command failed: {' '.join(command)}")
-
-
-def cmd_sync_workflows(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    if not _repo_local_workflows_enabled(manifest):
-        print("workflow changes: 0")
-        return 0
-    repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
-    changed = 0
-    for repo in repos:
-        ref = args.ref or _workflow_ref_for_repo(repo)
-        did_change = _sync_repo(repo, manifest, ref, args.dry_run)
-        changed += int(did_change)
-        if did_change and args.create_pr:
-            _git_commit_and_pr(
-                repo,
-                branch=args.branch,
-                base=args.base,
-                draft=args.draft,
-                dry_run=args.dry_run,
-            )
-    print(f"workflow changes: {changed}")
-    return 0
-
-
-def cmd_verify_caller(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    repo = _repo_for_identifier(manifest, args.repo)
-    repo_path = Path(args.repo_path).resolve()
-    if not _repo_local_workflows_enabled(manifest):
-        workflow_dir = repo_path / ".github" / "workflows"
-        if workflow_dir.exists():
-            print(
-                ".github/workflows: repo-local workflows are disabled by aio-fleet control_plane policy",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{repo.name} repo-local workflows are disabled by aio-fleet policy")
-        return 0
-    ref = args.ref or _reusable_ref_from_caller(repo_path)
-    repo_at_path = _repo_with_path(repo, repo_path)
-    failures: list[str] = []
-
-    for path, expected in rendered_workflows(manifest, repo_at_path, ref).items():
-        relative = path.relative_to(repo_path)
-        if not path.exists():
-            failures.append(f"{relative}: missing generated caller workflow")
-            continue
-        current = path.read_text()
-        if current == expected:
-            continue
-        failures.append(f"{relative}: out of date with aio-fleet manifest")
-        if args.diff:
-            failures.extend(
-                difflib.unified_diff(
-                    current.splitlines(),
-                    expected.splitlines(),
-                    fromfile=f"current/{relative}",
-                    tofile=f"expected/{relative}",
-                    lineterm="",
-                )
-            )
-
-    if failures:
-        print("\n".join(failures), file=sys.stderr)
-        return 1
-    print(f"{repo.name} caller workflows match aio-fleet@{ref}")
-    return 0
 
 
 def cmd_validate_actions(args: argparse.Namespace) -> int:
@@ -1481,152 +1255,6 @@ def cmd_import_app_manifest(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sync_boilerplate(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    if not _repo_local_boilerplate_enabled(manifest):
-        print("boilerplate changes: 0")
-        return 0
-    repos = [manifest.repo(args.repo)] if args.repo else manifest.repos.values()
-    changed = 0
-    for repo in repos:
-        profile = (
-            str(repo.get("boilerplate_profile", "aio"))
-            if args.profile == "auto"
-            else args.profile
-        )
-        changes = sync_boilerplate(
-            repo,
-            config_path=Path(args.config),
-            profile=profile,
-            dry_run=args.dry_run,
-        )
-        changed += len(changes)
-        for change in changes:
-            relative = change.target.relative_to(repo.path)
-            prefix = "would " if args.dry_run else ""
-            print(f"{repo.name}: {prefix}{change.action} {relative}")
-        if changes and args.create_pr:
-            _boilerplate_commit_and_pr(
-                repo,
-                branch=args.branch,
-                base=args.base,
-                draft=args.draft,
-                paths=[change.target for change in changes],
-                dry_run=args.dry_run,
-            )
-    print(f"boilerplate changes: {changed}")
-    return 0
-
-
-def _boilerplate_commit_and_pr(
-    repo: RepoConfig,
-    *,
-    branch: str,
-    base: str,
-    draft: bool,
-    paths: list[Path],
-    dry_run: bool,
-) -> None:
-    title = "chore(fleet): sync shared repository boilerplate"
-    body = """## Summary
-- Syncs shared AIO repository boilerplate from `aio-fleet`.
-
-## What changed
-- Updates common repository support files such as issue templates, funding metadata, or support docs
-- Preserves app-specific files through explicit `aio-fleet` exclusions and create-only rules
-
-## Why
-- Reduces fleet drift without moving runtime or generated-template logic out of the app repo
-
-## Validation
-- Generated by `aio-fleet sync-boilerplate`
-"""
-    relative_paths = [str(path.relative_to(repo.path)) for path in paths]
-    commands = [
-        ["git", "checkout", "-B", branch],
-        ["git", "add", *relative_paths],
-        ["git", "commit", "-m", title],
-        ["git", "push", "-u", "origin", branch],
-    ]
-    for command in commands:
-        if dry_run:
-            print(f"{repo.name}: would run {' '.join(command)}")
-            continue
-        result = _run(command, cwd=repo.path)
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end="")
-        if result.returncode != 0:
-            raise RuntimeError(f"{repo.name}: command failed: {' '.join(command)}")
-
-    if dry_run:
-        print(f"{repo.name}: would open or update PR {branch} -> {base}")
-        return
-
-    existing = _run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repo.github_repo,
-            "--head",
-            branch,
-            "--base",
-            base,
-            "--json",
-            "number",
-            "--jq",
-            ".[0].number // empty",
-        ],
-        cwd=repo.path,
-    )
-    number = existing.stdout.strip()
-    if number:
-        result = _run(
-            [
-                "gh",
-                "pr",
-                "edit",
-                number,
-                "--repo",
-                repo.github_repo,
-                "--title",
-                title,
-                "--body",
-                body,
-            ],
-            cwd=repo.path,
-        )
-    else:
-        result = _run(
-            [
-                "gh",
-                "pr",
-                "create",
-                "--repo",
-                repo.github_repo,
-                "--base",
-                base,
-                "--head",
-                branch,
-                "--title",
-                title,
-                "--body",
-                body,
-                *(["--draft"] if draft else []),
-            ],
-            cwd=repo.path,
-        )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
-    if result.returncode != 0:
-        raise RuntimeError(f"{repo.name}: boilerplate PR command failed")
-
-
 def cmd_sync_catalog(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repos = (
@@ -1713,16 +1341,6 @@ def cmd_infra_doctor(args: argparse.Namespace) -> int:
             failures.append(f"github policy missing repos: {missing}")
         if extra:
             failures.append(f"github policy has unknown repos: {extra}")
-        patterns = set(
-            str(item)
-            for item in policy.get("defaults", {})
-            .get("actions", {})
-            .get("patterns_allowed", [])
-        )
-        if "JSONbored/aio-fleet/.github/workflows/aio-*.yml@*" not in patterns:
-            failures.append(
-                "github policy missing reusable workflow wildcard allowlist"
-            )
     except Exception as exc:
         failures.append(f"unable to load GitHub policy: {exc}")
 
@@ -1785,10 +1403,7 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print()
     print("## First commands")
     print()
-    print(f"- `python -m aio_fleet render-workflow {args.repo} --ref <aio-fleet-sha>`")
-    print(
-        f"- `python -m aio_fleet sync-workflows --repo {args.repo} --ref <aio-fleet-sha>`"
-    )
+    print(f"- `python -m aio_fleet export-app-manifest --repo {args.repo} --write`")
     print(
         f"- `python -m aio_fleet validate-repo --repo {args.repo} --repo-path ../{args.repo}`"
     )
@@ -1841,11 +1456,7 @@ def cmd_support_thread_render(args: argparse.Namespace) -> int:
     xml_path = _first_xml_source(repo)
     xml_values = _xml_text_values(repo.path / xml_path) if xml_path else {}
     template_path = (
-        Path(__file__).resolve().parents[2]
-        / "boilerplate"
-        / "aio"
-        / "docs"
-        / "support-thread-template.md"
+        Path(__file__).resolve().parents[2] / "docs" / "support-thread-template.md"
     )
     text = template_path.read_text()
     replacements = {
@@ -2064,37 +1675,9 @@ def build_parser() -> argparse.ArgumentParser:
     debt.add_argument("--catalog-path")
     debt.add_argument("--github", action="store_true")
     debt.add_argument("--policy", default="infra/github/github-policy.yml")
-    debt.add_argument("--boilerplate-config", default="boilerplate.yml")
-    debt.add_argument("--ref")
     debt.add_argument("--trunk", action="store_true")
     debt.add_argument("--format", choices=["text", "json", "markdown"], default="text")
     debt.set_defaults(func=cmd_debt_report)
-
-    render = sub.add_parser("render-workflow")
-    render.add_argument("repo")
-    render.add_argument("--ref")
-    render.set_defaults(func=cmd_render_workflow)
-
-    sync = sub.add_parser("sync-workflows")
-    sync.add_argument("--repo")
-    sync.add_argument("--ref")
-    sync.add_argument("--branch", default="codex/aio-fleet-workflows")
-    sync.add_argument("--base", default="main")
-    sync.add_argument("--create-pr", action="store_true")
-    sync.add_argument("--draft", action="store_true")
-    sync.add_argument("--dry-run", action="store_true")
-    sync.set_defaults(func=cmd_sync_workflows)
-
-    boilerplate = sub.add_parser("sync-boilerplate")
-    boilerplate.add_argument("--repo")
-    boilerplate.add_argument("--profile", default="auto")
-    boilerplate.add_argument("--config", default="boilerplate.yml")
-    boilerplate.add_argument("--create-pr", action="store_true")
-    boilerplate.add_argument("--branch", default="codex/aio-fleet-boilerplate")
-    boilerplate.add_argument("--base", default="main")
-    boilerplate.add_argument("--draft", action="store_true")
-    boilerplate.add_argument("--dry-run", action="store_true")
-    boilerplate.set_defaults(func=cmd_sync_boilerplate)
 
     sync_catalog = sub.add_parser("sync-catalog")
     sync_catalog.add_argument("--repo")
@@ -2108,13 +1691,6 @@ def build_parser() -> argparse.ArgumentParser:
     sync_catalog.add_argument("--body")
     sync_catalog.add_argument("--dry-run", action="store_true")
     sync_catalog.set_defaults(func=cmd_sync_catalog)
-
-    verify = sub.add_parser("verify-caller")
-    verify.add_argument("--repo", required=True)
-    verify.add_argument("--repo-path", default=".")
-    verify.add_argument("--ref")
-    verify.add_argument("--diff", action="store_true")
-    verify.set_defaults(func=cmd_verify_caller)
 
     actions = sub.add_parser("validate-actions")
     actions.add_argument("--repo-path", default=".")

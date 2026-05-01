@@ -163,9 +163,21 @@ jobs:
                       "-c",
                       f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "clone",
-                      "--filter=blob:none",
                       f"https://github.com/JSONbored/{repo}.git",
                       str(worktree),
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  [
+                      "git",
+                      "-C",
+                      str(worktree),
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "fetch",
+                      "origin",
+                      sha,
                   ],
                   check=True,
               )

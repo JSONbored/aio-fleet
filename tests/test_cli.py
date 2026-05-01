@@ -22,10 +22,6 @@ from aio_fleet.cli import (
 )
 from aio_fleet.manifest import load_manifest
 from aio_fleet.poll import PollTarget
-from aio_fleet.workflows import rendered_workflows
-
-OLD_REF = "1" * 40
-NEW_REF = "2" * 40
 
 
 def test_repo_python_prefers_repo_virtualenv(tmp_path: Path) -> None:
@@ -88,8 +84,6 @@ repos:
     docker_cache_scope: example-aio-image
     pytest_image_tag: example-aio:pytest
 """)
-    boilerplate = tmp_path / "boilerplate.yml"
-    boilerplate.write_text("profiles:\n  aio:\n    files: []\n")
 
     def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
         if command[:2] == ["git", "status"]:
@@ -108,8 +102,6 @@ repos:
             catalog_path=None,
             github=False,
             policy="unused.yml",
-            boilerplate_config=str(boilerplate),
-            ref="0" * 40,
             trunk=False,
             format="json",
         )
@@ -213,78 +205,6 @@ repos:
     return manifest, repo_path
 
 
-def _write_rendered_caller(manifest_path: Path, repo_name: str, ref: str) -> None:
-    manifest = load_manifest(manifest_path)
-    repo = manifest.repo(repo_name)
-    for path, text in rendered_workflows(manifest, repo, ref).items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-
-
-def test_debt_report_uses_existing_caller_pin_by_default(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    manifest, _repo_path = _write_minimal_manifest(tmp_path)
-    _write_rendered_caller(manifest, "example-aio", OLD_REF)
-    boilerplate = tmp_path / "boilerplate.yml"
-    boilerplate.write_text("profiles:\n  aio:\n    files: []\n")
-
-    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
-        if command[:2] == ["git", "status"]:
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if command[:2] == ["git", "rev-list"]:
-            return SimpleNamespace(returncode=0, stdout="0 0\n", stderr="")
-        if command[:2] == ["git", "ls-files"]:
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        raise AssertionError(command)
-
-    monkeypatch.setattr(cli, "_current_ref", lambda: NEW_REF)
-    monkeypatch.setattr(cli, "_run", fake_run)
-
-    result = cmd_debt_report(
-        Namespace(
-            manifest=str(manifest),
-            catalog_path=None,
-            github=False,
-            policy="unused.yml",
-            boilerplate_config=str(boilerplate),
-            ref=None,
-            trunk=False,
-            format="json",
-        )
-    )
-
-    assert result == 0  # nosec B101
-    report = json.loads(capsys.readouterr().out)
-    assert report["ref"] == "caller-pins"  # nosec B101
-    assert report["summary"]["workflow_drift"] == 0  # nosec B101
-
-
-def test_sync_workflows_preserves_existing_caller_pin_by_default(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    manifest, _repo_path = _write_minimal_manifest(tmp_path)
-    _write_rendered_caller(manifest, "example-aio", OLD_REF)
-
-    monkeypatch.setattr(cli, "_current_ref", lambda: NEW_REF)
-
-    result = cli.cmd_sync_workflows(
-        Namespace(
-            manifest=str(manifest),
-            repo=None,
-            ref=None,
-            dry_run=True,
-            create_pr=False,
-            branch="codex/aio-fleet-workflows",
-            base="main",
-            draft=False,
-        )
-    )
-
-    assert result == 0  # nosec B101
-    assert "workflow changes: 0" in capsys.readouterr().out  # nosec B101
-
-
 def test_debt_report_text_prints_publish_state_once(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -301,8 +221,6 @@ repos:
     docker_cache_scope: example-aio-image
     pytest_image_tag: example-aio:pytest
 """)
-    boilerplate = tmp_path / "boilerplate.yml"
-    boilerplate.write_text("profiles:\n  aio:\n    files: []\n")
 
     def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
         if command[:2] == ["git", "status"]:
@@ -321,8 +239,6 @@ repos:
             catalog_path=None,
             github=False,
             policy="unused.yml",
-            boilerplate_config=str(boilerplate),
-            ref="0" * 40,
             trunk=False,
             format="text",
         )
@@ -351,10 +267,6 @@ repos:
     pytest_image_tag: aio-template:pytest
     publish_profile: template
 """)
-    boilerplate = tmp_path / "boilerplate.yml"
-    boilerplate.write_text(
-        "profiles:\n  aio:\n    files: []\n  template:\n    files: []\n"
-    )
     policy = tmp_path / "github-policy.yml"
     policy.write_text("repositories: {}\n")
 
@@ -377,8 +289,6 @@ repos:
             catalog_path=None,
             github=True,
             policy=str(policy),
-            boilerplate_config=str(boilerplate),
-            ref="0" * 40,
             trunk=False,
             format="json",
         )
@@ -505,4 +415,6 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
     output = capsys.readouterr().out
     assert "example-aio:" in output  # nosec B101
     assert "path: <local-checkout-path>/example-aio" in output  # nosec B101
-    assert "python -m aio_fleet render-workflow example-aio" in output  # nosec B101
+    assert (  # nosec B101
+        "python -m aio_fleet export-app-manifest --repo example-aio --write" in output
+    )
