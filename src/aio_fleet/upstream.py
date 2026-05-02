@@ -465,9 +465,18 @@ def create_or_update_upstream_pr(
     dry_run: bool,
     post_check: bool,
 ) -> dict[str, object]:
-    changed = [result for result in results if result.updates_available]
+    changed = [
+        result
+        for result in results
+        if result.updates_available and result.strategy == "pr"
+    ]
     if not changed:
-        return {"repo": repo.name, "action": "skipped", "reason": "no-updates"}
+        reason = (
+            "no-pr-strategy-updates"
+            if any(result.updates_available for result in results)
+            else "no-updates"
+        )
+        return {"repo": repo.name, "action": "skipped", "reason": reason}
     branch = upstream_branch(repo, changed)
     title = upstream_title(repo, changed)
     body = upstream_body(repo, changed)
