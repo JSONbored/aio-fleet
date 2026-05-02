@@ -850,6 +850,23 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
+    preflight = cmd_registry_verify(
+        argparse.Namespace(
+            manifest=args.manifest,
+            all=False,
+            repo=args.repo,
+            repo_path=args.repo_path,
+            sha=sha,
+            component=args.component,
+            include_manual=True,
+            dry_run=False,
+            format="text",
+            verbose=False,
+        )
+    )
+    if preflight == 0:
+        print(f"{repo.name}:{args.component}: registry=already-current")
+        return 0
     result = _run(command, cwd=repo.path)
     if result.stdout:
         print(result.stdout, end="")

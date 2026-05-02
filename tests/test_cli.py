@@ -304,6 +304,7 @@ repos:
 def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
     seen: dict[str, object] = {}
+    verify_results = iter([1, 0])
 
     def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
         seen["publish_command"] = command
@@ -311,9 +312,8 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def fake_registry_verify(args: Namespace) -> int:
-        seen["verify_repo_path"] = args.repo_path
-        seen["verify_sha"] = args.sha
-        return 0
+        seen.setdefault("verify_calls", []).append(args)
+        return next(verify_results)
 
     monkeypatch.setattr(cli, "_run", fake_run)
     monkeypatch.setattr(cli, "cmd_registry_verify", fake_registry_verify)
@@ -331,8 +331,38 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
 
     assert result == 0  # nosec B101
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
-    assert seen["verify_repo_path"] == str(repo_path)  # nosec B101
-    assert seen["verify_sha"] == "a" * 40  # nosec B101
+    verify_calls = seen["verify_calls"]
+    assert len(verify_calls) == 2  # nosec B101
+    assert verify_calls[0].repo_path == str(repo_path)  # nosec B101
+    assert verify_calls[1].sha == "a" * 40  # nosec B101
+
+
+def test_registry_publish_skips_build_when_tags_are_current(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+
+    def fail_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        raise AssertionError("current registry tags should skip docker build")
+
+    monkeypatch.setattr(cli, "_run", fail_run)
+    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            component="aio",
+            dry_run=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert (
+        "example-aio:aio: registry=already-current" in capsys.readouterr().out
+    )  # nosec B101
 
 
 def test_registry_verify_all_skips_manual_template_publish(
