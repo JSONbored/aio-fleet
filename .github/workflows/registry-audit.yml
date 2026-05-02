@@ -83,7 +83,19 @@ jobs:
           report = {"repos": []}
           status = 0
 
-          for repo in manifest["repos"]:
+          for repo, repo_config in manifest["repos"].items():
+              if repo_config.get("publish_profile") == "template":
+                  report["repos"].append(
+                      {
+                          "repo": repo,
+                          "sha": "",
+                          "dockerhub": [],
+                          "ghcr": [],
+                          "failures": [],
+                          "skipped": "manual-template-publish",
+                      }
+                  )
+                  continue
               worktree = checkout_root / repo
               if worktree.exists():
                   shutil.rmtree(worktree)
@@ -196,7 +208,11 @@ jobs:
           failures = []
           for item in report.get("repos", []):
               repo_failures = item.get("failures", [])
-              state = "failed" if repo_failures else "ok"
+              state = (
+                  f"skipped:{item['skipped']}"
+                  if item.get("skipped")
+                  else "failed" if repo_failures else "ok"
+              )
               sha = str(item.get("sha", ""))[:12]
               lines.append(
                   "| {repo} | `{sha}` | {state} | {dockerhub} | {ghcr} |".format(
