@@ -38,6 +38,20 @@ repos:
     publish_profile: upstream-aio-track
     release_name: Sure-AIO
     upstream_name: Sure
+    upstream_monitor:
+      - component: aio
+        name: Sure
+        source: github-tags
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/we-promise/sure/releases
     image_description:
       Unraid-first AIO wrapper image for Sure (web, worker, postgres,
       redis)
@@ -240,6 +254,19 @@ repos:
     publish_platforms: linux/amd64
     release_name: SimpleLogin-AIO
     upstream_name: SimpleLogin
+    upstream_monitor:
+      - component: aio
+        name: SimpleLogin
+        source: github-tags
+        repo: simple-login/app
+        image: simplelogin/app-ci
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/simple-login/app/releases
     image_description: Unraid-first AIO wrapper image for SimpleLogin
     xml_paths:
       - simplelogin-aio.xml
@@ -363,6 +390,19 @@ repos:
     publish_profile: changelog-version
     release_name: Khoj-AIO
     upstream_name: Khoj
+    upstream_monitor:
+      - component: aio
+        name: Khoj
+        source: github-releases
+        repo: khoj-ai/khoj
+        image: khoj-ai/khoj
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: false
+        strategy: pr
+        release_notes_url: https://github.com/khoj-ai/khoj/releases
     image_description: Unraid-first AIO wrapper image for Khoj
     xml_paths:
       - khoj-aio.xml
@@ -451,6 +491,16 @@ repos:
     publish_profile: changelog-version
     release_name: Mem0-AIO
     upstream_name: Mem0
+    upstream_monitor:
+      - component: aio
+        name: Mem0
+        source: github-tags
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        stable_only: true
+        strategy: notify
+        release_notes_url: https://github.com/mem0ai/mem0/releases
     image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
     checkout_submodules: true
     extra_publish_paths:
@@ -535,9 +585,37 @@ repos:
     publish_profile: changelog-version
     release_name: Infisical-AIO
     upstream_name: Infisical
+    upstream_monitor:
+      - component: aio
+        name: Infisical
+        source: github-releases
+        repo: Infisical/infisical
+        image: infisical/infisical
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/Infisical/infisical/releases
+      - component: mailpit
+        name: Mailpit
+        source: github-releases
+        repo: axllent/mailpit
+        image: axllent/mailpit
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: MAILPIT_VERSION
+        digest_key: MAILPIT_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/axllent/mailpit/releases
     image_description: Unraid-first AIO wrapper image for Infisical
     generated_template: true
     generator_check_command: python3 scripts/generate_infisical_template.py --check
+    upstream_commit_paths:
+      - Dockerfile
+      - infisical-aio.xml
     xml_paths:
       - "*.xml"
       - assets/**
@@ -559,9 +637,38 @@ repos:
     publish_profile: dify
     release_name: Dify AIO
     upstream_name: Dify
+    upstream_monitor:
+      - component: dify-api
+        name: Dify API
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-api
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_API_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/langgenius/dify/releases
+      - component: dify-web
+        name: Dify Web
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-web
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_WEB_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/langgenius/dify/releases
     image_description: Unraid-first AIO wrapper image for Dify
     generated_template: true
     generator_check_command: python3 scripts/generate_dify_template.py --check
+    upstream_commit_paths:
+      - Dockerfile
+      - dify-aio.xml
+      - rootfs/opt/dify-aio/upstream-env-vars.txt
     extended_integration:
       input_name: run_extended_integration
       description: Run sidecar-backed external provider integration tests
@@ -624,6 +731,32 @@ repos:
       - Dockerfile
       - components/signoz-agent/Dockerfile
     upstream_name: SigNoz
+    upstream_monitor:
+      - component: aio
+        name: SigNoz
+        source: github-tags
+        repo: SigNoz/signoz
+        image: signoz/signoz
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_SIGNOZ_VERSION
+        digest_key: UPSTREAM_SIGNOZ_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/SigNoz/signoz/releases
+      - component: agent
+        name: OpenTelemetry Collector Contrib
+        source: github-tags
+        repo: open-telemetry/opentelemetry-collector-releases
+        image: otel/opentelemetry-collector-contrib
+        digest_source: dockerhub
+        dockerfile: components/signoz-agent/Dockerfile
+        version_key: UPSTREAM_OTELCOL_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_OTELCOL_DIGEST
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/open-telemetry/opentelemetry-collector-releases/releases
     image_description:
       Unraid-first AIO wrapper image for SigNoz with internal ClickHouse,
       ZooKeeper, and OpenTelemetry Collector defaults

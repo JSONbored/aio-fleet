@@ -5,6 +5,7 @@ name: AIO Fleet Control Plane
 on:
   schedule:
     - cron: 17 * * * *
+    - cron: 43 10 * * *
   workflow_dispatch:
     inputs:
       mode:
@@ -15,6 +16,7 @@ on:
         options:
           - poll
           - control-check
+          - upstream-monitor
       repo:
         description: App repo name for control-check mode
         required: false
@@ -50,8 +52,9 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
   checks: write
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repo || github.ref }}
@@ -100,7 +103,7 @@ jobs:
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
       - name: Poll active repos
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'poll' }}
+        if: ${{ github.event.schedule == '17 * * * *' || inputs.mode == 'poll' }}
         env:
           CREATE_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.create_checks || false }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
@@ -218,6 +221,168 @@ jobs:
                   ],
                   check=True,
               )
+          PY
+
+      - name: Monitor upstream releases
+        if: ${{ github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor' }}
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout and PR creation
+        run: |
+          set -euo pipefail
+          if [[ -z "${APP_TOKEN}" ]]; then
+            echo "Unable to resolve a GitHub App token for upstream monitoring" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          manifest = yaml.safe_load(Path("fleet.yml").read_text())
+          owner = manifest["owner"]
+          token = os.environ["APP_TOKEN"]
+          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+          checkout_root = Path("upstream-checkouts")
+          checkout_root.mkdir(exist_ok=True)
+          report = {"repos": []}
+          status = 0
+
+          for repo, repo_config in manifest["repos"].items():
+              if repo_config.get("publish_profile") == "template":
+                  report["repos"].append({"repo": repo, "skipped": "manual-template"})
+                  continue
+              worktree = checkout_root / repo
+              if worktree.exists():
+                  shutil.rmtree(worktree)
+              clone = subprocess.run(
+                  [
+                      "git",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "clone",
+                      f"https://github.com/{owner}/{repo}.git",
+                      str(worktree),
+                  ],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              if clone.returncode != 0:
+                  status = 1
+                  report["repos"].append(
+                      {
+                          "repo": repo,
+                          "error": (clone.stderr or clone.stdout).strip() or "clone failed",
+                      }
+                  )
+                  continue
+              subprocess.run(
+                  [
+                      "git",
+                      "-C",
+                      str(worktree),
+                      "config",
+                      "http.https://github.com/.extraheader",
+                      f"AUTHORIZATION: basic {auth}",
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  ["git", "-C", str(worktree), "submodule", "update", "--init", "--recursive"],
+                  check=True,
+              )
+              args = [
+                  sys.executable,
+                  "-m",
+                  "aio_fleet",
+                  "upstream",
+                  "monitor",
+                  "--repo",
+                  repo,
+                  "--repo-path",
+                  str(worktree),
+                  "--format",
+                  "json",
+              ]
+              if os.environ.get("MUTATE") == "true":
+                  args.extend(["--write", "--create-pr", "--post-check"])
+              if os.environ.get("DRY_RUN") == "true":
+                  args.append("--dry-run")
+              run = subprocess.run(
+                  args,
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              if run.stderr:
+                  print(run.stderr, file=sys.stderr, end="")
+              if run.returncode != 0:
+                  status = 1
+              try:
+                  parsed = json.loads(run.stdout)
+              except json.JSONDecodeError:
+                  status = 1
+                  report["repos"].append(
+                      {
+                          "repo": repo,
+                          "error": (run.stdout or run.stderr).strip()
+                          or "upstream monitor produced invalid JSON",
+                      }
+                  )
+                  continue
+              report["repos"].extend(parsed.get("repos", []))
+
+          Path("upstream-report.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n"
+          )
+          raise SystemExit(status)
+          PY
+
+      - name: Publish upstream summary
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("upstream-report.json")
+          if not report_path.exists():
+              print("No upstream report was generated.")
+              raise SystemExit(0)
+          report = json.loads(report_path.read_text())
+          lines = ["# Upstream Monitor", ""]
+          for item in report.get("repos", []):
+              repo = item.get("repo", "unknown")
+              if item.get("skipped"):
+                  lines.append(f"- `{repo}`: skipped ({item['skipped']})")
+                  continue
+              if item.get("error"):
+                  lines.append(f"- `{repo}`: failed ({item['error']})")
+                  continue
+              updates = [
+                  result
+                  for result in item.get("results", [])
+                  if result.get("updates_available")
+              ]
+              lines.append(f"- `{repo}`: {'updates available' if updates else 'current'}")
+              for result in updates:
+                  lines.append(
+                      f"  - `{result['component']}`: {result['current_version']} -> {result['latest_version']}"
+                  )
+          Path("upstream-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
           PY
 
       - name: Validate control-check inputs

@@ -263,17 +263,18 @@ def _repo_python(repo_path: Path) -> str:
 
 
 def _install_test_dependencies_step(repo_path: Path) -> Step | None:
-    requirements = repo_path / "requirements-dev.txt"
-    if requirements.exists():
-        return Step(
-            "install-test-deps",
-            [sys.executable, "-m", "pip", "install", "-r", str(requirements)],
-            repo_path,
-        )
     if (repo_path / "tests").exists():
+        aio_root = Path(__file__).resolve().parents[2]
         return Step(
             "install-test-deps",
-            [sys.executable, "-m", "pip", "install", "pytest"],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                f"{aio_root}[app-tests]",
+            ],
             repo_path,
         )
     return None

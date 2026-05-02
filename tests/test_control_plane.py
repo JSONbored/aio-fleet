@@ -12,7 +12,7 @@ def test_central_check_steps_for_pr_skip_publish_and_integration(
     tmp_path: Path,
 ) -> None:
     repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("sure-aio"), tmp_path)
-    (tmp_path / "requirements-dev.txt").write_text("pytest\n")
+    (tmp_path / "tests").mkdir()
 
     steps = central_check_steps(repo, event="pull_request", include_trunk=False)
 
@@ -21,6 +21,8 @@ def test_central_check_steps_for_pr_skip_publish_and_integration(
         "validate-template-common",
         "install-test-deps",
     ]  # nosec B101
+    assert str(ROOT) in steps[1].command[-1]  # nosec B101
+    assert steps[1].command[-1].endswith("[app-tests]")  # nosec B101
 
 
 def test_central_check_steps_for_push_include_integration_trunk_and_publish() -> None:
