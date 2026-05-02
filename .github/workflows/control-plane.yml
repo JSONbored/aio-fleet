@@ -187,6 +187,20 @@ jobs:
               )
               subprocess.run(
                   [
+                      "git",
+                      "-C",
+                      str(worktree),
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--recursive",
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  [
                       sys.executable,
                       "-m",
                       "aio_fleet",
@@ -226,6 +240,7 @@ jobs:
           ref: ${{ inputs.sha }}
           path: app-repo
           fetch-depth: 0
+          submodules: recursive
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up QEMU

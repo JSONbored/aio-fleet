@@ -777,6 +777,18 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
     failures: list[str] = []
     report: dict[str, object] = {"repos": []}
     for repo in repos:
+        if args.all and repo.publish_profile == "template" and not args.include_manual:
+            report["repos"].append(  # type: ignore[index]
+                {
+                    "repo": repo.name,
+                    "sha": _git_head(repo.path),
+                    "dockerhub": [],
+                    "ghcr": [],
+                    "failures": [],
+                    "skipped": "manual-template-publish",
+                }
+            )
+            continue
         sha = args.sha or _git_head(repo.path)
         tags = compute_registry_tags(repo, sha=sha, component=args.component)
         repo_failures = [] if args.dry_run else verify_registry_tags(tags.all_tags)
@@ -794,6 +806,11 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         for item in report["repos"]:  # type: ignore[index]
+            if item.get("skipped"):  # type: ignore[union-attr]
+                print(
+                    f"{item['repo']}: registry=skipped:{item['skipped']}"  # type: ignore[index]
+                )
+                continue
             state = "failed" if item["failures"] else "ok"  # type: ignore[index]
             print(f"{item['repo']}: registry={state}")  # type: ignore[index]
             if args.verbose or args.dry_run:
@@ -829,6 +846,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
             repo_path=args.repo_path,
             sha=sha,
             component="aio",
+            include_manual=True,
             dry_run=False,
             format="text",
             verbose=True,
@@ -1795,6 +1813,7 @@ def build_parser() -> argparse.ArgumentParser:
     registry_verify.add_argument("--all", action="store_true")
     registry_verify.add_argument("--sha")
     registry_verify.add_argument("--component", default="aio")
+    registry_verify.add_argument("--include-manual", action="store_true")
     registry_verify.add_argument("--dry-run", action="store_true")
     registry_verify.add_argument("--verbose", action="store_true")
     registry_verify.add_argument("--format", choices=["text", "json"], default="text")
