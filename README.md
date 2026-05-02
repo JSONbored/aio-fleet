@@ -16,6 +16,9 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` contract.
 - `poll`, `control-check`, and `check run` scan app repos and create or update
   the required GitHub App check-run named `aio-fleet / required`.
+- Scheduled/manual poll runs discover missing app checks centrally, then fan out
+  per repo so validation and publish work scales with the fleet instead of
+  blocking behind one serial app build.
 - `upstream monitor` detects manifest-declared upstream version/digest changes
   and can open or update app repo PRs with the GitHub App identity.
 - App test dependencies are installed from `aio-fleet[app-tests]`; app repos no

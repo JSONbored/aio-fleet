@@ -648,6 +648,8 @@ def cmd_poll(args: argparse.Namespace) -> int:
             "sha": target.sha,
             "event": target.event,
             "source": target.source,
+            "publish": target.event == "push"
+            and target.repo.publish_profile != "template",
         }
         emitted.append(row)
         if args.create_checks:

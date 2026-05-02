@@ -173,6 +173,54 @@ def test_poll_missing_checks_only_skips_satisfied_targets(
     assert json.loads(capsys.readouterr().out) == {"targets": []}  # nosec B101
 
 
+def test_poll_does_not_publish_template_profile_targets(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  unraid-aio-template:
+    path: {repo_path}
+    app_slug: unraid-aio-template
+    image_name: jsonbored/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: unraid-aio-template:pytest
+    publish_profile: template
+""")
+    repo = load_manifest(manifest).repo("unraid-aio-template")
+    monkeypatch.setattr(
+        cli,
+        "poll_targets",
+        lambda *args, **kwargs: [
+            PollTarget(
+                repo=repo,
+                sha="f" * 40,
+                event="push",
+                source="main",
+            )
+        ],
+    )
+
+    result = cmd_poll(
+        Namespace(
+            manifest=str(manifest),
+            no_prs=False,
+            no_main=False,
+            create_checks=False,
+            missing_checks_only=False,
+            dry_run=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["targets"][0]["publish"] is False  # nosec B101
+
+
 def test_export_app_manifest_prints_future_app_manifest(tmp_path: Path, capsys) -> None:
     manifest, _repo_path = _write_minimal_manifest(tmp_path)
 

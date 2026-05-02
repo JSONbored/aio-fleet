@@ -14,6 +14,9 @@ It does not replace the existing source-of-truth repos:
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` from the
   central `fleet.yml` entry.
 - `poll` scans active repos for open PR heads and current `main` commits.
+- The control-plane workflow turns poll output into a per-repo matrix, so PR
+  checks and `main` publishes run independently while still using the same
+  central policy code.
 - `upstream monitor` scans manifest-declared upstream providers, refreshes
   Dockerfile version/digest pins when configured, and opens app repo PRs for
   human review.

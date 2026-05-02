@@ -63,6 +63,10 @@ concurrency:
 jobs:
   control-plane:
     runs-on: ubuntu-latest
+    outputs:
+      poll_targets: ${{ steps.poll.outputs.targets }}
+      poll_run_checks: ${{ steps.poll.outputs.run_checks }}
+      poll_has_targets: ${{ steps.poll.outputs.has_targets }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
@@ -103,15 +107,15 @@ jobs:
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run) || github.event.schedule == '17 * * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'poll' && !inputs.dry_run) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       - name: Set up Docker Buildx
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run) || github.event.schedule == '17 * * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'poll' && !inputs.dry_run) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Validate publish credentials
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run) || github.event.schedule == '17 * * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'poll' && !inputs.dry_run) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -128,7 +132,7 @@ jobs:
           fi
 
       - name: Login to Docker Hub
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run) || github.event.schedule == '17 * * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'poll' && !inputs.dry_run) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: docker.io
@@ -136,7 +140,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GHCR
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run) || github.event.schedule == '17 * * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'poll' && !inputs.dry_run) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
@@ -144,6 +148,7 @@ jobs:
           password: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
 
       - name: Poll active repos
+        id: poll
         if: ${{ github.event.schedule == '17 * * * *' || inputs.mode == 'poll' }}
         env:
           CREATE_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.create_checks || false }}
@@ -167,101 +172,23 @@ jobs:
             args+=(--dry-run)
           fi
           python -m aio_fleet "${args[@]}" | tee poll-targets.json
-          if [[ "${RUN_CHECKS}" != "true" ]]; then
-            exit 0
-          fi
-          if [[ -z "${APP_TOKEN}" ]]; then
-            echo "Unable to resolve a GitHub App token for poll checkouts" >&2
-            exit 1
-          fi
           python - <<'PY'
-          import base64
           import json
           import os
-          import shutil
-          import subprocess
-          import sys
           from pathlib import Path
 
-          targets = json.loads(Path("poll-targets.json").read_text())["targets"]
-          if not targets:
+          payload = json.loads(Path("poll-targets.json").read_text())
+          targets = payload.get("targets", [])
+          run_checks = os.environ.get("RUN_CHECKS") == "true"
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a") as handle:
+              handle.write(f"run_checks={'true' if run_checks else 'false'}\n")
+              handle.write(f"has_targets={'true' if targets else 'false'}\n")
+              handle.write("targets<<__AIO_FLEET_TARGETS__\n")
+              handle.write(json.dumps(targets, sort_keys=True))
+              handle.write("\n__AIO_FLEET_TARGETS__\n")
+          if run_checks and not targets:
               print("No missing aio-fleet checks found.")
-              raise SystemExit(0)
-
-          token = os.environ["APP_TOKEN"]
-          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-          checkout_root = Path("poll-checkouts")
-          checkout_root.mkdir(exist_ok=True)
-
-          for target in targets:
-              repo = target["repo"]
-              sha = target["sha"]
-              event = target["event"]
-              worktree = checkout_root / f"{repo}-{sha[:12]}"
-              if worktree.exists():
-                  shutil.rmtree(worktree)
-              print(f"Running aio-fleet check for {repo} {event} {sha}")
-              subprocess.run(
-                  [
-                      "git",
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
-                      "clone",
-                      f"https://github.com/JSONbored/{repo}.git",
-                      str(worktree),
-                  ],
-                  check=True,
-              )
-              subprocess.run(
-                  [
-                      "git",
-                      "-C",
-                      str(worktree),
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
-                      "fetch",
-                      "origin",
-                      sha,
-                  ],
-                  check=True,
-              )
-              subprocess.run(
-                  ["git", "-C", str(worktree), "checkout", "--detach", sha],
-                  check=True,
-              )
-              subprocess.run(
-                  [
-                      "git",
-                      "-C",
-                      str(worktree),
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
-                      "submodule",
-                      "update",
-                      "--init",
-                      "--recursive",
-                  ],
-                  check=True,
-              )
-              command = [
-                  sys.executable,
-                  "-m",
-                  "aio_fleet",
-                  "control-check",
-                  "--repo",
-                  repo,
-                  "--repo-path",
-                  str(worktree),
-                  "--sha",
-                  sha,
-                  "--event",
-                  event,
-                  "--no-integration",
-                  "--check-run",
-              ]
-              if event == "push":
-                  command.append("--publish")
-              subprocess.run(command, check=True)
           PY
 
       - name: Monitor upstream releases
@@ -472,5 +399,128 @@ jobs:
           fi
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}"
+
+  poll-checks:
+    name: poll-check (${{ matrix.target.repo }})
+    needs: control-plane
+    if: ${{ needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_targets == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.control-plane.outputs.poll_targets) }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+      AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
+      AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+    steps:
+      - name: Checkout aio-fleet
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install aio-fleet
+        run: python -m pip install -e ".[dev]"
+
+      - name: Install Trunk
+        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
+
+      - name: Resolve GitHub App token
+        id: app-token
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$(python -m aio_fleet.github_app --fallback-env GITHUB_TOKEN)"
+          if [[ -z "${token}" ]]; then
+            echo "Unable to resolve a GitHub token for app checkout" >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        if: ${{ matrix.target.publish == true }}
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker Buildx
+        if: ${{ matrix.target.publish == true }}
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Validate publish credentials
+        if: ${{ matrix.target.publish == true }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required for central publish." >&2
+            exit 1
+          fi
+          if [[ -z "${AIO_FLEET_GHCR_TOKEN}" ]]; then
+            echo "AIO_FLEET_GHCR_TOKEN is required for central GHCR publish." >&2
+            exit 1
+          fi
+
+      - name: Login to Docker Hub
+        if: ${{ matrix.target.publish == true }}
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        if: ${{ matrix.target.publish == true }}
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+
+      - name: Checkout app repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/${{ matrix.target.repo }}
+          ref: ${{ matrix.target.sha }}
+          path: app-repo
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Run central control check
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          args=(
+            control-check
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --sha "${TARGET_SHA}"
+            --event "${TARGET_EVENT}"
+            --no-integration
+            --check-run
+          )
+          if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+            args+=(--publish)
           fi
           python -m aio_fleet "${args[@]}"

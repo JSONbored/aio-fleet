@@ -3,7 +3,11 @@
 The fleet keeps release source ownership in the app repos, but release mechanics
 move to `aio-fleet`.
 
-App repos publish from `main` through the scheduled/manual `aio-fleet` control-plane poll after required validation passes. Formal changelog entries and GitHub Releases remain release-driven, not automatic for every merge.
+App repos publish from `main` through the scheduled/manual `aio-fleet`
+control-plane poll after required validation passes. Poll runs fan out per repo
+so one heavy multi-arch build does not block unrelated app checks. Formal
+changelog entries and GitHub Releases remain release-driven, not automatic for
+every merge.
 
 ## App Repos
 
