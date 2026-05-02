@@ -17,6 +17,7 @@ from aio_fleet.cli import (
     cmd_infra_doctor,
     cmd_onboard_repo,
     cmd_poll,
+    cmd_registry_publish,
     cmd_trunk_audit,
     cmd_validate_template_common,
 )
@@ -248,6 +249,39 @@ repos:
     output = capsys.readouterr().out
     assert "publish=source-ready" in output  # nosec B101
     assert "publish=publish=" not in output  # nosec B101
+
+
+def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        seen["publish_command"] = command
+        seen["publish_cwd"] = cwd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_registry_verify(args: Namespace) -> int:
+        seen["verify_repo_path"] = args.repo_path
+        seen["verify_sha"] = args.sha
+        return 0
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "cmd_registry_verify", fake_registry_verify)
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            dry_run=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
+    assert seen["verify_repo_path"] == str(repo_path)  # nosec B101
+    assert seen["verify_sha"] == "a" * 40  # nosec B101
 
 
 def test_debt_report_treats_repos_missing_from_github_policy_as_manual(

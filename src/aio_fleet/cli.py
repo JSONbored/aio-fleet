@@ -826,6 +826,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
             manifest=args.manifest,
             all=False,
             repo=args.repo,
+            repo_path=args.repo_path,
             sha=sha,
             component="aio",
             dry_run=False,
