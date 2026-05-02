@@ -34,7 +34,9 @@ human review. After that PR merges, normal control-plane validation and publish
 rules apply.
 
 `aio-fleet registry publish` and `aio-fleet registry verify` compute the tag set
-from `.aio-fleet.yml` and the release commit.
+from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
+the Docker Hub tag API so post-push checks do not consume manifest-pull quota;
+GHCR verification continues to use `docker buildx imagetools inspect`.
 
 The `Registry Audit` workflow runs read-only verification for every active repo
 on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
