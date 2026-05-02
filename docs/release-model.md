@@ -23,6 +23,12 @@ Publish jobs still require:
 - a publish-related change;
 - successful integration tests.
 
+Upstream bumps are initiated centrally with `aio-fleet upstream monitor`. The
+monitor reads provider and digest rules from `.aio-fleet.yml`, updates
+version/digest pins when configured for PR strategy, and opens an app repo PR for
+human review. After that PR merges, normal control-plane validation and publish
+rules apply.
+
 `aio-fleet registry publish` and `aio-fleet registry verify` compute the tag set
 from `.aio-fleet.yml` and the release commit.
 
@@ -55,6 +61,7 @@ Generated-template repos run their generator check before XML validation. This p
 `signoz-aio` remains component-aware:
 
 - the AIO image and agent image have separate publish lanes;
+- both components have upstream monitor entries;
 - component path changes decide which image is publish-related;
 - agent integration tests build against the matching AIO backend image.
 - release and publish commands stay component-aware for `signoz-aio` and

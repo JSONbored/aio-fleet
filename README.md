@@ -16,6 +16,10 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` contract.
 - `poll`, `control-check`, and `check run` scan app repos and create or update
   the required GitHub App check-run named `aio-fleet / required`.
+- `upstream monitor` detects manifest-declared upstream version/digest changes
+  and can open or update app repo PRs with the GitHub App identity.
+- App test dependencies are installed from `aio-fleet[app-tests]`; app repos no
+  longer carry shared `requirements-dev.txt` files.
 - `registry verify/publish` computes and verifies Docker Hub plus GHCR tags from
   the manifest and release state.
 - The `Registry Audit` workflow runs read-only Docker Hub/GHCR verification on
@@ -47,6 +51,8 @@ python -m aio_fleet catalog-audit --catalog-path ../awesome-unraid
 python -m aio_fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
 python -m aio_fleet poll --format json
 python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
+python -m aio_fleet upstream monitor --all --dry-run
+python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
 python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run

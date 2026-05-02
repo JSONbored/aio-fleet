@@ -41,6 +41,11 @@ from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_ma
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import find_release_target_commit, latest_changelog_version
+from aio_fleet.upstream import (
+    create_or_update_upstream_pr,
+    monitor_repo,
+    result_dict,
+)
 from aio_fleet.validators import (
     TRACKED_ARTIFACT_PATTERNS,
     catalog_asset_failures,
@@ -866,6 +871,100 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_upstream_monitor(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+
+    report: dict[str, object] = {"repos": []}
+    failed = False
+    for repo in repos:
+        if repo.publish_profile == "template" and not args.include_manual:
+            report["repos"].append(  # type: ignore[index]
+                {"repo": repo.name, "skipped": "manual-template"}
+            )
+            continue
+        try:
+            results = monitor_repo(repo, write=args.write and not args.dry_run)
+            if (
+                args.write
+                and not args.dry_run
+                and any(result.updates_available for result in results)
+            ):
+                _run_generator_for_write(repo)
+            actions: list[dict[str, object]] = []
+            if args.create_pr and any(result.updates_available for result in results):
+                actions.append(
+                    create_or_update_upstream_pr(
+                        repo,
+                        results,
+                        dry_run=args.dry_run,
+                        post_check=args.post_check,
+                    )
+                )
+            report["repos"].append(  # type: ignore[index]
+                {
+                    "repo": repo.name,
+                    "results": [result_dict(result) for result in results],
+                    "actions": actions,
+                }
+            )
+        except Exception as exc:
+            failed = True
+            report["repos"].append(  # type: ignore[index]
+                {"repo": repo.name, "error": str(exc)}
+            )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for item in report["repos"]:  # type: ignore[index]
+            if item.get("skipped"):  # type: ignore[union-attr]
+                print(f"{item['repo']}: upstream=skipped:{item['skipped']}")  # type: ignore[index]
+                continue
+            if item.get("error"):  # type: ignore[union-attr]
+                print(f"{item['repo']}: upstream=failed:{item['error']}")  # type: ignore[index]
+                continue
+            results = item["results"]  # type: ignore[index]
+            updates = [
+                result
+                for result in results
+                if result["updates_available"]  # type: ignore[index]
+            ]
+            state = "updates" if updates else "ok"
+            print(f"{item['repo']}: upstream={state}")  # type: ignore[index]
+            for result in results:
+                print(
+                    "- {component}: {current_version} -> {latest_version} "
+                    "version_update={version_update} digest_update={digest_update}".format(
+                        **result
+                    )
+                )
+    return 1 if failed else 0
+
+
+def _run_generator_for_write(repo: RepoConfig) -> None:
+    generator = str(repo.get("generator_check_command", "") or "").strip()
+    if not generator:
+        return
+    command = [part for part in shlex.split(generator) if part != "--check"]
+    result = _run(command, cwd=repo.path)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"{repo.name}: generator update failed: {detail}")
+
+
 def cmd_release_readiness(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
@@ -1416,9 +1515,29 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
             {"source": f"{args.repo}.xml", "target": f"{args.repo}.xml"}
         ],
     }
+    acceptance_checklist = [
+        "repo created from unraid-aio-template",
+        "fleet.yml entry added with Docker Hub image name",
+        ".aio-fleet.yml exported into the app repo",
+        "central repo validation passes",
+        "cleanup-repo --verify reports no retired shared files",
+        "control-check dry-run succeeds for the app commit",
+        "upstream monitor dry-run resolves provider state",
+        "registry verify dry-run prints expected Docker Hub and GHCR tags",
+        "catalog sync dry-run shows expected XML/icon assets",
+        "support-thread render produces a CA-ready draft",
+        "aio-fleet / required appears on a real app PR",
+    ]
     if args.format == "json":
         print(
-            json.dumps({"repo": args.repo, "manifest_entry": manifest_entry}, indent=2)
+            json.dumps(
+                {
+                    "repo": args.repo,
+                    "manifest_entry": manifest_entry,
+                    "acceptance_checklist": acceptance_checklist,
+                },
+                indent=2,
+            )
         )
         return 0
 
@@ -1441,6 +1560,16 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print(
         f"- `python -m aio_fleet sync-catalog --repo {args.repo} --catalog-path ../awesome-unraid --dry-run`"
     )
+    print(f"- `python -m aio_fleet upstream monitor --repo {args.repo} --dry-run`")
+    print(
+        f"- `python -m aio_fleet registry verify --repo {args.repo} --sha <commit-sha> --dry-run --verbose`"
+    )
+    print(f"- `python -m aio_fleet support-thread render --repo {args.repo}`")
+    print()
+    print("## Acceptance checklist")
+    print()
+    for item in acceptance_checklist:
+        print(f"- [ ] {item}")
     return 0
 
 
@@ -1837,6 +1966,20 @@ def build_parser() -> argparse.ArgumentParser:
     registry_publish.add_argument("--component", default="aio")
     registry_publish.add_argument("--dry-run", action="store_true")
     registry_publish.set_defaults(func=cmd_registry_publish)
+
+    upstream = sub.add_parser("upstream")
+    upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
+    upstream_monitor = upstream_sub.add_parser("monitor")
+    upstream_monitor.add_argument("--repo")
+    upstream_monitor.add_argument("--repo-path")
+    upstream_monitor.add_argument("--all", action="store_true")
+    upstream_monitor.add_argument("--include-manual", action="store_true")
+    upstream_monitor.add_argument("--write", action="store_true")
+    upstream_monitor.add_argument("--create-pr", action="store_true")
+    upstream_monitor.add_argument("--post-check", action="store_true")
+    upstream_monitor.add_argument("--dry-run", action="store_true")
+    upstream_monitor.add_argument("--format", choices=["text", "json"], default="text")
+    upstream_monitor.set_defaults(func=cmd_upstream_monitor)
 
     release = sub.add_parser("release")
     release_sub = release.add_subparsers(dest="release_command", required=True)

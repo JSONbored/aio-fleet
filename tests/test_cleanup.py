@@ -12,6 +12,7 @@ def test_cleanup_findings_detect_retired_shared_files(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     (repo_path / ".github" / "workflows").mkdir(parents=True)
     (repo_path / ".trunk").mkdir()
+    (repo_path / "requirements-dev.txt").write_text("pytest\n")
     (repo_path / "scripts").mkdir()
     (repo_path / "scripts" / "release.py").write_text("")
     manifest = tmp_path / "fleet.yml"
@@ -34,6 +35,7 @@ repos:
     ] == [  # nosec B101
         ".github/workflows",
         ".trunk",
+        "requirements-dev.txt",
         "scripts/release.py",
     ]
 

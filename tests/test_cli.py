@@ -20,6 +20,7 @@ from aio_fleet.cli import (
     cmd_registry_publish,
     cmd_registry_verify,
     cmd_trunk_audit,
+    cmd_upstream_monitor,
     cmd_validate_template_common,
 )
 from aio_fleet.manifest import load_manifest
@@ -512,3 +513,51 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
     assert (  # nosec B101
         "python -m aio_fleet export-app-manifest --repo example-aio --write" in output
     )
+
+
+def test_upstream_monitor_dry_run_reports_updates(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.0\n")
+
+    monkeypatch.setattr(
+        cli,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                repo="example-aio",
+                component="aio",
+                name="Example",
+                strategy="pr",
+                source="github-tags",
+                current_version="1.0.0",
+                latest_version="1.1.0",
+                current_digest="",
+                latest_digest="",
+                version_update=True,
+                digest_update=False,
+                updates_available=True,
+                dockerfile=repo_path / "Dockerfile",
+                release_notes_url="https://github.com/example/app/releases",
+            )
+        ],
+    )
+
+    result = cmd_upstream_monitor(
+        Namespace(
+            manifest=str(manifest),
+            all=True,
+            repo=None,
+            repo_path=None,
+            include_manual=False,
+            write=False,
+            create_pr=False,
+            post_check=False,
+            dry_run=True,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert "example-aio: upstream=updates" in capsys.readouterr().out  # nosec B101

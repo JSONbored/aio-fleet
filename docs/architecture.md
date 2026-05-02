@@ -14,6 +14,9 @@ It does not replace the existing source-of-truth repos:
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` from the
   central `fleet.yml` entry.
 - `poll` scans active repos for open PR heads and current `main` commits.
+- `upstream monitor` scans manifest-declared upstream providers, refreshes
+  Dockerfile version/digest pins when configured, and opens app repo PRs for
+  human review.
 - `control-check` runs central validation/test/publish steps from `aio-fleet`
   and can post the final required check-run back to the app commit.
 - `check run` renders or upserts the required `aio-fleet / required` check-run
@@ -23,11 +26,12 @@ It does not replace the existing source-of-truth repos:
 - The end-state branch protection target is one required GitHub App check named
   `aio-fleet / required`; detail checks can remain informational.
 - `registry verify/publish`, the scheduled `Registry Audit` workflow,
-  `release status/prepare/publish`, and `trunk run` provide the Python-driven
-  control-plane jobs.
+  `release status/prepare/publish`, central app test dependency installation,
+  and `trunk run` provide the Python-driven control-plane jobs.
 - `cleanup-repo --verify` and `cleanup-repo --fix` are the guardrails that app
   repos no longer carry local workflows, Trunk config, git-cliff config,
-  upstream scripts, release shims, or copied community-health boilerplate.
+  upstream scripts, release shims, shared test dependency files, or copied
+  community-health boilerplate.
 
 GitHub-owned state and source-owned state stay separate:
 
