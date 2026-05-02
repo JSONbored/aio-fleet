@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess  # nosec B404
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 from aio_fleet.manifest import RepoConfig
@@ -62,16 +67,80 @@ def verify_registry_tags(tags: list[str]) -> list[str]:
         return ["docker CLI is required to verify registry tags"]
     failures: list[str] = []
     for tag in tags:
-        result = subprocess.run(  # nosec B603
-            [docker, "buildx", "imagetools", "inspect", tag],
-            check=False,
-            text=True,
-            capture_output=True,
+        failure = (
+            _verify_dockerhub_tag(tag)
+            if _is_dockerhub_tag(tag)
+            else _verify_with_docker_imagetools(docker, tag)
         )
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
-            failures.append(f"{tag}: {detail or 'inspect failed'}")
+        if failure:
+            failures.append(failure)
     return failures
+
+
+def _verify_with_docker_imagetools(docker: str, tag: str) -> str | None:
+    result = subprocess.run(  # nosec B603
+        [docker, "buildx", "imagetools", "inspect", tag],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return None
+    detail = (result.stderr or result.stdout).strip()
+    return f"{tag}: {detail or 'inspect failed'}"
+
+
+def _is_dockerhub_tag(tag: str) -> bool:
+    image = tag.rsplit(":", 1)[0] if ":" in tag else tag
+    first = image.split("/", 1)[0]
+    return first in {"docker.io", "index.docker.io"} or "." not in first
+
+
+def _verify_dockerhub_tag(tag: str, *, attempts: int = 3) -> str | None:
+    parsed = _dockerhub_tag_parts(tag)
+    if parsed is None:
+        return f"{tag}: unsupported Docker Hub tag format"
+    namespace, repository, tag_name = parsed
+    quoted_tag = urllib.parse.quote(tag_name, safe="")
+    url = (
+        "https://hub.docker.com/v2/repositories/"
+        f"{namespace}/{repository}/tags/{quoted_tag}"
+    )
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as response:  # nosec B310
+                if response.status == 200:
+                    json.load(response)
+                    return None
+                last_error = f"unexpected status {response.status}"
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return f"{tag}: tag not found on Docker Hub"
+            last_error = f"HTTP {error.code}: {error.reason}"
+        except urllib.error.URLError as error:
+            last_error = str(error.reason)
+        if attempt < attempts:
+            time.sleep(2 * attempt)
+    return f"{tag}: Docker Hub tag lookup failed: {last_error or 'unknown error'}"
+
+
+def _dockerhub_tag_parts(tag: str) -> tuple[str, str, str] | None:
+    if ":" not in tag:
+        return None
+    image, tag_name = tag.rsplit(":", 1)
+    parts = image.split("/")
+    if parts and parts[0] in {"docker.io", "index.docker.io"}:
+        parts = parts[1:]
+    if len(parts) == 1:
+        namespace, repository = "library", parts[0]
+    elif len(parts) == 2:
+        namespace, repository = parts
+    else:
+        return None
+    if not namespace or not repository or not tag_name:
+        return None
+    return namespace, repository, tag_name
 
 
 def _component_image_name(repo: RepoConfig, component: str) -> str:
