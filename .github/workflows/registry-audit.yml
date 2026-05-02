@@ -93,8 +93,6 @@ jobs:
                       "-c",
                       f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "clone",
-                      "--depth",
-                      "1",
                       f"https://github.com/{owner}/{repo}.git",
                       str(worktree),
                   ],
