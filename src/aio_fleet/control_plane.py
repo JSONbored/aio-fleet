@@ -101,24 +101,33 @@ def central_check_steps(
             )
         )
     if publish:
-        steps.append(
-            Step(
-                "registry-publish",
-                [
-                    sys.executable,
-                    "-m",
-                    "aio_fleet.cli",
-                    *manifest_args,
-                    "registry",
-                    "publish",
-                    "--repo",
-                    repo.name,
-                    "--repo-path",
-                    str(repo.path),
-                ],
-                repo.path,
+        components = publish_components(repo)
+        for component in components:
+            step_name = (
+                "registry-publish"
+                if components == ["aio"]
+                else f"registry-publish-{component}"
             )
-        )
+            steps.append(
+                Step(
+                    step_name,
+                    [
+                        sys.executable,
+                        "-m",
+                        "aio_fleet.cli",
+                        *manifest_args,
+                        "registry",
+                        "publish",
+                        "--repo",
+                        repo.name,
+                        "--repo-path",
+                        str(repo.path),
+                        "--component",
+                        component,
+                    ],
+                    repo.path,
+                )
+            )
     return steps
 
 
@@ -147,24 +156,57 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
     return failures
 
 
-def registry_publish_command(repo: RepoConfig, *, sha: str) -> list[str]:
-    tags = compute_registry_tags(repo, sha=sha)
+def publish_components(repo: RepoConfig) -> list[str]:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return ["aio"]
+    names = [
+        name
+        for name, config in components.items()
+        if name == "aio" or (isinstance(config, dict) and config.get("image_name"))
+    ]
+    return names or ["aio"]
+
+
+def registry_publish_command(
+    repo: RepoConfig, *, sha: str, component: str = "aio"
+) -> list[str]:
+    tags = compute_registry_tags(repo, sha=sha, component=component)
+    component_config = _component_config(repo, component)
+    cache_scope = component_config.get(
+        "docker_cache_scope", repo.get("docker_cache_scope")
+    )
+    platforms = component_config.get(
+        "publish_platforms", repo.get("publish_platforms", "linux/amd64,linux/arm64")
+    )
     command = [
         "docker",
         "buildx",
         "build",
         "--push",
         "--platform",
-        str(repo.get("publish_platforms", "linux/amd64,linux/arm64")),
+        str(platforms),
         "--cache-from",
-        f"type=gha,scope={repo.get('docker_cache_scope')}",
+        f"type=gha,scope={cache_scope}",
         "--cache-to",
-        f"type=gha,mode=max,scope={repo.get('docker_cache_scope')}",
+        f"type=gha,mode=max,scope={cache_scope}",
     ]
+    dockerfile = component_config.get("dockerfile")
+    if dockerfile:
+        command.extend(["--file", str(dockerfile)])
     for tag in tags.all_tags:
         command.extend(["--tag", tag])
-    command.append(".")
+    command.append(str(component_config.get("context", ".")))
     return command
+
+
+def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
+    components = repo.raw.get("components")
+    if isinstance(components, dict):
+        config = components.get(component)
+        if isinstance(config, dict):
+            return config
+    return {}
 
 
 def run_central_trunk(

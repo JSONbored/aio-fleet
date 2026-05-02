@@ -33,6 +33,19 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     assert names[-2:] == ["trunk", "registry-publish"]  # nosec B101
 
 
+def test_central_check_steps_publish_signoz_components() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+
+    steps = central_check_steps(repo, event="workflow_dispatch", publish=True)
+
+    publish_steps = [step for step in steps if step.name.startswith("registry-publish")]
+    assert [step.name for step in publish_steps] == [  # nosec B101
+        "registry-publish-aio",
+        "registry-publish-agent",
+    ]
+    assert publish_steps[1].command[-2:] == ["--component", "agent"]  # nosec B101
+
+
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
 
