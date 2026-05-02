@@ -74,6 +74,8 @@ jobs:
       AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
       AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -353,6 +355,28 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Alert upstream monitor
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
+        env:
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          if [[ -f upstream-report.json ]]; then
+            python -m aio_fleet alert send \
+              --event upstream-monitor \
+              --report-json upstream-report.json \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event upstream-monitor \
+              --status failure \
+              --summary "Upstream monitor did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
+
       - name: Validate control-check inputs
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
         env:
@@ -402,6 +426,23 @@ jobs:
           fi
           python -m aio_fleet "${args[@]}"
 
+      - name: Alert control-plane status
+        if: ${{ always() }}
+        env:
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set +e
+          mode="${MODE:-${GITHUB_EVENT_NAME}}"
+          python -m aio_fleet alert send \
+            --event control-plane \
+            --status "${JOB_STATUS}" \
+            --summary "AIO Fleet Control Plane ${mode} ${JOB_STATUS}" \
+            --details-url "${DETAILS_URL}" \
+            --format json
+          exit 0
+
   poll-checks:
     name: poll-check (${{ matrix.target.repo }})
     needs: control-plane
@@ -418,6 +459,8 @@ jobs:
       AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
       AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -524,3 +567,23 @@ jobs:
             args+=(--publish)
           fi
           python -m aio_fleet "${args[@]}"
+
+      - name: Alert poll-check failure
+        if: ${{ always() }}
+        env:
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          TARGET_REPO: ${{ matrix.target.repo }}
+        run: |
+          set +e
+          if [[ "${JOB_STATUS}" == "success" ]]; then
+            exit 0
+          fi
+          python -m aio_fleet alert send \
+            --event poll-check \
+            --status "${JOB_STATUS}" \
+            --repo "${TARGET_REPO}" \
+            --summary "aio-fleet required check failed for ${TARGET_REPO}" \
+            --details-url "${DETAILS_URL}" \
+            --format json
+          exit 0

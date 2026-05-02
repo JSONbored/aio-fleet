@@ -10,6 +10,7 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
+from aio_fleet.alerts import alert_payload, emit_alert, payload_from_report
 from aio_fleet.app_manifest import (
     APP_MANIFEST_NAME,
     app_manifest_from_repo,
@@ -680,6 +681,51 @@ def cmd_poll(args: argparse.Namespace) -> int:
         for row in emitted:
             print(f"{row['repo']} {row['source']} {row['event']} {row['sha']}")
         print(f"poll targets: {len(emitted)}")
+    return 0
+
+
+def cmd_alert_send(args: argparse.Namespace) -> int:
+    report = None
+    if args.report_json:
+        report = json.loads(Path(args.report_json).read_text())
+
+    if report is not None:
+        payload = payload_from_report(
+            event=args.event,
+            report=report,
+            status=args.status,
+            summary=args.summary,
+            details_url=args.details_url or "",
+            dedupe_key=args.dedupe_key or "",
+        )
+    else:
+        status = "success" if args.status == "auto" else args.status
+        payload = alert_payload(
+            event=args.event,
+            status=status,
+            summary=args.summary,
+            repo=args.repo or "",
+            component=args.component or "",
+            details_url=args.details_url or "",
+            dedupe_key=args.dedupe_key or "",
+            annotations=args.annotation or [],
+        )
+
+    result = emit_alert(
+        payload,
+        kuma_url=args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", ""),
+        webhook_url=args.webhook_url
+        or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", ""),
+        webhook_format=args.webhook_format,
+        force_webhook=args.force_webhook,
+        dry_run=args.dry_run,
+    )
+    if args.format == "json":
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"{payload.event}: alert={payload.status}")
+        print(f"kuma: {result['kuma']}")
+        print(f"webhook: {result['webhook']}")
     return 0
 
 
@@ -1939,6 +1985,40 @@ def build_parser() -> argparse.ArgumentParser:
     check_run.add_argument("--details-url")
     check_run.add_argument("--dry-run", action="store_true")
     check_run.set_defaults(func=cmd_check_run)
+
+    alert = sub.add_parser("alert")
+    alert_sub = alert.add_subparsers(dest="alert_command", required=True)
+    alert_send = alert_sub.add_parser("send")
+    alert_send.add_argument("--event", required=True)
+    alert_send.add_argument(
+        "--status",
+        choices=[
+            "auto",
+            "success",
+            "failure",
+            "warning",
+            "info",
+            "cancelled",
+            "skipped",
+        ],
+        default="auto",
+    )
+    alert_send.add_argument("--summary", default="")
+    alert_send.add_argument("--repo")
+    alert_send.add_argument("--component")
+    alert_send.add_argument("--dedupe-key")
+    alert_send.add_argument("--details-url")
+    alert_send.add_argument("--annotation", action="append")
+    alert_send.add_argument("--report-json")
+    alert_send.add_argument("--kuma-url")
+    alert_send.add_argument("--webhook-url")
+    alert_send.add_argument(
+        "--webhook-format", choices=["json", "text"], default="json"
+    )
+    alert_send.add_argument("--force-webhook", action="store_true")
+    alert_send.add_argument("--dry-run", action="store_true")
+    alert_send.add_argument("--format", choices=["text", "json"], default="text")
+    alert_send.set_defaults(func=cmd_alert_send)
 
     poll = sub.add_parser("poll")
     poll.add_argument("--no-prs", action="store_true")

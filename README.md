@@ -27,6 +27,9 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   the manifest and release state.
 - The `Registry Audit` workflow runs read-only Docker Hub/GHCR verification on
   a schedule and can be manually enforced with `fail_on_missing`.
+- Central alerting sends a Uptime Kuma fleet heartbeat plus optional low-noise
+  JSON webhook digests for upstream updates, failures, and missing registry
+  tags.
 - `release status/prepare/publish` uses central changelog and XML `<Changes>`
   rendering instead of app-local release scripts.
 - `trunk run` overlays the central `.trunk` config into scratch checkouts so
@@ -57,6 +60,7 @@ python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pul
 python -m aio_fleet upstream monitor --all --dry-run
 python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
 python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
+python -m aio_fleet alert send --event registry-audit --report-json registry-report.json --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
 python -m aio_fleet release publish --repo sure-aio --dry-run
