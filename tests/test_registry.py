@@ -18,7 +18,7 @@ def test_compute_registry_tags_preserves_docker_hub_and_ghcr_tags(monkeypatch) -
         registry, "_read_component_upstream_version", lambda *_: "0.7.0"
     )
     monkeypatch.setattr(
-        registry, "_release_package_tag", lambda *_args, **_kwargs: "0.7.0-aio-v1"
+        registry, "_release_package_tag", lambda *_args, **_kwargs: "0.7.0-aio.1"
     )
 
     tags = registry.compute_registry_tags(repo, sha="a" * 40)
@@ -26,13 +26,13 @@ def test_compute_registry_tags_preserves_docker_hub_and_ghcr_tags(monkeypatch) -
     assert tags.dockerhub == [  # nosec B101
         "jsonbored/sure-aio:latest",
         "jsonbored/sure-aio:0.7.0",
-        "jsonbored/sure-aio:0.7.0-aio-v1",
+        "jsonbored/sure-aio:0.7.0-aio.1",
         f"jsonbored/sure-aio:sha-{'a' * 40}",
     ]
     assert tags.ghcr == [  # nosec B101
         "ghcr.io/jsonbored/sure-aio:latest",
         "ghcr.io/jsonbored/sure-aio:0.7.0",
-        "ghcr.io/jsonbored/sure-aio:0.7.0-aio-v1",
+        "ghcr.io/jsonbored/sure-aio:0.7.0-aio.1",
         f"ghcr.io/jsonbored/sure-aio:sha-{'a' * 40}",
     ]
 
@@ -59,6 +59,27 @@ def test_compute_registry_tags_tolerates_missing_release_commit(monkeypatch) -> 
         "jsonbored/sure-aio:0.7.0",
         f"jsonbored/sure-aio:sha-{'b' * 40}",
     ]
+
+
+def test_upstream_aio_track_release_tag_matches_changelog(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    sha = "c" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.7.0"
+    )
+    monkeypatch.setattr(
+        registry, "latest_changelog_version", lambda *_args, **_kwargs: "0.7.0-aio.1"
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: sha
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha)
+
+    assert tags.release_package_tag == "0.7.0-aio.1"  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.1" in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.1" in tags.ghcr  # nosec B101
 
 
 def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> None:

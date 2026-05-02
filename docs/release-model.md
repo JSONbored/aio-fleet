@@ -13,8 +13,21 @@ every merge.
 
 Most app repos use one of two publish profiles:
 
-- `upstream-aio-track`: wrapper tags are normalized as `<upstream>-aio-v<revision>`.
+- `upstream-aio-track`: wrapper tags follow `<upstream>-aio.<revision>`.
 - `changelog-version`: wrapper tags follow the changelog version exactly.
+
+Every normal `main` publish emits Docker Hub and GHCR tags for:
+
+- `latest`;
+- the upstream version, such as `0.7.0`;
+- `sha-<commit>`.
+
+Formal release publishes add the exact changelog release tag, such as
+`0.7.0-aio.1`. If upstream stays on `0.7.0` but the wrapper, image hardening,
+runtime, or template changes need a new package, the next formal release is
+`0.7.0-aio.2`. Unraid templates keep using the Docker Hub `latest` tag, so an
+image rebuild still changes the remote digest even when the upstream version tag
+does not change.
 
 Publish jobs push and verify Docker Hub plus GHCR tags. Docker Hub remains the
 template/catalog-preferred image reference; GHCR is a second registry surface
@@ -42,6 +55,15 @@ The `Registry Audit` workflow runs read-only verification for every active repo
 on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
 summary without blocking unrelated control-plane checks; manual runs can set
 `fail_on_missing` to make missing tags fail the workflow.
+
+## Alerting
+
+Alerting is centralized in `aio-fleet`; app repos stay notification-free.
+`AIO_FLEET_KUMA_PUSH_URL` drives a Uptime Kuma push heartbeat for fleet health.
+`AIO_FLEET_ALERT_WEBHOOK_URL` receives low-noise JSON digests for failures,
+missing registry tags, blocked release readiness, and upstream update PRs.
+Successes update the Kuma heartbeat but do not send webhook messages unless the
+event is an explicit recovery.
 
 Central release commands:
 

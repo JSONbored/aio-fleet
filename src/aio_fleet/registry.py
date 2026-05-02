@@ -188,5 +188,5 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
 
     revision = match.group(1)
     if repo.publish_profile == "upstream-aio-track":
-        return f"{upstream_version}-aio-v{revision}"
+        return f"{upstream_version}-aio.{revision}"
     return changelog_version

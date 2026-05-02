@@ -26,6 +26,8 @@ jobs:
       AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
       AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
       AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -247,6 +249,28 @@ jobs:
               lines.extend(["", "All expected registry tags resolved."])
           summary_path.write_text("\n".join(lines) + "\n")
           PY
+
+      - name: Alert registry audit
+        if: ${{ always() }}
+        env:
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          if [[ -f registry-report.json ]]; then
+            python -m aio_fleet alert send \
+              --event registry-audit \
+              --report-json registry-report.json \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event registry-audit \
+              --status failure \
+              --summary "Registry audit did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
 
       - name: Enforce manual registry audit
         env:
