@@ -107,7 +107,7 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
         return ""
     try:
         release_target_commit = find_release_target_commit(repo.path, changelog_version)
-    except Exception:
+    except (Exception, SystemExit):
         release_target_commit = ""
     if release_target_commit != sha:
         return ""
