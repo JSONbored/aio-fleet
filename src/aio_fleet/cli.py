@@ -31,6 +31,7 @@ from aio_fleet.checks import (
 from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
 from aio_fleet.control_plane import (
     central_check_steps,
+    publish_components,
     registry_publish_command,
     run_central_trunk,
     run_steps,
@@ -790,29 +791,40 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
             )
             continue
         sha = args.sha or _git_head(repo.path)
-        tags = compute_registry_tags(repo, sha=sha, component=args.component)
-        repo_failures = [] if args.dry_run else verify_registry_tags(tags.all_tags)
-        failures.extend(f"{repo.name}: {failure}" for failure in repo_failures)
-        report["repos"].append(  # type: ignore[index]
-            {
-                "repo": repo.name,
-                "sha": sha,
-                "dockerhub": tags.dockerhub,
-                "ghcr": tags.ghcr,
-                "failures": repo_failures,
-            }
-        )
+        components = publish_components(repo) if args.all else [args.component]
+        for component in components:
+            tags = compute_registry_tags(repo, sha=sha, component=component)
+            repo_failures = [] if args.dry_run else verify_registry_tags(tags.all_tags)
+            failures.extend(
+                f"{repo.name}:{component}: {failure}" for failure in repo_failures
+            )
+            report["repos"].append(  # type: ignore[index]
+                {
+                    "repo": repo.name,
+                    "component": component,
+                    "sha": sha,
+                    "dockerhub": tags.dockerhub,
+                    "ghcr": tags.ghcr,
+                    "failures": repo_failures,
+                }
+            )
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         for item in report["repos"]:  # type: ignore[index]
+            component = str(item.get("component", "aio"))  # type: ignore[union-attr]
+            label = (
+                str(item["repo"])  # type: ignore[index]
+                if component == "aio"
+                else f"{item['repo']}:{component}"  # type: ignore[index]
+            )
             if item.get("skipped"):  # type: ignore[union-attr]
                 print(
-                    f"{item['repo']}: registry=skipped:{item['skipped']}"  # type: ignore[index]
+                    f"{label}: registry=skipped:{item['skipped']}"  # type: ignore[index]
                 )
                 continue
             state = "failed" if item["failures"] else "ok"  # type: ignore[index]
-            print(f"{item['repo']}: registry={state}")  # type: ignore[index]
+            print(f"{label}: registry={state}")
             if args.verbose or args.dry_run:
                 for tag in [*item["dockerhub"], *item["ghcr"]]:  # type: ignore[index]
                     print(f"- {tag}")
@@ -827,7 +839,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
     sha = args.sha or _git_head(repo.path)
-    command = registry_publish_command(repo, sha=sha)
+    command = registry_publish_command(repo, sha=sha, component=args.component)
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
@@ -845,7 +857,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
             repo=args.repo,
             repo_path=args.repo_path,
             sha=sha,
-            component="aio",
+            component=args.component,
             include_manual=True,
             dry_run=False,
             format="text",
@@ -1822,6 +1834,7 @@ def build_parser() -> argparse.ArgumentParser:
     registry_publish.add_argument("--repo", required=True)
     registry_publish.add_argument("--repo-path")
     registry_publish.add_argument("--sha")
+    registry_publish.add_argument("--component", default="aio")
     registry_publish.add_argument("--dry-run", action="store_true")
     registry_publish.set_defaults(func=cmd_registry_publish)
 

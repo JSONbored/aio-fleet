@@ -275,6 +275,7 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
             repo="example-aio",
             repo_path=str(repo_path),
             sha="a" * 40,
+            component="aio",
             dry_run=False,
         )
     )

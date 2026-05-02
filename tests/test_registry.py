@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aio_fleet import registry
+from aio_fleet.control_plane import registry_publish_command
 from aio_fleet.manifest import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,3 +57,19 @@ def test_compute_registry_tags_tolerates_missing_release_commit(monkeypatch) -> 
         "jsonbored/sure-aio:0.7.0",
         f"jsonbored/sure-aio:sha-{'b' * 40}",
     ]
+
+
+def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.151.0"
+    )
+    monkeypatch.setattr(registry, "_release_package_tag", lambda *_args, **_kwargs: "")
+
+    command = registry_publish_command(repo, sha="c" * 40, component="agent")
+
+    assert "--file" in command  # nosec B101
+    assert "components/signoz-agent/Dockerfile" in command  # nosec B101
+    assert command[-1] == "components/signoz-agent"  # nosec B101
+    assert "jsonbored/signoz-agent:0.151.0" in command  # nosec B101
