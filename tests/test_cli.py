@@ -18,6 +18,7 @@ from aio_fleet.cli import (
     cmd_onboard_repo,
     cmd_poll,
     cmd_registry_publish,
+    cmd_registry_verify,
     cmd_trunk_audit,
     cmd_validate_template_common,
 )
@@ -282,6 +283,64 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
     assert seen["verify_repo_path"] == str(repo_path)  # nosec B101
     assert seen["verify_sha"] == "a" * 40  # nosec B101
+
+
+def test_registry_verify_all_skips_manual_template_publish(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    template_path = tmp_path / "template"
+    app_path = tmp_path / "app"
+    template_path.mkdir()
+    app_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  unraid-aio-template:
+    path: {template_path}
+    app_slug: unraid-aio-template
+    image_name: jsonbored/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: aio-template:pytest
+    publish_profile: template
+  example-aio:
+    path: {app_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    verified: list[str] = []
+
+    monkeypatch.setattr(cli, "_git_head", lambda _path: "a" * 40)
+
+    def fake_verify(tags: list[str]) -> list[str]:
+        verified.extend(tags)
+        return []
+
+    monkeypatch.setattr(cli, "verify_registry_tags", fake_verify)
+
+    result = cmd_registry_verify(
+        Namespace(
+            manifest=str(manifest),
+            all=True,
+            repo=None,
+            repo_path=None,
+            sha=None,
+            component="aio",
+            include_manual=False,
+            dry_run=False,
+            format="json",
+            verbose=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["repos"][0]["repo"] == "unraid-aio-template"  # nosec B101
+    assert report["repos"][0]["skipped"] == "manual-template-publish"  # nosec B101
+    assert all("unraid-aio-template" not in tag for tag in verified)  # nosec B101
+    assert any("example-aio" in tag for tag in verified)  # nosec B101
 
 
 def test_debt_report_treats_repos_missing_from_github_policy_as_manual(
