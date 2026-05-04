@@ -12,6 +12,7 @@ from typing import Any
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
 from aio_fleet.manifest import FleetManifest, RepoConfig
+from aio_fleet.safety import assess_upstream_pr
 from aio_fleet.upstream import UpstreamMonitorResult, monitor_repo, upstream_branch
 from aio_fleet.validators import catalog_repo_failures
 
@@ -152,7 +153,10 @@ def render_dashboard(state: dict[str, Any]) -> str:
     summary = dict(state.get("summary", {}))
     ready = [row for row in rows if _is_ready_update(row)]
     triage = [
-        row for row in rows if row.get("update") and row.get("strategy") == "notify"
+        row
+        for row in rows
+        if row.get("update")
+        and (row.get("strategy") == "notify" or row.get("safety") in {"warn", "manual"})
     ]
     blocked = [row for row in rows if _is_blocked_update(row)]
     lines = [
@@ -415,6 +419,13 @@ def _template_row(repo: RepoConfig, *, include_registry: bool) -> dict[str, Any]
         "signed": "not-applicable",
         "registry": "manual" if include_registry else "not-run",
         "release": "manual",
+        "safety": "not-applicable",
+        "safety_confidence": "",
+        "config_delta": "",
+        "template_impact": "",
+        "runtime_smoke": "",
+        "safety_warnings": [],
+        "safety_failures": [],
         "next_action": "manual template baseline",
     }
 
@@ -432,6 +443,13 @@ def _monitor_failure_row(repo: RepoConfig, exc: Exception) -> dict[str, Any]:
         "signed": "unknown",
         "registry": "not-run",
         "release": "unknown",
+        "safety": "unknown",
+        "safety_confidence": "",
+        "config_delta": "unknown",
+        "template_impact": "unknown",
+        "runtime_smoke": "unknown",
+        "safety_warnings": [str(exc)],
+        "safety_failures": [],
         "next_action": f"upstream monitor failed: {exc}",
     }
 
@@ -456,11 +474,18 @@ def _dashboard_row(
         if pr
         else ("not-needed" if not result.updates_available else "missing")
     )
+    safety = _safety_assessment(repo, result, pr, signed=signed, check=check)
     registry = "not-run"
     if include_registry:
         registry = "current-not-verified"
     release = "after-merge" if result.updates_available else "current"
-    next_action = _next_action(result, pr=pr, signed=signed, check=check)
+    next_action = _next_action(
+        result,
+        pr=pr,
+        signed=signed,
+        check=check,
+        safety=safety,
+    )
     return {
         "repo": repo.name,
         "component": result.component,
@@ -473,6 +498,13 @@ def _dashboard_row(
         "signed": signed,
         "registry": registry,
         "release": release,
+        "safety": safety["safety_level"],
+        "safety_confidence": safety["confidence"],
+        "config_delta": safety["config_delta"],
+        "template_impact": safety["template_impact"],
+        "runtime_smoke": safety["runtime_smoke"],
+        "safety_warnings": safety["warnings"],
+        "safety_failures": safety["failures"],
         "next_action": next_action,
     }
 
@@ -574,6 +606,7 @@ def _next_action(
     pr: dict[str, Any] | None,
     signed: str,
     check: str,
+    safety: dict[str, Any],
 ) -> str:
     if not result.updates_available:
         return "none"
@@ -588,7 +621,51 @@ def _next_action(
         return f"wait for central check: {check}"
     if merge_state in {"behind", "blocked", "dirty"}:
         return f"resolve PR state: {merge_state}"
+    if safety.get("safety_level") == "blocked":
+        return str(safety.get("next_action", "resolve safety failure before merge"))
+    if safety.get("safety_level") == "warn":
+        return str(safety.get("next_action", "review safety warnings before merge"))
     return "human review and merge"
+
+
+def _safety_assessment(
+    repo: RepoConfig,
+    result: UpstreamMonitorResult,
+    pr: dict[str, Any] | None,
+    *,
+    signed: str,
+    check: str,
+) -> dict[str, Any]:
+    if not result.updates_available:
+        return {
+            "safety_level": "not-needed",
+            "confidence": "",
+            "config_delta": "none",
+            "template_impact": "none",
+            "runtime_smoke": "not-run",
+            "warnings": [],
+            "failures": [],
+            "next_action": "none",
+        }
+    try:
+        return assess_upstream_pr(
+            repo,
+            result=result,
+            pr=pr,
+            signed_state=signed,
+            check_state=check,
+        ).to_dict()
+    except Exception as exc:
+        return {
+            "safety_level": "warn",
+            "confidence": 0.25,
+            "config_delta": "unknown",
+            "template_impact": "unknown",
+            "runtime_smoke": "unknown",
+            "warnings": [f"safety assessment failed: {exc}"],
+            "failures": [],
+            "next_action": "review safety assessment failure before merge",
+        }
 
 
 def _open_pr(repo: RepoConfig, branch: str) -> dict[str, Any] | None:
@@ -604,7 +681,7 @@ def _open_pr(repo: RepoConfig, branch: str) -> dict[str, Any] | None:
             "--base",
             "main",
             "--json",
-            "number,url,headRefOid,mergeStateStatus,statusCheckRollup",
+            "number,url,files,headRefName,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup",
         ],
         check=False,
     )
@@ -951,13 +1028,13 @@ def _render_update_section(
         return
     lines.extend(
         [
-            "| Repo | Component | Current | Latest | PR | Check | Signed | Next |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Repo | Component | Current | Latest | PR | Check | Signed | Safety | Config Delta | Template Impact | Runtime Smoke | Next |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for row in rows:
         lines.append(
-            "| {repo} | {component} | {current} | {latest} | {pr} | {check} | {signed} | {next_action} |".format(
+            "| {repo} | {component} | {current} | {latest} | {pr} | {check} | {signed} | {safety} | {config_delta} | {template_impact} | {runtime_smoke} | {next_action} |".format(
                 **{key: _cell(row.get(key, "")) for key in row}
             )
         )
@@ -1056,13 +1133,13 @@ def _render_fleet_state_section(lines: list[str], rows: list[dict[str, Any]]) ->
         [
             "## Update Queue",
             "",
-            "| Repo | Component | Current | Latest | Strategy | PR | Check | Signed | Registry | Release | Next |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Repo | Component | Current | Latest | Strategy | PR | Check | Signed | Safety | Config Delta | Template Impact | Runtime Smoke | Registry | Release | Next |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for row in rows:
         lines.append(
-            "| {repo} | {component} | {current} | {latest} | {strategy} | {pr} | {check} | {signed} | {registry} | {release} | {next_action} |".format(
+            "| {repo} | {component} | {current} | {latest} | {strategy} | {pr} | {check} | {signed} | {safety} | {config_delta} | {template_impact} | {runtime_smoke} | {registry} | {release} | {next_action} |".format(
                 **{key: _cell(row.get(key, "")) for key in row}
             )
         )
@@ -1096,6 +1173,13 @@ def _render_next_commands(
             commands.append(
                 f"python -m aio_fleet upstream monitor --repo {row['repo']} --dry-run"
             )
+        elif row.get("update") and row.get("safety") in {"warn", "blocked"}:
+            pr_url = _markdown_url(row.get("pr"))
+            pr_number = pr_url.rstrip("/").rsplit("/", 1)[-1] if pr_url else ""
+            if pr_number.isdigit():
+                commands.append(
+                    f"python -m aio_fleet upstream assess --repo {row['repo']} --pr {pr_number} --format json"
+                )
         elif _is_ready_update(row):
             pr_url = _markdown_url(row.get("pr"))
             if pr_url:
@@ -1123,11 +1207,16 @@ def _is_ready_update(row: dict[str, Any]) -> bool:
         and row.get("next_action") == "human review and merge"
         and row.get("check") == "success"
         and row.get("signed") == "verified"
+        and row.get("safety") in {"ok", "not-needed", ""}
     )
 
 
 def _is_blocked_update(row: dict[str, Any]) -> bool:
     if not row.get("update") or row.get("strategy") == "notify":
+        return False
+    if row.get("safety") == "blocked":
+        return True
+    if row.get("safety") in {"warn", "manual"}:
         return False
     action = str(row.get("next_action", ""))
     return action != "human review and merge"

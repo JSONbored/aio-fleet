@@ -9,6 +9,23 @@ from aio_fleet.manifest import load_manifest
 from aio_fleet.upstream import UpstreamMonitorResult
 
 
+class _FakeAssessment:
+    def __init__(self, **values):
+        self.values = values
+
+    def to_dict(self):
+        return {
+            "safety_level": self.values.get("safety_level", "ok"),
+            "confidence": self.values.get("confidence", 0.82),
+            "config_delta": self.values.get("config_delta", "none"),
+            "template_impact": self.values.get("template_impact", "no-xml-change"),
+            "runtime_smoke": self.values.get("runtime_smoke", "not-configured"),
+            "warnings": self.values.get("warnings", []),
+            "failures": self.values.get("failures", []),
+            "next_action": self.values.get("next_action", "human review and merge"),
+        }
+
+
 def test_dashboard_renders_notify_only_update_and_alert_warnings(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -48,6 +65,14 @@ repos:
                 release_notes_url="https://github.com/mem0ai/mem0/releases",
             )
         ],
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "assess_upstream_pr",
+        lambda *_args, **_kwargs: _FakeAssessment(
+            safety_level="manual",
+            next_action="manual triage required before source PR",
+        ),
     )
 
     report = fleet_dashboard.dashboard_report(
@@ -117,6 +142,11 @@ repos:
         },
     )
     monkeypatch.setattr(fleet_dashboard, "_signed_state", lambda *_args: "unsigned")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "assess_upstream_pr",
+        lambda *_args, **_kwargs: _FakeAssessment(),
+    )
 
     report = fleet_dashboard.dashboard_report(
         load_manifest(manifest),
@@ -292,6 +322,11 @@ repos:
         },
     )
     monkeypatch.setattr(fleet_dashboard, "_signed_state", lambda *_args: "verified")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "assess_upstream_pr",
+        lambda *_args, **_kwargs: _FakeAssessment(),
+    )
     monkeypatch.setattr(fleet_dashboard, "catalog_repo_failures", lambda *_args: [])
     monkeypatch.setattr(
         fleet_dashboard,
@@ -320,6 +355,93 @@ repos:
     assert "| awesome-unraid | catalog destination | ok | 1 |" in str(
         report["body"]
     )  # nosec B101
+
+
+def test_dashboard_routes_safety_warning_to_triage(tmp_path: Path, monkeypatch) -> None:
+    app_path = tmp_path / "example-aio"
+    app_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {app_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="example-aio",
+                component="aio",
+                name="Example",
+                strategy="pr",
+                source="github-tags",
+                current_version="1.0.0",
+                latest_version="1.1.0",
+                current_digest="",
+                latest_digest="",
+                version_update=True,
+                digest_update=False,
+                dockerfile=app_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+                release_notes_url="https://example.invalid/releases",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_open_pr",
+        lambda *_args, **_kwargs: {
+            "number": 12,
+            "url": "https://github.com/JSONbored/example-aio/pull/12",
+            "headRefOid": "b" * 40,
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [
+                {
+                    "name": "aio-fleet / required",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(fleet_dashboard, "_signed_state", lambda *_args: "verified")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "assess_upstream_pr",
+        lambda *_args, **_kwargs: _FakeAssessment(
+            safety_level="warn",
+            config_delta="example-aio.xml: +1 -0",
+            template_impact="review-template-config-delta",
+            runtime_smoke="not-configured",
+            warnings=["release notes mention review keyword(s): config"],
+            next_action="release notes mention review keyword(s): config",
+        ),
+    )
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_activity=False,
+        env={
+            "AIO_FLEET_KUMA_PUSH_URL": "https://kuma",
+            "AIO_FLEET_ALERT_WEBHOOK_URL": "https://hook",
+        },
+    )
+
+    body = str(report["body"])
+    row = report["state"]["rows"][0]
+    assert row["safety"] == "warn"  # nosec B101
+    assert row["config_delta"] == "example-aio.xml: +1 -0"  # nosec B101
+    assert "Needs Triage" in body  # nosec B101
+    assert "| example-aio | aio | 1.0.0 | 1.1.0 |" in body  # nosec B101
+    hidden = body.split(fleet_dashboard.STATE_START, 1)[1]
+    assert '"safety": "warn"' in hidden  # nosec B101
 
 
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:

@@ -24,6 +24,7 @@ from aio_fleet.cli import (
     cmd_registry_publish,
     cmd_registry_verify,
     cmd_trunk_audit,
+    cmd_upstream_assess,
     cmd_upstream_monitor,
     cmd_validate_template_common,
 )
@@ -818,3 +819,45 @@ def test_upstream_monitor_dry_run_reports_updates(
 
     assert result == 0  # nosec B101
     assert "example-aio: upstream=updates" in capsys.readouterr().out  # nosec B101
+
+
+def test_upstream_assess_outputs_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    class FakeAssessment:
+        safety_level = "warn"
+
+        def to_dict(self):
+            return {
+                "repo": "example-aio",
+                "component": "aio",
+                "safety_level": "warn",
+                "confidence": 0.6,
+                "signals": [],
+                "warnings": ["release notes mention review keyword(s): config"],
+                "failures": [],
+                "next_action": "release notes mention review keyword(s): config",
+                "config_delta": "none",
+                "template_impact": "no-xml-change",
+                "runtime_smoke": "not-configured",
+                "changed_files": ["Dockerfile"],
+            }
+
+    monkeypatch.setattr(
+        cli, "assess_upstream_pr", lambda *_args, **_kwargs: FakeAssessment()
+    )
+
+    result = cmd_upstream_assess(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            pr=12,
+            branch=None,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["safety_level"] == "warn"  # nosec B101
