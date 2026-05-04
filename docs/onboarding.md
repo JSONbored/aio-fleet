@@ -31,6 +31,19 @@ Optional fields:
 
 ## Playbook
 
+Generate the starting checklist from the control plane:
+
+```bash
+python -m aio_fleet onboard-repo --repo <repo> --mode existing
+python -m aio_fleet onboard-repo --repo <repo> --mode new-from-template
+python -m aio_fleet onboard-repo --repo <repo> --mode rehab
+```
+
+Use `existing` for a current app repo that is already structurally close to the
+fleet model, `new-from-template` for a brand new repo created from
+`unraid-aio-template`, and `rehab` for neglected repos such as `nanoclaw-aio`
+that should appear on the dashboard without blocking active fleet validation.
+
 1. Create the repo from `unraid-aio-template`.
 2. Keep only app-specific source/runtime/template/docs/tests in the app repo.
 3. Add the repo to `fleet.yml`, including Docker Hub image name, XML assets,
@@ -58,6 +71,23 @@ python -m aio_fleet sync-catalog --repo <repo> --catalog-path ../awesome-unraid 
 python -m aio_fleet support-thread render --repo <repo>
 python -m aio_fleet doctor
 ```
+
+## Rehab Mode
+
+`rehab` mode is intentionally planning-first and non-blocking. A rehab repo may
+appear in the Fleet Update Dashboard while staying out of active app commands
+such as `validate --all`, registry verification, release publish, and upstream
+monitor `--all`.
+
+Promote a rehab repo only after:
+
+- the local checkout is synced to `main`;
+- Dockerfile, runtime wrapper, XML, README, and support docs have been audited;
+- publish profile and upstream monitor strategy are explicit;
+- `.aio-fleet.yml` has been exported from `fleet.yml`;
+- legacy workflows/config/scripts that `aio-fleet` replaces are removed;
+- central validation and cleanup verification pass;
+- `aio-fleet / required` appears on a real PR.
 
 ## Multi-Image Repos
 

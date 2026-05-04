@@ -683,6 +683,7 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
             local_path_base="<local-checkout-path>",
             format="text",
             dry_run=True,
+            mode="existing",
         )
     )
 
@@ -693,6 +694,52 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
     assert (  # nosec B101
         "python -m aio_fleet export-app-manifest --repo example-aio --write" in output
     )
+
+
+def test_onboard_repo_rehab_mode_outputs_checklist(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="nanoclaw-aio",
+            profile="changelog-version",
+            image_name=None,
+            upstream_name="NanoClaw",
+            local_path_base="/Users/shadowbook/Documents",
+            format="json",
+            dry_run=True,
+            mode="rehab",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "rehab"  # nosec B101
+    assert "local repo synced to main" in payload["acceptance_checklist"]  # nosec B101
+    assert any(
+        "fetch --prune" in item for item in payload["first_commands"]
+    )  # nosec B101
+
+
+def test_onboard_repo_new_from_template_outputs_creation_steps(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="future-aio",
+            profile="upstream-aio-track",
+            image_name=None,
+            upstream_name="Future",
+            local_path_base="/Users/shadowbook/Documents",
+            format="json",
+            dry_run=True,
+            mode="new-from-template",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "new-from-template"  # nosec B101
+    assert any(
+        "unraid-aio-template" in step for step in payload["creation_steps"]
+    )  # nosec B101
+    assert payload["first_commands"][0].startswith("gh repo create")  # nosec B101
 
 
 def test_upstream_monitor_dry_run_reports_updates(

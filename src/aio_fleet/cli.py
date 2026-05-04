@@ -794,6 +794,8 @@ def cmd_fleet_dashboard_update(args: argparse.Namespace) -> int:
     report = dashboard_report(
         manifest,
         include_registry=args.registry,
+        include_activity=getattr(args, "include_activity", True),
+        stale_days=getattr(args, "stale_days", 7),
         issue_repo=args.issue_repo,
     )
     result = upsert_dashboard_issue(
@@ -1649,6 +1651,7 @@ def _git_check_ignore(repo_path: Path, relative_path: str) -> bool:
 
 
 def cmd_onboard_repo(args: argparse.Namespace) -> int:
+    mode = getattr(args, "mode", "existing")
     image_name = args.image_name or f"jsonbored/{args.repo}"
     upstream_name = args.upstream_name or args.repo.removesuffix("-aio").title()
     local_path_base = args.local_path_base.rstrip("/")
@@ -1670,7 +1673,7 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
         ],
     }
     acceptance_checklist = [
-        "repo created from unraid-aio-template",
+        "repo exists or is created from unraid-aio-template",
         "fleet.yml entry added with Docker Hub image name",
         ".aio-fleet.yml exported into the app repo",
         "central repo validation passes",
@@ -1682,12 +1685,29 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
         "support-thread render produces a CA-ready draft",
         "aio-fleet / required appears on a real app PR",
     ]
+    creation_steps = _onboarding_creation_steps(args.repo, mode)
+    first_commands = _onboarding_first_commands(args.repo, mode)
+    if mode == "rehab":
+        acceptance_checklist = [
+            "local repo synced to main",
+            "Dockerfile, runtime wrapper, XML, README, and support docs inspected",
+            "publish profile and upstream monitor strategy decided",
+            "fleet.yml entry added or updated",
+            ".aio-fleet.yml exported into the app repo",
+            "legacy workflows/config/scripts removed",
+            "central validation and cleanup verification pass",
+            "aio-fleet / required appears on a real rehab PR",
+            "repo promoted to active fleet only after validation passes",
+        ]
     if args.format == "json":
         print(
             json.dumps(
                 {
                     "repo": args.repo,
+                    "mode": mode,
                     "manifest_entry": manifest_entry,
+                    "creation_steps": creation_steps,
+                    "first_commands": first_commands,
                     "acceptance_checklist": acceptance_checklist,
                 },
                 indent=2,
@@ -1697,6 +1717,14 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
 
     print(f"# Onboard {args.repo}")
     print()
+    print(f"Mode: `{mode}`")
+    print()
+    if creation_steps:
+        print("## Creation / Intake Steps")
+        print()
+        for step in creation_steps:
+            print(f"- {step}")
+        print()
     print("## Manifest entry")
     print()
     print("```yaml")
@@ -1707,24 +1735,60 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print()
     print("## First commands")
     print()
-    print(f"- `python -m aio_fleet export-app-manifest --repo {args.repo} --write`")
-    print(
-        f"- `python -m aio_fleet validate-repo --repo {args.repo} --repo-path ../{args.repo}`"
-    )
-    print(
-        f"- `python -m aio_fleet sync-catalog --repo {args.repo} --catalog-path ../awesome-unraid --dry-run`"
-    )
-    print(f"- `python -m aio_fleet upstream monitor --repo {args.repo} --dry-run`")
-    print(
-        f"- `python -m aio_fleet registry verify --repo {args.repo} --sha <commit-sha> --dry-run --verbose`"
-    )
-    print(f"- `python -m aio_fleet support-thread render --repo {args.repo}`")
+    for command in first_commands:
+        print(f"- `{command}`")
     print()
     print("## Acceptance checklist")
     print()
     for item in acceptance_checklist:
         print(f"- [ ] {item}")
     return 0
+
+
+def _onboarding_creation_steps(repo: str, mode: str) -> list[str]:
+    if mode == "new-from-template":
+        return [
+            f"create JSONbored/{repo} from JSONbored/unraid-aio-template",
+            f"clone JSONbored/{repo} locally",
+            "keep only app-specific runtime/source/template/docs/tests in the repo",
+            "add the repo to fleet.yml before exporting .aio-fleet.yml",
+        ]
+    if mode == "rehab":
+        return [
+            f"treat existing JSONbored/{repo} as a non-blocking rehab repo",
+            "sync local checkout to main before editing",
+            "audit legacy files that aio-fleet now replaces",
+            "do not promote to active fleet until central validation passes",
+        ]
+    return []
+
+
+def _onboarding_first_commands(repo: str, mode: str) -> list[str]:
+    commands = []
+    if mode == "rehab":
+        commands.extend(
+            [
+                f"git -C ../{repo} fetch --prune origin",
+                f"python -m aio_fleet onboard-repo --repo {repo} --mode rehab --format json",
+                "# after adding the repo to fleet.yml:",
+            ]
+        )
+    commands.extend(
+        [
+            f"python -m aio_fleet export-app-manifest --repo {repo} --write",
+            f"python -m aio_fleet validate-repo --repo {repo} --repo-path ../{repo}",
+            f"python -m aio_fleet sync-catalog --repo {repo} --catalog-path ../awesome-unraid --dry-run",
+            f"python -m aio_fleet upstream monitor --repo {repo} --dry-run",
+            f"python -m aio_fleet registry verify --repo {repo} --sha <commit-sha> --dry-run --verbose",
+            f"python -m aio_fleet support-thread render --repo {repo}",
+        ]
+    )
+    if mode == "new-from-template":
+        commands.insert(
+            0,
+            f"gh repo create JSONbored/{repo} --template JSONbored/unraid-aio-template --public",
+        )
+    return commands
 
 
 def cmd_export_app_manifest(args: argparse.Namespace) -> int:
@@ -2144,6 +2208,12 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_update.add_argument("--write", action="store_true")
     dashboard_update.add_argument("--dry-run", action="store_false", dest="write")
     dashboard_update.add_argument("--registry", action="store_true")
+    dashboard_update.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    dashboard_update.add_argument("--stale-days", type=int, default=7)
     dashboard_update.add_argument("--format", choices=["text", "json"], default="text")
     dashboard_update.set_defaults(func=cmd_fleet_dashboard_update, write=False)
 
@@ -2234,6 +2304,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     onboard = sub.add_parser("onboard-repo")
     onboard.add_argument("--repo", required=True)
+    onboard.add_argument(
+        "--mode",
+        choices=["existing", "new-from-template", "rehab"],
+        default="existing",
+    )
     onboard.add_argument(
         "--profile",
         default="changelog-version",
