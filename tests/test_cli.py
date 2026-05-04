@@ -16,6 +16,7 @@ from aio_fleet.cli import (
     cmd_check_run,
     cmd_debt_report,
     cmd_export_app_manifest,
+    cmd_fleet_dashboard_commands,
     cmd_fleet_dashboard_update,
     cmd_infra_doctor,
     cmd_onboard_repo,
@@ -273,6 +274,34 @@ def test_fleet_dashboard_update_dry_run_outputs_state(
     report = json.loads(capsys.readouterr().out)
     assert report["action"] == "would-create"  # nosec B101
     assert report["state"]["rows"][0]["repo"] == "example-aio"  # nosec B101
+
+
+def test_fleet_dashboard_commands_outputs_github_output(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "dashboard_issue_commands",
+        lambda **_kwargs: {
+            "is_dashboard": True,
+            "requested": True,
+            "commands": {"rescan": True, "upstream_monitor": False},
+        },
+    )
+
+    result = cmd_fleet_dashboard_commands(
+        Namespace(
+            issue_repo="JSONbored/aio-fleet",
+            issue_number=55,
+            format="github-output",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert capsys.readouterr().out.splitlines() == [  # nosec B101
+        "is_dashboard=true",
+        "requested=true",
+        "rescan=true",
+        "upstream_monitor=false",
+    ]
 
 
 def test_poll_does_not_publish_template_profile_targets(

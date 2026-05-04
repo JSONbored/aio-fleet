@@ -6,6 +6,9 @@ on:
   schedule:
     - cron: 17 * * * *
     - cron: 43 10 * * *
+  issues:
+    types:
+      - edited
   workflow_dispatch:
     inputs:
       mode:
@@ -55,6 +58,7 @@ on:
 permissions:
   contents: write
   checks: write
+  issues: write
   pull-requests: write
 
 concurrency:
@@ -96,7 +100,7 @@ jobs:
 
       - name: Resolve GitHub App token
         id: app-token
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'issues' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -108,6 +112,19 @@ jobs:
           fi
           echo "::add-mask::${token}"
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Read dashboard issue controls
+        id: dashboard-controls
+        if: ${{ github.event_name == 'issues' && github.event.action == 'edited' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet fleet-dashboard commands \
+            --issue-repo "${{ github.repository }}" \
+            --issue-number "${{ github.event.issue.number }}" \
+            --format github-output >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
@@ -195,14 +212,14 @@ jobs:
           PY
 
       - name: Monitor upstream releases
-        if: ${{ github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor' }}
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout and PR creation
         run: |
           set -euo pipefail
@@ -356,16 +373,110 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Checkout dashboard repos
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for dashboard checkout auth
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          import yaml
+
+          manifest = yaml.safe_load(Path("fleet.yml").read_text())
+          owner = manifest["owner"]
+          token = os.environ["APP_TOKEN"]
+          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+          checkout_root = Path("dashboard-checkouts").resolve()
+          checkout_root.mkdir(exist_ok=True)
+          refs = []
+
+          for name, repo_config in manifest.get("repos", {}).items():
+              path = checkout_root / name
+              repo_config["path"] = str(path)
+              refs.append(
+                  (
+                      name,
+                      repo_config.get("github_repo", f"{owner}/{name}"),
+                      path,
+                  )
+              )
+
+          dashboard = manifest.get("dashboard", {})
+          if isinstance(dashboard, dict):
+              for group in ("destination_repos", "rehab_repos"):
+                  for name, repo_config in dashboard.get(group, {}).items():
+                      if not isinstance(repo_config, dict):
+                          continue
+                      path = checkout_root / name
+                      repo_config["path"] = str(path)
+                      if repo_config.get("catalog_path"):
+                          repo_config["catalog_path"] = str(path)
+                      refs.append(
+                          (
+                              name,
+                              repo_config.get("github_repo", f"{owner}/{name}"),
+                              path,
+                          )
+                      )
+
+          seen = set()
+          for name, github_repo, path in refs:
+              key = (github_repo, str(path))
+              if key in seen:
+                  continue
+              seen.add(key)
+              if path.exists():
+                  shutil.rmtree(path)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              subprocess.run(
+                  [
+                      "git",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "clone",
+                      f"https://github.com/{github_repo}.git",
+                      str(path),
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  [
+                      "git",
+                      "-C",
+                      str(path),
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--recursive",
+                  ],
+                  check=True,
+              )
+              print(f"checked out {name} -> {path}")
+          Path("fleet-dashboard.manifest.yml").write_text(
+              yaml.safe_dump(manifest, sort_keys=False)
+          )
+          PY
+
       - name: Update fleet dashboard issue
-        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard') }}
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         run: |
           set -euo pipefail
           args=(fleet-dashboard update --format json)
+          if [[ -f fleet-dashboard.manifest.yml ]]; then
+            args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          fi
           if [[ "${MUTATE}" == "true" ]]; then
             args+=(--write)
           else
