@@ -30,18 +30,30 @@ The durable operator view is one issue in `JSONbored/aio-fleet`:
 
 ```bash
 python -m aio_fleet fleet-dashboard update --dry-run
+python -m aio_fleet fleet-dashboard update --dry-run --include-activity
 python -m aio_fleet fleet-dashboard update --write
 ```
 
 The issue is labeled `fleet-dashboard` and includes a hidden JSON state block so
 scheduled jobs can compare transitions later. It tracks:
 
+- active app repos from `fleet.yml`;
+- destination repos such as `awesome-unraid`, rendered as catalog/downstream
+  infrastructure rather than app packages;
+- rehab repos such as `nanoclaw-aio`, rendered as non-blocking onboarding work
+  until they are explicitly promoted into the active fleet;
+- open PR/issue counts, draft PRs, blocked PRs, stale PRs, and clean PRs;
 - upstream current/latest versions;
 - PR URL and merge state;
 - `aio-fleet / required` check state;
 - signed/verified commit state;
 - registry and release readiness placeholders;
+- source-to-catalog sync queue for destination repos;
 - next action for each component.
+
+`nanoclaw-aio` is dashboard-visible but excluded from `validate --all`,
+publish, registry verification, and upstream monitor `--all` until a rehab PR
+proves the repo is ready for active fleet management.
 
 Missing alert secrets are warnings in the dashboard by default. They only become
 failures when a command is run with an explicit required-alerts mode.

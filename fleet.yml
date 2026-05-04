@@ -2,6 +2,22 @@ schema_version: 1
 owner: JSONbored
 default_branch: main
 awesome_unraid_repository: JSONbored/awesome-unraid
+dashboard:
+  destination_repos:
+    awesome-unraid:
+      path: /Users/shadowbook/Documents/awesome-unraid
+      github_repo: JSONbored/awesome-unraid
+      role: catalog destination
+      description: Community Apps-facing XML and icon catalog for validated AIO source repo changes.
+      catalog_path: /Users/shadowbook/Documents/awesome-unraid
+      next_action: Validate catalog state and sync source repo changes only after source validation passes.
+  rehab_repos:
+    nanoclaw-aio:
+      path: /Users/shadowbook/Documents/nanoclaw-aio
+      github_repo: JSONbored/nanoclaw-aio
+      status: rehab
+      description: Neglected pre-aio-fleet AIO repo that needs a full template/runtime/container overhaul before active fleet promotion.
+      next_action: Run a rehab audit, remove legacy shared files, export .aio-fleet.yml, then prove aio-fleet / required before promotion.
 defaults:
   python_version: "3.13"
   trunk_org_slug: aethereal
