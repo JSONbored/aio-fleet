@@ -795,6 +795,12 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
 
 def cmd_fleet_dashboard_update(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
+    dashboard_config = manifest.raw.get("dashboard", {})
+    configured_issue_number = (
+        dashboard_config.get("issue_number")
+        if isinstance(dashboard_config, dict)
+        else None
+    )
     report = dashboard_report(
         manifest,
         include_registry=args.registry,
@@ -805,6 +811,7 @@ def cmd_fleet_dashboard_update(args: argparse.Namespace) -> int:
     result = upsert_dashboard_issue(
         issue_repo=args.issue_repo,
         body=str(report["body"]),
+        issue_number=args.issue_number or configured_issue_number,
         dry_run=not args.write,
     )
     output = {
@@ -2227,6 +2234,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard_update = dashboard_sub.add_parser("update")
     dashboard_update.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    dashboard_update.add_argument("--issue-number", type=int)
     dashboard_update.add_argument("--write", action="store_true")
     dashboard_update.add_argument("--dry-run", action="store_false", dest="write")
     dashboard_update.add_argument("--registry", action="store_true")

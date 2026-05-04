@@ -3,6 +3,7 @@ owner: JSONbored
 default_branch: main
 awesome_unraid_repository: JSONbored/awesome-unraid
 dashboard:
+  issue_number: 55
   destination_repos:
     awesome-unraid:
       path: /Users/shadowbook/Documents/awesome-unraid
