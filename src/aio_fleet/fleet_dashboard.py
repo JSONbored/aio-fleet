@@ -244,10 +244,9 @@ def upsert_dashboard_issue(
                 title,
                 "--body",
                 body,
-                "--add-label",
-                label,
             ]
         )
+        _add_dashboard_label(issue_repo, number=number, label=label)
         _close_duplicate_dashboard_issues(
             issue_repo,
             canonical_number=number,
@@ -826,6 +825,22 @@ def _ensure_label(issue_repo: str, *, label: str) -> None:
             "0969da",
             "--description",
             "Central AIO fleet update dashboard",
+        ],
+        check=False,
+    )
+
+
+def _add_dashboard_label(issue_repo: str, *, number: int, label: str) -> None:
+    _run(
+        [
+            "gh",
+            "issue",
+            "edit",
+            str(number),
+            "--repo",
+            issue_repo,
+            "--add-label",
+            label,
         ],
         check=False,
     )
