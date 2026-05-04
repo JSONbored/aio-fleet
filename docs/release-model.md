@@ -43,8 +43,12 @@ Publish jobs still require:
 Upstream bumps are initiated centrally with `aio-fleet upstream monitor`. The
 monitor reads provider and digest rules from `.aio-fleet.yml`, updates
 version/digest pins when configured for PR strategy, and opens an app repo PR for
-human review. After that PR merges, normal control-plane validation and publish
-rules apply.
+human review. Generated upstream commits must be verified/signed. If the writer
+cannot produce a verified commit, the branch update fails instead of leaving a
+PR that branch protection will later reject. Notify-only monitors never open
+PRs; they appear in the fleet dashboard until a human decides whether the
+packaged app path is affected. After an upstream PR merges, normal
+control-plane validation and publish rules apply.
 
 `aio-fleet registry publish` and `aio-fleet registry verify` compute the tag set
 from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
@@ -68,6 +72,9 @@ event is an explicit recovery.
 Central release commands:
 
 ```bash
+python -m aio_fleet fleet-dashboard update --dry-run
+python -m aio_fleet alert doctor
+python -m aio_fleet alert test --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
 python -m aio_fleet release publish --repo sure-aio --dry-run

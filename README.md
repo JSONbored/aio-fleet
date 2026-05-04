@@ -20,7 +20,11 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   per repo so validation and publish work scales with the fleet instead of
   blocking behind one serial app build.
 - `upstream monitor` detects manifest-declared upstream version/digest changes
-  and can open or update app repo PRs with the GitHub App identity.
+  and can open or update app repo PRs with the GitHub App identity. Generated
+  commits are verified before the PR is considered actionable.
+- `fleet-dashboard update` maintains one central issue in `aio-fleet` for
+  upstream updates, PR state, signed commit state, required checks, registry
+  placeholders, and next actions.
 - App test dependencies are installed from `aio-fleet[app-tests]`; app repos no
   longer carry shared `requirements-dev.txt` files.
 - `registry verify/publish` computes and verifies Docker Hub plus GHCR tags from
@@ -59,7 +63,10 @@ python -m aio_fleet poll --format json
 python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet upstream monitor --all --dry-run
 python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
+python -m aio_fleet fleet-dashboard update --dry-run
 python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
+python -m aio_fleet alert doctor
+python -m aio_fleet alert test --dry-run
 python -m aio_fleet alert send --event registry-audit --report-json registry-report.json --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
@@ -99,9 +106,11 @@ control-plane automation, drift detection, and GitHub infrastructure as code.
 ## Docs
 
 - [Architecture](docs/architecture.md)
+- [Fleet operations](docs/fleet-operations.md)
 - [Repository onboarding](docs/onboarding.md)
 - [Release model](docs/release-model.md)
 - [Required checks](docs/required-checks.md)
 - [Dify launch gate](docs/dify-launch-gate.md)
 - [GitHub App automation track](docs/github-app.md)
+- [Fleetbot extraction plan](docs/fleetbot.md)
 - [Content series outline](docs/content-series.md)

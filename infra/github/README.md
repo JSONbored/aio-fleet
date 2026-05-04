@@ -44,6 +44,8 @@ The module currently manages:
 - public repo metadata, topics, homepage, and basic feature toggles
 - `main` branch required status checks
 - signed commits, conversation resolution, review requirements, and strict checks
+- merge method policy; rebase-merge stays disabled because it conflicts with
+  required signed commits
 - selected GitHub Actions allowlists
 - SHA pinning for selected actions
 - vulnerability alerts through `github_repository_vulnerability_alerts`
@@ -64,3 +66,10 @@ GitHub SHA pinning remains enabled, so callers must still use a full commit SHA.
 This avoids per-repo allowlist churn every time `aio-fleet` publishes a new
 workflow commit while preserving the security property that reusable workflow
 calls are pinned.
+
+## Required Check Source
+
+App repos should require one check: `aio-fleet / required`. The policy also
+records the GitHub App ID that must produce that check. `validate-github` checks
+`required_status_checks.checks[].app_id`, not only the context name, so a
+same-name workflow cannot satisfy branch protection by accident.

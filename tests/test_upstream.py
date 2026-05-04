@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aio_fleet import upstream
+from aio_fleet.github_writer import BranchCommitResult
 from aio_fleet.manifest import load_manifest
 
 
@@ -165,6 +166,99 @@ def test_create_upstream_pr_skips_notify_only_updates(tmp_path: Path) -> None:
         "action": "skipped",
         "reason": "no-pr-strategy-updates",
     }
+
+
+def test_create_upstream_pr_uses_verified_commit_writer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.1.0\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    repo = load_manifest(manifest).repo("example-aio")
+    result = upstream.UpstreamMonitorResult(
+        repo="example-aio",
+        component="aio",
+        name="Example",
+        strategy="pr",
+        source="github-tags",
+        current_version="1.0.0",
+        latest_version="1.1.0",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        dockerfile=repo_path / "Dockerfile",
+        version_key="UPSTREAM_VERSION",
+        digest_key="",
+        release_notes_url="https://example.invalid/releases",
+    )
+    seen: dict[str, object] = {}
+
+    def fake_commit(*_args, **kwargs) -> BranchCommitResult:
+        seen.update(kwargs)
+        return BranchCommitResult(
+            action="committed",
+            branch=str(kwargs["branch"]),
+            sha="a" * 40,
+            method="api",
+            verified=True,
+            verification={"verified": True, "reason": "valid"},
+            committed_paths=list(kwargs["paths"]),
+        )
+
+    monkeypatch.setattr(upstream, "commit_paths_to_branch", fake_commit)
+    monkeypatch.setattr(upstream, "upsert_pr", lambda *_args, **_kwargs: "https://pr")
+    monkeypatch.setattr(
+        upstream, "close_superseded_upstream_prs", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(upstream, "upsert_check_run", lambda *_args, **_kwargs: None)
+
+    action = upstream.create_or_update_upstream_pr(
+        repo, [result], dry_run=False, post_check=True
+    )
+
+    assert seen["branch"] == "codex/upstream-example-aio-1.1.0"  # nosec B101
+    assert seen["paths"] == ["Dockerfile"]  # nosec B101
+    assert seen["require_verified"] is True  # nosec B101
+    assert action["verified"] is True  # nosec B101
+    assert action["sha"] == "a" * 40  # nosec B101
+
+
+def test_upstream_body_mentions_source_first_catalog_sync(tmp_path: Path) -> None:
+    repo = load_manifest(_minimal_manifest(tmp_path)).repo("example-aio")
+    result = upstream.UpstreamMonitorResult(
+        repo="example-aio",
+        component="aio",
+        name="Example",
+        strategy="pr",
+        source="github-tags",
+        current_version="1.0.0",
+        latest_version="1.1.0",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        dockerfile=repo.path / "Dockerfile",
+        version_key="UPSTREAM_VERSION",
+        digest_key="",
+        release_notes_url="https://example.invalid/releases",
+    )
+
+    body = upstream.upstream_body(repo, [result])
+
+    assert "catalog sync follows the validated source repo" in body  # nosec B101
+    assert "Release notes: https://example.invalid/releases" in body  # nosec B101
 
 
 def _minimal_manifest(repo_path: Path) -> Path:

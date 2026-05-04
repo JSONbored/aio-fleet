@@ -62,6 +62,10 @@ def _repository_failures(
         "has_wiki": data.get("has_wiki"),
         "delete_branch_on_merge": data.get("delete_branch_on_merge"),
         "allow_auto_merge": data.get("allow_auto_merge"),
+        "allow_merge_commit": data.get("allow_merge_commit"),
+        "allow_rebase_merge": data.get("allow_rebase_merge"),
+        "allow_squash_merge": data.get("allow_squash_merge"),
+        "allow_update_branch": data.get("allow_update_branch"),
     }
     for key, actual in comparisons.items():
         if key in expected and actual != expected[key]:
@@ -87,6 +91,15 @@ def _branch_protection_failures(
         failures.append(
             f"{repo_name}: required checks drift: expected {sorted(expected_checks)}, got {sorted(actual_checks)}"
         )
+    expected_check_app_id = policy.get("required_check_app_id")
+    if expected_check_app_id is not None:
+        check_app_failures = _required_check_app_failures(
+            repo_name,
+            data.get("required_status_checks", {}).get("checks", []),
+            expected_checks,
+            int(expected_check_app_id),
+        )
+        failures.extend(check_app_failures)
 
     strict = data.get("required_status_checks", {}).get("strict")
     if (
@@ -111,6 +124,29 @@ def _branch_protection_failures(
         if key in expected and actual != expected[key]:
             failures.append(
                 f"{repo_name}: branch protection {key} expected {expected[key]!r}, got {actual!r}"
+            )
+    return failures
+
+
+def _required_check_app_failures(
+    repo_name: str,
+    checks: Any,
+    expected_contexts: list[str],
+    expected_app_id: int,
+) -> list[str]:
+    if not isinstance(checks, list):
+        checks = []
+    by_context = {
+        str(check.get("context", "")): check.get("app_id")
+        for check in checks
+        if isinstance(check, dict)
+    }
+    failures: list[str] = []
+    for context in expected_contexts:
+        actual = by_context.get(context)
+        if actual != expected_app_id:
+            failures.append(
+                f"{repo_name}: required check {context!r} app_id expected {expected_app_id}, got {actual!r}"
             )
     return failures
 

@@ -11,9 +11,12 @@ from types import SimpleNamespace
 from aio_fleet import cli
 from aio_fleet.cli import (
     _repo_python,
+    cmd_alert_doctor,
+    cmd_alert_test,
     cmd_check_run,
     cmd_debt_report,
     cmd_export_app_manifest,
+    cmd_fleet_dashboard_update,
     cmd_infra_doctor,
     cmd_onboard_repo,
     cmd_poll,
@@ -137,6 +140,66 @@ def test_check_run_dry_run_outputs_payload(tmp_path: Path, capsys) -> None:
     assert payload["conclusion"] == "success"  # nosec B101
 
 
+def test_alert_doctor_warns_without_required_alerts(capsys) -> None:
+    result = cmd_alert_doctor(
+        Namespace(
+            kuma_url="",
+            webhook_url="",
+            require_alerts=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["warnings"]  # nosec B101
+    assert report["ok"] is True  # nosec B101
+
+
+def test_alert_doctor_can_require_alerts(capsys) -> None:
+    result = cmd_alert_doctor(
+        Namespace(
+            kuma_url="",
+            webhook_url="",
+            require_alerts=True,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["findings"]  # nosec B101
+
+
+def test_alert_test_forces_webhook(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "emit_alert",
+        lambda *_args, **_kwargs: {"kuma": "would-send", "webhook": "would-send"},
+    )
+
+    result = cmd_alert_test(
+        Namespace(
+            event="upstream-update",
+            status="warning",
+            summary="test",
+            repo=None,
+            component=None,
+            dedupe_key=None,
+            details_url=None,
+            kuma_url="https://kuma",
+            webhook_url="https://hook",
+            webhook_format="json",
+            dry_run=True,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["webhook"] == "would-send"  # nosec B101
+
+
 def test_poll_missing_checks_only_skips_satisfied_targets(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -171,6 +234,45 @@ def test_poll_missing_checks_only_skips_satisfied_targets(
 
     assert result == 0  # nosec B101
     assert json.loads(capsys.readouterr().out) == {"targets": []}  # nosec B101
+
+
+def test_fleet_dashboard_update_dry_run_outputs_state(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "dashboard_report",
+        lambda *_args, **_kwargs: {
+            "body": "# Dashboard\n",
+            "state": {"rows": [{"repo": "example-aio"}]},
+        },
+    )
+    monkeypatch.setattr(
+        cli,
+        "upsert_dashboard_issue",
+        lambda **_kwargs: SimpleNamespace(
+            action="would-create",
+            number=None,
+            url="",
+        ),
+    )
+
+    result = cmd_fleet_dashboard_update(
+        Namespace(
+            manifest=str(manifest),
+            issue_repo="JSONbored/aio-fleet",
+            registry=False,
+            write=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["action"] == "would-create"  # nosec B101
+    assert report["state"]["rows"][0]["repo"] == "example-aio"  # nosec B101
 
 
 def test_poll_does_not_publish_template_profile_targets(

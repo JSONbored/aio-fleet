@@ -19,7 +19,12 @@ It does not replace the existing source-of-truth repos:
   central policy code.
 - `upstream monitor` scans manifest-declared upstream providers, refreshes
   Dockerfile version/digest pins when configured, and opens app repo PRs for
-  human review.
+  human review. Generated PR branches must be committed through the verified
+  writer; unsigned commits are rejected before branch protection can block them
+  later.
+- `fleet-dashboard update` maintains one central `aio-fleet` issue that shows
+  upstream updates, PR links, required-check state, commit verification state,
+  registry/release placeholders, alert configuration warnings, and next actions.
 - `control-check` runs central validation/test/publish steps from `aio-fleet`
   and can post the final required check-run back to the app commit.
 - `check run` renders or upserts the required `aio-fleet / required` check-run
@@ -35,6 +40,8 @@ It does not replace the existing source-of-truth repos:
   repos no longer carry local workflows, Trunk config, git-cliff config,
   upstream scripts, release shims, shared test dependency files, or copied
   community-health boilerplate.
+- `alert doctor` and `alert test` verify low-noise heartbeat/webhook routing
+  without moving notification wiring back into app repos.
 
 GitHub-owned state and source-owned state stay separate:
 
