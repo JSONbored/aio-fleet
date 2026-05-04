@@ -213,11 +213,16 @@ def upsert_dashboard_issue(
     *,
     issue_repo: str,
     body: str,
+    issue_number: int | None = None,
     title: str = DASHBOARD_TITLE,
     label: str = DASHBOARD_LABEL,
     dry_run: bool,
 ) -> DashboardIssueResult:
-    existing = _find_dashboard_issue(issue_repo, label=label)
+    existing = (
+        _dashboard_issue_by_number(issue_repo, issue_number)
+        if issue_number
+        else _find_dashboard_issue(issue_repo, label=label)
+    )
     if dry_run:
         return DashboardIssueResult(
             action="would-update" if existing else "would-create",
@@ -674,6 +679,37 @@ def _find_dashboard_issue(issue_repo: str, *, label: str) -> dict[str, Any] | No
         issue for issue in candidates if str(issue.get("title", "")) == DASHBOARD_TITLE
     ]
     return _newest_issue(exact_title)
+
+
+def _dashboard_issue_by_number(
+    issue_repo: str, issue_number: int | None
+) -> dict[str, Any] | None:
+    if not issue_number:
+        return None
+    result = _run(
+        [
+            "gh",
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            issue_repo,
+            "--json",
+            "number,title,url,labels,updatedAt,body,state",
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        issue = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(issue, dict):
+        return None
+    if str(issue.get("state", "")).upper() != "OPEN":
+        return None
+    return issue
 
 
 def _dashboard_issue_candidates(issue_repo: str, *, label: str) -> list[dict[str, Any]]:

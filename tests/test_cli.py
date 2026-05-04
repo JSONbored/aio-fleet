@@ -264,6 +264,7 @@ def test_fleet_dashboard_update_dry_run_outputs_state(
         Namespace(
             manifest=str(manifest),
             issue_repo="JSONbored/aio-fleet",
+            issue_number=None,
             registry=False,
             write=False,
             format="json",
