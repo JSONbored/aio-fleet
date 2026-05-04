@@ -57,7 +57,7 @@ repos:
     upstream_monitor:
       - component: aio
         name: Sure
-        source: github-tags
+        source: github-releases
         repo: we-promise/sure
         image: we-promise/sure
         digest_source: ghcr

@@ -135,6 +135,127 @@ repos:
     assert "ARG UPSTREAM_VERSION=1.0.0" in dockerfile.read_text()  # nosec B101
 
 
+def test_stable_filter_keeps_hotfix_and_excludes_alpha() -> None:
+    versions = ["v0.7.0", "v0.7.0-hotfix.1", "v0.7.1-alpha.2"]
+
+    filtered = upstream.filter_versions(versions, stable_only=True)
+
+    assert filtered == ["v0.7.0", "v0.7.0-hotfix.1"]  # nosec B101
+    assert sorted(filtered, key=upstream.version_sort_key)[-1] == (  # nosec B101
+        "v0.7.0-hotfix.1"
+    )
+
+
+def test_github_releases_accept_stable_hotfix_and_report_prerelease_skips(
+    monkeypatch,
+) -> None:
+    def fake_http_json(url: str, _headers=None):
+        assert "repos/we-promise/sure/releases" in url  # nosec B101
+        return [
+            {"tag_name": "v0.7.1-alpha.2", "prerelease": True},
+            {"tag_name": "v0.7.1-alpha.1", "prerelease": False},
+            {"tag_name": "v0.7.0-hotfix.1", "prerelease": False},
+            {"tag_name": "v0.7.0", "prerelease": False},
+        ]
+
+    monkeypatch.setattr(upstream, "http_json", fake_http_json)
+
+    latest, skipped = upstream.latest_github_release_result(
+        "we-promise/sure", stable_only=True, strip_prefix="v"
+    )
+
+    assert latest == "0.7.0-hotfix.1"  # nosec B101
+    assert {item["version"]: item["reason"] for item in skipped} == {  # nosec B101
+        "0.7.1-alpha.2": "github-prerelease",
+        "0.7.1-alpha.1": "version-prerelease",
+    }
+
+
+def test_sure_hotfix_monitor_detects_stable_release_and_digest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=0.7.0\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:old\n"
+        "FROM ghcr.io/we-promise/sure:${UPSTREAM_VERSION}@${UPSTREAM_IMAGE_DIGEST}\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    upstream_monitor:
+      - component: aio
+        name: Sure
+        source: github-releases
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+""")
+
+    def fake_http_json(url: str, _headers=None):
+        assert "repos/we-promise/sure/releases" in url  # nosec B101
+        return [
+            {"tag_name": "v0.7.1-alpha.2", "prerelease": True},
+            {"tag_name": "v0.7.0-hotfix.1", "prerelease": False},
+            {"tag_name": "v0.7.0", "prerelease": False},
+        ]
+
+    def fake_digest(
+        image: str, version: str, *, registry: str, prefix: str = ""
+    ) -> str:
+        assert image == "we-promise/sure"  # nosec B101
+        assert version == "0.7.0-hotfix.1"  # nosec B101
+        assert registry == "ghcr"  # nosec B101
+        assert prefix == ""  # nosec B101
+        return "sha256:f49fc95b95706fcb7752466edef3c902ba9a746ed6b8ae1206ff22e180ac5006"
+
+    monkeypatch.setattr(upstream, "http_json", fake_http_json)
+    monkeypatch.setattr(upstream, "registry_digest_for_version", fake_digest)
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("sure-aio"))[0]
+
+    assert result.latest_version == "0.7.0-hotfix.1"  # nosec B101
+    assert result.version_update is True  # nosec B101
+    assert result.latest_digest == (  # nosec B101
+        "sha256:f49fc95b95706fcb7752466edef3c902ba9a746ed6b8ae1206ff22e180ac5006"
+    )
+    assert result.skipped_versions == (  # nosec B101
+        {"version": "0.7.1-alpha.2", "reason": "github-prerelease"},
+    )
+
+
+def test_digest_lookup_tries_unprefixed_hotfix_image_tag(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def fake_digest(_image: str, tag: str, *, registry: str) -> str:
+        assert registry == "ghcr"  # nosec B101
+        seen.append(tag)
+        return "sha256:hotfix" if tag == "0.7.0-hotfix.1" else ""
+
+    monkeypatch.setattr(upstream, "registry_digest", fake_digest)
+
+    digest = upstream.registry_digest_for_version(
+        "we-promise/sure", "0.7.0-hotfix.1", registry="ghcr"
+    )
+
+    assert digest == "sha256:hotfix"  # nosec B101
+    assert seen[0] == "0.7.0-hotfix.1"  # nosec B101
+
+
 def test_create_upstream_pr_skips_notify_only_updates(tmp_path: Path) -> None:
     result = upstream.UpstreamMonitorResult(
         repo="example-aio",
