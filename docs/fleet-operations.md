@@ -22,7 +22,27 @@ under branch protection. `strategy: notify` never opens a PR; it appears in the
 fleet dashboard for manual triage.
 
 Generated PRs should contain upstream release links, changed source paths, and
-the explicit rule that catalog sync follows source validation.
+the explicit rule that catalog sync follows source validation. They also include
+an initial safety summary. The dashboard recomputes that safety state once the
+PR, changed files, signed commits, and check results are visible.
+
+Use the safety assessor before merging an upstream PR:
+
+```bash
+python -m aio_fleet upstream assess --repo <repo> --pr <number> --format json
+```
+
+Safety levels are deliberately pragmatic:
+
+- `ok`: expected files changed, no obvious template/runtime risk signals, and
+  review can proceed.
+- `warn`: human review is required for release-note keywords, XML config target
+  deltas, missing runtime-smoke evidence, or other uncertainty.
+- `blocked`: clear failures such as unexpected files, missing manifest-required
+  template targets, failed required checks, failed runtime checks, or unverified
+  generated commits.
+- `manual`: notify-only updates such as `mem0-aio`, where the packaged app path
+  must be assessed before creating a source PR.
 
 ## Fleet Dashboard
 
@@ -47,6 +67,7 @@ scheduled jobs can compare transitions later. It tracks:
 - PR URL and merge state;
 - `aio-fleet / required` check state;
 - signed/verified commit state;
+- safety level, config delta, template impact, and runtime smoke state;
 - registry and release readiness placeholders;
 
 The `Controls` section has durable checkbox commands:

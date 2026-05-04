@@ -47,6 +47,7 @@ from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_ma
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import find_release_target_commit, latest_changelog_version
+from aio_fleet.safety import assess_upstream_pr
 from aio_fleet.upstream import (
     create_or_update_upstream_pr,
     monitor_repo,
@@ -1137,6 +1138,35 @@ def cmd_upstream_monitor(args: argparse.Namespace) -> int:
                     )
                 )
     return 1 if failed else 0
+
+
+def cmd_upstream_assess(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    if not args.pr and not args.branch:
+        print("--pr or --branch is required", file=sys.stderr)
+        return 1
+    assessment = assess_upstream_pr(
+        repo,
+        pr_number=args.pr,
+        branch=args.branch,
+    )
+    payload = assessment.to_dict()
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(
+            "{repo}: safety={safety_level} confidence={confidence:.2f} next={next_action}".format(
+                **payload
+            )
+        )
+        for failure in payload["failures"]:
+            print(f"- blocking: {failure}")
+        for warning in payload["warnings"]:
+            print(f"- warning: {warning}")
+    return 1 if assessment.safety_level == "blocked" else 0
 
 
 def _run_generator_for_write(repo: RepoConfig) -> None:
@@ -2313,6 +2343,13 @@ def build_parser() -> argparse.ArgumentParser:
     upstream_monitor.add_argument("--dry-run", action="store_true")
     upstream_monitor.add_argument("--format", choices=["text", "json"], default="text")
     upstream_monitor.set_defaults(func=cmd_upstream_monitor)
+    upstream_assess = upstream_sub.add_parser("assess")
+    upstream_assess.add_argument("--repo", required=True)
+    upstream_assess.add_argument("--repo-path")
+    upstream_assess.add_argument("--pr", type=int)
+    upstream_assess.add_argument("--branch")
+    upstream_assess.add_argument("--format", choices=["text", "json"], default="text")
+    upstream_assess.set_defaults(func=cmd_upstream_assess)
 
     release = sub.add_parser("release")
     release_sub = release.add_subparsers(dest="release_command", required=True)
