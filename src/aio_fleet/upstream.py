@@ -22,6 +22,18 @@ SEMVER_RE = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
     r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?$"
 )
+PRERELEASE_SUFFIXES = {
+    "alpha",
+    "beta",
+    "canary",
+    "dev",
+    "nightly",
+    "pre",
+    "preview",
+    "rc",
+    "snapshot",
+}
+STABLE_MAINTENANCE_SUFFIXES = {"hotfix"}
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,7 @@ class UpstreamMonitorResult:
     version_key: str
     digest_key: str
     release_notes_url: str
+    skipped_versions: tuple[dict[str, str], ...] = ()
 
     @property
     def updates_available(self) -> bool:
@@ -94,6 +107,7 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
     strategy = str(config.get("strategy", "notify"))
     latest_version = current_version
     latest_digest = current_digest
+    skipped_versions: tuple[dict[str, str], ...] = ()
 
     if source == "github-tags":
         latest_version = latest_github_tag(
@@ -102,7 +116,7 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
             strip_prefix=str(config.get("version_strip_prefix", "")),
         )
     elif source == "github-releases":
-        latest_version = latest_github_release(
+        latest_version, skipped_versions = latest_github_release_result(
             str(config["repo"]),
             stable_only=bool(config.get("stable_only", True)),
             strip_prefix=str(config.get("version_strip_prefix", "")),
@@ -151,6 +165,7 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
         digest_key=digest_key,
         release_notes_url=str(config.get("release_notes_url", "")).strip()
         or default_release_notes_url(config),
+        skipped_versions=skipped_versions,
     )
 
 
@@ -197,10 +212,22 @@ def latest_github_tag(repo: str, *, stable_only: bool, strip_prefix: str = "") -
 def latest_github_release(
     repo: str, *, stable_only: bool, strip_prefix: str = ""
 ) -> str:
+    version, _skipped = latest_github_release_result(
+        repo,
+        stable_only=stable_only,
+        strip_prefix=strip_prefix,
+    )
+    return version
+
+
+def latest_github_release_result(
+    repo: str, *, stable_only: bool, strip_prefix: str = ""
+) -> tuple[str, tuple[dict[str, str], ...]]:
     data = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=100")
     if not isinstance(data, list):
         raise ValueError(f"unexpected GitHub release response for {repo}")
     tags: list[str] = []
+    skipped: list[dict[str, str]] = []
     for entry in data:
         if not isinstance(entry, dict):
             continue
@@ -208,14 +235,34 @@ def latest_github_release(
         if not isinstance(tag, str) or not SEMVER_RE.match(tag):
             continue
         if stable_only and bool(entry.get("prerelease")):
+            skipped.append(
+                {
+                    "tag": tag,
+                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "reason": "github-prerelease",
+                }
+            )
+            continue
+        if stable_only and is_prerelease_version(tag):
+            skipped.append(
+                {
+                    "tag": tag,
+                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "reason": "version-prerelease",
+                }
+            )
             continue
         tags.append(tag)
     if not tags:
         raise ValueError(f"no matching GitHub releases found for {repo}")
-    return normalize_version(
-        sorted(tags, key=version_sort_key)[-1],
-        strip_prefix=strip_prefix,
-    )
+    latest_tag = sorted(tags, key=version_sort_key)[-1]
+    latest = normalize_version(latest_tag, strip_prefix=strip_prefix)
+    skipped_report = [
+        {"version": item["version"], "reason": item["reason"]}
+        for item in skipped
+        if version_sort_key(item["tag"]) > version_sort_key(latest_tag)
+    ][:10]
+    return latest, tuple(skipped_report)
 
 
 def latest_registry_tag(
@@ -376,7 +423,7 @@ def filter_versions(values: list[str], stable_only: bool) -> list[str]:
     for value in values:
         if not SEMVER_RE.match(value):
             continue
-        if stable_only and parse_version(value)[3]:
+        if stable_only and is_prerelease_version(value):
             continue
         candidates.append(value)
     if not candidates:
@@ -390,14 +437,33 @@ def parse_version(
     match = SEMVER_RE.match(value)
     if not match:
         raise ValueError(f"unsupported version format: {value}")
-    prerelease = match.group("prerelease") or ""
+    suffix = match.group("prerelease") or ""
     return (
         int(match.group("major")),
         int(match.group("minor")),
         int(match.group("patch")),
-        bool(prerelease),
-        prerelease_sort_key(prerelease),
+        is_prerelease_suffix(suffix),
+        prerelease_sort_key(suffix),
     )
+
+
+def is_prerelease_version(value: str) -> bool:
+    match = SEMVER_RE.match(value)
+    if not match:
+        return False
+    return is_prerelease_suffix(match.group("prerelease") or "")
+
+
+def is_prerelease_suffix(suffix: str) -> bool:
+    if not suffix:
+        return False
+    label = suffix.split(".", 1)[0].split("-", 1)[0].lower()
+    if label in STABLE_MAINTENANCE_SUFFIXES:
+        return False
+    if label in PRERELEASE_SUFFIXES:
+        return True
+    # Unknown suffixes stay prerelease-like until a repo needs an explicit stable allowlist entry.
+    return True
 
 
 def prerelease_sort_key(prerelease: str) -> tuple[tuple[int, object], ...]:
@@ -441,7 +507,7 @@ def default_release_notes_url(config: dict[str, Any]) -> str:
 
 
 def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
-    return {
+    data: dict[str, object] = {
         "repo": result.repo,
         "component": result.component,
         "name": result.name,
@@ -457,6 +523,10 @@ def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
         "dockerfile": str(result.dockerfile),
         "release_notes_url": result.release_notes_url,
     }
+    skipped_versions = getattr(result, "skipped_versions", ())
+    if skipped_versions:
+        data["skipped_versions"] = list(skipped_versions)
+    return data
 
 
 def create_or_update_upstream_pr(
