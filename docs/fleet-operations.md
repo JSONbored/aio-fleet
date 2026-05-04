@@ -70,6 +70,11 @@ the heartbeat without sending a separate webhook digest.
 - Unsigned upstream PR: regenerate the branch through the verified writer or
   use local `AIO_FLEET_UPSTREAM_COMMIT_MODE=git-signed` only when a trusted
   signing key is available, then verify with the commit API.
+- Required check spoof/drift: run `python -m aio_fleet validate-github`; app
+  repos should require `aio-fleet / required` from the configured GitHub App
+  app ID.
+- Signed-commit merge failure: do not use GitHub rebase-merge. Use squash,
+  merge commit, or a local signed merge from an authorized maintainer.
 - Stale upstream PR: rerun upstream monitor; older generated upstream PRs are
   closed as superseded when a newer generated branch is created.
 - Notify-only update: review the upstream release manually, decide whether the

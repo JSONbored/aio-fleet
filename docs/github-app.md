@@ -57,6 +57,24 @@ the GitHub App control-plane boundary. That is why the branch-protection
 migration waits until the App identity posts a real `aio-fleet / required`
 check on an app PR.
 
+Branch protection should require the `aio-fleet / required` check from the
+GitHub App's app ID, not just a matching check name. The GitHub branch
+protection API exposes this as `required_status_checks.checks[].app_id`, and
+`aio-fleet validate-github` fails when the required check is present but tied to
+the wrong producer. This prevents a same-name workflow or status from
+accidentally satisfying the fleet gate.
+
+Required signed commits stay enabled. Generated commits use the GitHub App
+contents API with no custom author, committer, or signature fields so GitHub can
+apply bot signature verification. `aio-fleet` then checks the commit API and
+fails before PR creation if GitHub reports `verified=false`.
+
+Do not use GitHub rebase-merge on protected AIO repos. GitHub documents that
+its rebase-merge path rewrites commits and cannot sign those rewritten commits.
+With required signed commits enabled, the secure merge methods are squash or
+merge commit through GitHub's signed web flow, or a local signed merge pushed by
+an authorized maintainer.
+
 GHCR package publishing is separate from GitHub App check-runs. Use
 `AIO_FLEET_GHCR_TOKEN` for the central publish identity.
 
@@ -80,7 +98,8 @@ newlines.
 5. Verify generated PRs and catalog syncs pass required checks using the app
    identity.
 6. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
-7. Update branch protection to require only `aio-fleet / required`.
+7. Update branch protection to require only `aio-fleet / required` from the
+   GitHub App app ID.
 8. Run `aio-fleet cleanup-repo --verify`, or `aio-fleet cleanup-repo --fix --verify`
    when removing known retired shared files.
 9. Remove PAT secrets after the GitHub App path is stable.

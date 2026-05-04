@@ -16,6 +16,10 @@ The check must be created by a GitHub App or another token with Checks write
 permission. GitHub documents that check-run write access is available for GitHub
 Apps, and the required permission is repository `Checks: write`.
 
+The required check should also be pinned to the GitHub App producer. The live
+branch protection API should report `aio-fleet / required` with app ID
+`3565017`; `validate-github` treats any other app ID as drift.
+
 ## awesome-unraid
 
 Require:

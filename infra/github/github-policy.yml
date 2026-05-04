@@ -9,6 +9,9 @@ defaults:
     has_wiki: false
     delete_branch_on_merge: true
     allow_auto_merge: false
+    allow_merge_commit: true
+    allow_rebase_merge: false
+    allow_squash_merge: true
   branch_protection:
     strict_required_status_checks: true
     enforce_admins: false
@@ -34,21 +37,28 @@ repositories:
   sure-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   simplelogin-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   khoj-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   mem0-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   infisical-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   dify-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017
   signoz-aio:
     required_checks:
       - aio-fleet / required
+    required_check_app_id: 3565017

@@ -22,6 +22,7 @@ defaults:
     has_wiki: false
     delete_branch_on_merge: true
     allow_auto_merge: false
+    allow_rebase_merge: false
   branch_protection:
     strict_required_status_checks: true
     enforce_admins: false
@@ -40,6 +41,7 @@ repositories:
   example-aio:
     required_checks:
       - aio-build / validate-template
+    required_check_app_id: 12345
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -53,10 +55,15 @@ repositories:
                 "has_wiki": False,
                 "delete_branch_on_merge": True,
                 "allow_auto_merge": False,
+                "allow_rebase_merge": True,
             }
         if joined == "api repos/JSONbored/example-aio/branches/main/protection":
             return {
-                "required_status_checks": {"contexts": [], "strict": True},
+                "required_status_checks": {
+                    "contexts": [],
+                    "checks": [],
+                    "strict": True,
+                },
                 "enforce_admins": {"enabled": False},
                 "required_conversation_resolution": {"enabled": True},
                 "required_signatures": {"enabled": True},
@@ -87,5 +94,71 @@ repositories:
 
     assert any("required checks drift" in failure for failure in failures)  # nosec B101
     assert any(
+        "allow_rebase_merge expected False" in failure for failure in failures
+    )  # nosec B101
+    assert any(
+        "required check 'aio-build / validate-template' app_id expected 12345"
+        in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
         "selected action patterns drift" in failure for failure in failures
     )  # nosec B101
+
+
+def test_validate_github_policy_accepts_required_check_app_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+    allow_rebase_merge: false
+  branch_protection:
+    strict_required_status_checks: true
+    require_signed_commits: true
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 3565017
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {
+                "visibility": "public",
+                "allow_rebase_merge": False,
+            }
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": ["aio-fleet / required"],
+                    "checks": [{"context": "aio-fleet / required", "app_id": 3565017}],
+                    "strict": True,
+                },
+                "required_signatures": {"enabled": True},
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {"enabled": True}
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    assert (  # nosec B101
+        github_policy.validate_github_policy(
+            policy, repos=["example-aio"], check_secrets=False
+        )
+        == []
+    )
