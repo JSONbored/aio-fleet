@@ -37,6 +37,7 @@ from aio_fleet.control_plane import (
     run_central_trunk,
     run_steps,
 )
+from aio_fleet.fleet_dashboard import dashboard_report, upsert_dashboard_issue
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
@@ -726,6 +727,94 @@ def cmd_alert_send(args: argparse.Namespace) -> int:
         print(f"{payload.event}: alert={payload.status}")
         print(f"kuma: {result['kuma']}")
         print(f"webhook: {result['webhook']}")
+    return 0
+
+
+def cmd_alert_doctor(args: argparse.Namespace) -> int:
+    kuma_url = args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", "")
+    webhook_url = args.webhook_url or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", "")
+    findings: list[str] = []
+    warnings: list[str] = []
+    if not kuma_url:
+        warnings.append("AIO_FLEET_KUMA_PUSH_URL is not configured")
+    if not webhook_url:
+        warnings.append("AIO_FLEET_ALERT_WEBHOOK_URL is not configured")
+    if args.require_alerts:
+        findings.extend(warnings)
+        warnings = []
+    report = {
+        "kuma": "configured" if kuma_url else "missing",
+        "webhook": "configured" if webhook_url else "missing",
+        "warnings": warnings,
+        "findings": findings,
+        "ok": not findings,
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"alert kuma={report['kuma']} webhook={report['webhook']}")
+        for warning in warnings:
+            print(f"- warning: {warning}")
+        for finding in findings:
+            print(f"- {finding}")
+    return 1 if findings else 0
+
+
+def cmd_alert_test(args: argparse.Namespace) -> int:
+    payload = alert_payload(
+        event=args.event,
+        status=args.status,
+        summary=args.summary,
+        repo=args.repo or "",
+        component=args.component or "",
+        dedupe_key=args.dedupe_key or "alert-test:fleet:all",
+        details_url=args.details_url or "",
+        annotations=["aio-fleet alert test"],
+    )
+    result = emit_alert(
+        payload,
+        kuma_url=args.kuma_url or os.environ.get("AIO_FLEET_KUMA_PUSH_URL", ""),
+        webhook_url=args.webhook_url
+        or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", ""),
+        webhook_format=args.webhook_format,
+        force_webhook=True,
+        dry_run=args.dry_run,
+    )
+    if args.format == "json":
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"{payload.event}: alert-test={payload.status}")
+        print(f"kuma: {result['kuma']}")
+        print(f"webhook: {result['webhook']}")
+    return 0
+
+
+def cmd_fleet_dashboard_update(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    report = dashboard_report(
+        manifest,
+        include_registry=args.registry,
+        issue_repo=args.issue_repo,
+    )
+    result = upsert_dashboard_issue(
+        issue_repo=args.issue_repo,
+        body=str(report["body"]),
+        dry_run=not args.write,
+    )
+    output = {
+        "action": result.action,
+        "issue_number": result.number,
+        "issue_url": result.url,
+        "state": report["state"],
+    }
+    if args.format == "json":
+        print(json.dumps(output, indent=2, sort_keys=True))
+    else:
+        print(f"fleet-dashboard: {result.action}")
+        if result.url:
+            print(result.url)
+        if not args.write:
+            print(str(report["body"]))
     return 0
 
 
@@ -2019,6 +2108,44 @@ def build_parser() -> argparse.ArgumentParser:
     alert_send.add_argument("--dry-run", action="store_true")
     alert_send.add_argument("--format", choices=["text", "json"], default="text")
     alert_send.set_defaults(func=cmd_alert_send)
+    alert_doctor = alert_sub.add_parser("doctor")
+    alert_doctor.add_argument("--kuma-url")
+    alert_doctor.add_argument("--webhook-url")
+    alert_doctor.add_argument("--require-alerts", action="store_true")
+    alert_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    alert_doctor.set_defaults(func=cmd_alert_doctor)
+    alert_test = alert_sub.add_parser("test")
+    alert_test.add_argument("--event", default="upstream-update")
+    alert_test.add_argument(
+        "--status",
+        choices=["success", "failure", "warning"],
+        default="warning",
+    )
+    alert_test.add_argument("--summary", default="aio-fleet alert test")
+    alert_test.add_argument("--repo")
+    alert_test.add_argument("--component")
+    alert_test.add_argument("--dedupe-key")
+    alert_test.add_argument("--details-url")
+    alert_test.add_argument("--kuma-url")
+    alert_test.add_argument("--webhook-url")
+    alert_test.add_argument(
+        "--webhook-format", choices=["json", "text"], default="json"
+    )
+    alert_test.add_argument("--dry-run", action="store_true")
+    alert_test.add_argument("--format", choices=["text", "json"], default="text")
+    alert_test.set_defaults(func=cmd_alert_test)
+
+    dashboard = sub.add_parser("fleet-dashboard")
+    dashboard_sub = dashboard.add_subparsers(
+        dest="fleet_dashboard_command", required=True
+    )
+    dashboard_update = dashboard_sub.add_parser("update")
+    dashboard_update.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    dashboard_update.add_argument("--write", action="store_true")
+    dashboard_update.add_argument("--dry-run", action="store_false", dest="write")
+    dashboard_update.add_argument("--registry", action="store_true")
+    dashboard_update.add_argument("--format", choices=["text", "json"], default="text")
+    dashboard_update.set_defaults(func=cmd_fleet_dashboard_update, write=False)
 
     poll = sub.add_parser("poll")
     poll.add_argument("--no-prs", action="store_true")

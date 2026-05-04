@@ -17,6 +17,7 @@ on:
           - poll
           - control-check
           - upstream-monitor
+          - fleet-dashboard
       repo:
         description: App repo name for control-check mode
         required: false
@@ -354,6 +355,23 @@ jobs:
           Path("upstream-summary.md").write_text("\n".join(lines) + "\n")
           print("\n".join(lines))
           PY
+
+      - name: Update fleet dashboard issue
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard') }}
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        run: |
+          set -euo pipefail
+          args=(fleet-dashboard update --format json)
+          if [[ "${MUTATE}" == "true" ]]; then
+            args+=(--write)
+          else
+            args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}" | tee fleet-dashboard-report.json
 
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
