@@ -48,6 +48,16 @@ scheduled jobs can compare transitions later. It tracks:
 - `aio-fleet / required` check state;
 - signed/verified commit state;
 - registry and release readiness placeholders;
+
+The `Controls` section has durable checkbox commands:
+
+- `Rescan dashboard` refreshes the dashboard issue in place.
+- `Run upstream monitor` runs the central upstream monitor, opens or updates
+  signed source PRs when needed, then refreshes the same dashboard issue.
+
+Both controls reset automatically after the workflow rewrites the issue body.
+They should not create dashboard comments.
+
 - source-to-catalog sync queue for destination repos;
 - next action for each component.
 

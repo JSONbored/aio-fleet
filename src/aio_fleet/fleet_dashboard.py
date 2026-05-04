@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess  # nosec B404
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,14 @@ DASHBOARD_LABEL = "fleet-dashboard"
 DASHBOARD_TITLE = "Fleet Update Dashboard"
 STATE_START = "<!-- aio-fleet-dashboard-state"
 STATE_END = "-->"
+DASHBOARD_COMMANDS = {
+    "rescan": "Rescan dashboard",
+    "upstream_monitor": "Run upstream monitor",
+}
+CHECKED_COMMAND_RE = re.compile(
+    r"^-\s+\[[xX]\]\s+(?P<label>.+?)\s*$",
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -173,6 +182,7 @@ def render_dashboard(state: dict[str, Any]) -> str:
     _render_rehab_section(lines, rehab_rows)
     _render_activity_section(lines, activity, destination_rows, rehab_rows)
     _render_fleet_state_section(lines, rows)
+    _render_controls(lines)
     _render_next_commands(lines, rows, destination_rows, rehab_rows)
     lines.extend(
         [
@@ -233,6 +243,11 @@ def upsert_dashboard_issue(
                 label,
             ]
         )
+        _close_duplicate_dashboard_issues(
+            issue_repo,
+            canonical_number=number,
+            title=title,
+        )
         return DashboardIssueResult(
             action="updated",
             number=number,
@@ -259,6 +274,61 @@ def upsert_dashboard_issue(
         number=_issue_number_from_url(url),
         url=url,
     )
+
+
+def dashboard_commands_from_body(body: str) -> dict[str, bool]:
+    checked = {
+        match.group("label").strip() for match in CHECKED_COMMAND_RE.finditer(body)
+    }
+    return {name: label in checked for name, label in DASHBOARD_COMMANDS.items()}
+
+
+def dashboard_issue_commands(*, issue_repo: str, issue_number: int) -> dict[str, Any]:
+    issue = _gh_json(
+        [
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            issue_repo,
+            "--json",
+            "number,title,state,body,labels,url",
+        ]
+    )
+    if not isinstance(issue, dict):
+        return {
+            "issue_number": issue_number,
+            "issue_url": "",
+            "is_dashboard": False,
+            "commands": {},
+        }
+    labels = [
+        str(label.get("name", ""))
+        for label in issue.get("labels", [])
+        if isinstance(label, dict)
+    ]
+    is_dashboard = (
+        str(issue.get("title", "")) == DASHBOARD_TITLE
+        and str(issue.get("state", "")).upper() == "OPEN"
+        and (
+            DASHBOARD_LABEL in labels
+            or STATE_START in str(issue.get("body", ""))
+            or any(
+                command_label in str(issue.get("body", ""))
+                for command_label in DASHBOARD_COMMANDS.values()
+            )
+        )
+    )
+    commands = (
+        dashboard_commands_from_body(str(issue.get("body", ""))) if is_dashboard else {}
+    )
+    return {
+        "issue_number": issue_number,
+        "issue_url": str(issue.get("url", "")),
+        "is_dashboard": is_dashboard,
+        "commands": commands,
+        "requested": any(commands.values()),
+    }
 
 
 def repo_activity(name: str, github_repo: str, stale_days: int) -> dict[str, Any]:
@@ -591,6 +661,23 @@ def _signed_state(repo: RepoConfig, pr: dict[str, Any] | None) -> str:
 
 
 def _find_dashboard_issue(issue_repo: str, *, label: str) -> dict[str, Any] | None:
+    candidates = _dashboard_issue_candidates(issue_repo, label=label)
+    labeled = [issue for issue in candidates if _issue_has_label(issue, label)]
+    if labeled:
+        return _newest_issue(labeled)
+    hidden_state = [
+        issue for issue in candidates if STATE_START in str(issue.get("body", ""))
+    ]
+    if hidden_state:
+        return _newest_issue(hidden_state)
+    exact_title = [
+        issue for issue in candidates if str(issue.get("title", "")) == DASHBOARD_TITLE
+    ]
+    return _newest_issue(exact_title)
+
+
+def _dashboard_issue_candidates(issue_repo: str, *, label: str) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
     result = _run(
         [
             "gh",
@@ -603,17 +690,91 @@ def _find_dashboard_issue(issue_repo: str, *, label: str) -> dict[str, Any] | No
             "--label",
             label,
             "--json",
-            "number,title,url",
+            "number,title,url,labels,updatedAt,body",
         ],
         check=False,
     )
-    if result.returncode != 0:
-        return None
+    if result.returncode == 0:
+        issues.extend(_json_issue_list(result.stdout))
+    title_result = _run(
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            issue_repo,
+            "--state",
+            "open",
+            "--search",
+            f'"{DASHBOARD_TITLE}" in:title',
+            "--json",
+            "number,title,url,labels,updatedAt,body",
+        ],
+        check=False,
+    )
+    if title_result.returncode == 0:
+        issues.extend(_json_issue_list(title_result.stdout))
+    unique: dict[int, dict[str, Any]] = {}
+    for issue in issues:
+        try:
+            unique[int(issue.get("number"))] = issue
+        except (TypeError, ValueError):
+            continue
+    return list(unique.values())
+
+
+def _json_issue_list(text: str) -> list[dict[str, Any]]:
     try:
-        issues = json.loads(result.stdout or "[]")
+        data = json.loads(text or "[]")
     except json.JSONDecodeError:
+        return []
+    return (
+        [issue for issue in data if isinstance(issue, dict)]
+        if isinstance(data, list)
+        else []
+    )
+
+
+def _newest_issue(issues: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not issues:
         return None
-    return issues[0] if issues else None
+    return sorted(
+        issues,
+        key=lambda issue: str(issue.get("updatedAt", "")),
+        reverse=True,
+    )[0]
+
+
+def _issue_has_label(issue: dict[str, Any], label: str) -> bool:
+    return any(
+        isinstance(item, dict) and item.get("name") == label
+        for item in issue.get("labels", [])
+    )
+
+
+def _close_duplicate_dashboard_issues(
+    issue_repo: str, *, canonical_number: int, title: str
+) -> None:
+    for issue in _dashboard_issue_candidates(issue_repo, label=DASHBOARD_LABEL):
+        try:
+            number = int(issue.get("number"))
+        except (TypeError, ValueError):
+            continue
+        if number == canonical_number or str(issue.get("title", "")) != title:
+            continue
+        _run(
+            [
+                "gh",
+                "issue",
+                "close",
+                str(number),
+                "--repo",
+                issue_repo,
+                "--reason",
+                "not planned",
+            ],
+            check=False,
+        )
 
 
 def _ensure_label(issue_repo: str, *, label: str) -> None:
@@ -855,6 +1016,20 @@ def _render_fleet_state_section(lines: list[str], rows: list[dict[str, Any]]) ->
             )
         )
     lines.append("")
+
+
+def _render_controls(lines: list[str]) -> None:
+    lines.extend(
+        [
+            "## Controls",
+            "",
+            "- [ ] Rescan dashboard",
+            "- [ ] Run upstream monitor",
+            "",
+            "> Check one box to trigger the central workflow. The dashboard rewrites this issue body in place and resets controls after the run.",
+            "",
+        ]
+    )
 
 
 def _render_next_commands(

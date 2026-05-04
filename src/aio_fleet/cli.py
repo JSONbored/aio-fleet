@@ -37,7 +37,11 @@ from aio_fleet.control_plane import (
     run_central_trunk,
     run_steps,
 )
-from aio_fleet.fleet_dashboard import dashboard_report, upsert_dashboard_issue
+from aio_fleet.fleet_dashboard import (
+    dashboard_issue_commands,
+    dashboard_report,
+    upsert_dashboard_issue,
+)
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
@@ -817,6 +821,24 @@ def cmd_fleet_dashboard_update(args: argparse.Namespace) -> int:
             print(result.url)
         if not args.write:
             print(str(report["body"]))
+    return 0
+
+
+def cmd_fleet_dashboard_commands(args: argparse.Namespace) -> int:
+    result = dashboard_issue_commands(
+        issue_repo=args.issue_repo,
+        issue_number=args.issue_number,
+    )
+    if args.format == "github-output":
+        commands = result.get("commands", {})
+        print(f"is_dashboard={str(bool(result.get('is_dashboard'))).lower()}")
+        print(f"requested={str(bool(result.get('requested'))).lower()}")
+        print(f"rescan={str(bool(commands.get('rescan'))).lower()}")
+        print(
+            "upstream_monitor=" f"{str(bool(commands.get('upstream_monitor'))).lower()}"
+        )
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
@@ -2216,6 +2238,13 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_update.add_argument("--stale-days", type=int, default=7)
     dashboard_update.add_argument("--format", choices=["text", "json"], default="text")
     dashboard_update.set_defaults(func=cmd_fleet_dashboard_update, write=False)
+    dashboard_commands = dashboard_sub.add_parser("commands")
+    dashboard_commands.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    dashboard_commands.add_argument("--issue-number", type=int, required=True)
+    dashboard_commands.add_argument(
+        "--format", choices=["json", "github-output"], default="json"
+    )
+    dashboard_commands.set_defaults(func=cmd_fleet_dashboard_commands)
 
     poll = sub.add_parser("poll")
     poll.add_argument("--no-prs", action="store_true")

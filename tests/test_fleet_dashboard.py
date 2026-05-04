@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess  # nosec B404
 from pathlib import Path
 
 from aio_fleet import fleet_dashboard
@@ -216,6 +218,8 @@ repos:
     assert state["rehab_repos"][0]["cleanup_findings"] == 1  # nosec B101
     assert "Destination Repo" in body  # nosec B101
     assert "Rehab / Onboarding" in body  # nosec B101
+    assert "- [ ] Rescan dashboard" in body  # nosec B101
+    assert "- [ ] Run upstream monitor" in body  # nosec B101
     assert not any(row["repo"] == "nanoclaw-aio" for row in state["rows"])  # nosec B101
     assert not any(
         row["repo"] == "awesome-unraid" for row in state["rows"]
@@ -383,3 +387,89 @@ def test_repo_activity_failure_is_non_blocking(monkeypatch) -> None:
 
     assert activity["activity_state"] == "unknown"  # nosec B101
     assert activity["open_prs"] == "unknown"  # nosec B101
+
+
+def test_dashboard_command_parser_detects_checked_controls() -> None:
+    commands = fleet_dashboard.dashboard_commands_from_body(
+        "\n".join(
+            [
+                "## Controls",
+                "",
+                "- [x] Rescan dashboard",
+                "- [ ] Run upstream monitor",
+            ]
+        )
+    )
+
+    assert commands == {  # nosec B101
+        "rescan": True,
+        "upstream_monitor": False,
+    }
+
+
+def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> None:
+    responses = {
+        (
+            "issue",
+            "list",
+            "--repo",
+            "JSONbored/aio-fleet",
+            "--state",
+            "open",
+            "--label",
+        ): [
+            {
+                "number": 55,
+                "title": "Fleet Update Dashboard",
+                "url": "https://github.com/JSONbored/aio-fleet/issues/55",
+                "updatedAt": "2026-05-04T19:00:00Z",
+                "body": "<!-- aio-fleet-dashboard-state",
+                "labels": [{"name": "fleet-dashboard"}],
+            }
+        ],
+        (
+            "issue",
+            "list",
+            "--repo",
+            "JSONbored/aio-fleet",
+            "--state",
+            "open",
+            "--search",
+        ): [
+            {
+                "number": 58,
+                "title": "Fleet Update Dashboard",
+                "url": "https://github.com/JSONbored/aio-fleet/issues/58",
+                "updatedAt": "2026-05-04T12:00:00Z",
+                "body": "<!-- aio-fleet-dashboard-state",
+                "labels": [],
+            },
+            {
+                "number": 55,
+                "title": "Fleet Update Dashboard",
+                "url": "https://github.com/JSONbored/aio-fleet/issues/55",
+                "updatedAt": "2026-05-04T19:00:00Z",
+                "body": "<!-- aio-fleet-dashboard-state",
+                "labels": [{"name": "fleet-dashboard"}],
+            },
+        ],
+    }
+
+    def fake_run(command: list[str], *, check=True, cwd=None):
+        del check, cwd
+        key = tuple(command[1:8])
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(responses[key]),
+            stderr="",
+        )
+
+    monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
+
+    issue = fleet_dashboard._find_dashboard_issue(
+        "JSONbored/aio-fleet", label="fleet-dashboard"
+    )
+
+    assert issue is not None  # nosec B101
+    assert issue["number"] == 55  # nosec B101
