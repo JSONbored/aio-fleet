@@ -56,8 +56,17 @@ resource "github_branch_protection" "main" {
   require_conversation_resolution = each.value.require_conversation_resolution
 
   required_status_checks {
-    strict   = each.value.strict_required_checks
-    contexts = each.value.required_checks
+    strict = each.value.strict_required_checks
+    checks = [
+      for context in each.value.required_checks : (
+        each.value.required_check_app_id == null
+        ? context
+        : {
+            context = context
+            app_id  = each.value.required_check_app_id
+          }
+      )
+    ]
   }
 
   required_pull_request_reviews {

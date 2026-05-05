@@ -25,6 +25,7 @@ variable "repositories" {
     vulnerability_alerts            = optional(bool, true)
     branch                          = optional(string, "main")
     required_checks                 = optional(list(string), [])
+    required_check_app_id           = optional(number)
     strict_required_checks          = optional(bool, true)
     enforce_admins                  = optional(bool, false)
     require_signed_commits          = optional(bool, true)
