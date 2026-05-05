@@ -519,7 +519,7 @@ repos:
         strategy: pr
         release_notes_url: https://github.com/mem0ai/mem0/releases
         submodule_path: openmemory
-        submodule_remote: fork
+        submodule_remote: origin
         submodule_ref_template: codex/openmemory-{version}-aio
     image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
     checkout_submodules: true

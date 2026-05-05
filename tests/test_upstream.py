@@ -123,7 +123,7 @@ repos:
         version_key: UPSTREAM_VERSION
         strategy: pr
         submodule_path: openmemory
-        submodule_remote: fork
+        submodule_remote: origin
         submodule_ref_template: codex/openmemory-{{version}}-aio
 """)
     calls: list[tuple[Path, list[str]]] = []
@@ -149,7 +149,7 @@ repos:
     assert calls == [  # nosec B101
         (
             repo_path / "openmemory",
-            ["fetch", "--tags", "fork", "codex/openmemory-v2.0.1-aio"],
+            ["fetch", "--tags", "origin", "codex/openmemory-v2.0.1-aio"],
         ),
         (repo_path / "openmemory", ["checkout", "--detach", "FETCH_HEAD"]),
     ]
