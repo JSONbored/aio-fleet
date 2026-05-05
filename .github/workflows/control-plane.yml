@@ -531,6 +531,7 @@ jobs:
           path: app-repo
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Run central control check
@@ -674,6 +675,7 @@ jobs:
           path: app-repo
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Run central control check
