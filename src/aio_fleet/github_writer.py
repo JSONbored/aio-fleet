@@ -105,6 +105,11 @@ def _commit_with_contents_api(
             require_verified=require_verified,
         )
 
+    validated_paths = [
+        (relative_path, _safe_repo_file(repo.path, relative_path, repo_name=repo.name))
+        for relative_path in paths
+    ]
+
     token = _token(token)
     owner, repo_name = repo.github_repo.split("/", 1)
     branch_ref = f"heads/{branch}"
@@ -118,12 +123,7 @@ def _commit_with_contents_api(
             _update_ref(owner, repo_name, branch_ref, sha=base_sha, token=token)
         else:
             _create_ref(owner, repo_name, branch_ref, sha=base_sha, token=token)
-        for relative_path in paths:
-            local_path = repo.path / relative_path
-            if not local_path.exists():
-                raise RuntimeError(
-                    f"{repo.name}: missing generated path: {relative_path}"
-                )
+        for relative_path, local_path in validated_paths:
             response = _put_contents(
                 owner,
                 repo_name,
@@ -492,6 +492,22 @@ def _tree_entry_for_path(
 def _is_gitlink_path(repo_path: Path, relative_path: str) -> bool:
     entry = _git_index_entry(repo_path, relative_path)
     return bool(entry and entry[0] == "160000")
+
+
+def _safe_repo_file(repo_path: Path, relative_path: str, *, repo_name: str) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    local_path = repo_path / relative
+    if local_path.is_symlink():
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    if not local_path.is_file():
+        raise RuntimeError(f"{repo_name}: missing generated path: {relative_path}")
+    resolved_repo = repo_path.resolve()
+    resolved_local = local_path.resolve()
+    if not resolved_local.is_relative_to(resolved_repo):
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    return local_path
 
 
 def _git_index_entry(repo_path: Path, relative_path: str) -> tuple[str, str] | None:

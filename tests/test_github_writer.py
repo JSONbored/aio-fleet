@@ -187,6 +187,45 @@ def test_api_writer_commits_submodule_gitlinks(tmp_path: Path, monkeypatch) -> N
     )  # nosec B101
 
 
+@pytest.mark.parametrize(
+    ("path", "setup"),
+    [
+        ("/tmp/secret", None),
+        ("../secret", None),
+        (
+            "Dockerfile",
+            lambda repo_path, tmp_path: (repo_path / "Dockerfile").unlink()
+            or (repo_path / "Dockerfile").symlink_to(tmp_path / "outside-secret"),
+        ),
+    ],
+)
+def test_contents_api_writer_rejects_unsafe_paths(
+    tmp_path: Path, monkeypatch, path: str, setup
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.1.0\n")
+    (tmp_path / "outside-secret").write_text("secret\n")
+    if setup:
+        setup(repo_path, tmp_path)
+    repo = load_manifest(_manifest(tmp_path, repo_path)).repo("example-aio")
+    api_token = "dummy-token"  # nosec B105
+
+    def fake_request(*_args, **_kwargs) -> dict[str, object]:
+        raise AssertionError("network should not be called for unsafe paths")
+
+    monkeypatch.setattr(github_writer, "_github_request", fake_request)
+
+    with pytest.raises(RuntimeError, match="invalid commit path"):
+        github_writer.commit_paths_to_branch(
+            repo,
+            branch="codex/update",
+            paths=[path],
+            message="chore(sync): bump example",
+            token=api_token,
+        )
+
+
 def _manifest(tmp_path: Path, repo_path: Path) -> Path:
     manifest = tmp_path / "fleet.yml"
     manifest.write_text(f"""
