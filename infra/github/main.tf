@@ -57,7 +57,15 @@ resource "github_branch_protection" "main" {
 
   required_status_checks {
     strict   = each.value.strict_required_checks
-    contexts = each.value.required_checks
+    contexts = each.value.required_check_app_id == null ? each.value.required_checks : null
+
+    dynamic "checks" {
+      for_each = each.value.required_check_app_id == null ? [] : each.value.required_checks
+      content {
+        context = checks.value
+        app_id  = each.value.required_check_app_id
+      }
+    }
   }
 
   required_pull_request_reviews {
