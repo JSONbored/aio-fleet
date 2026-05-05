@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -34,7 +36,9 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install aio-fleet
-        run: python -m pip install -e ".[dev]"
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -58,217 +62,25 @@ jobs:
 
       - name: Verify registry tags
         id: verify
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
-          python - <<'PY'
-          import base64
-          import json
-          import os
-          import shutil
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          import yaml
-
-          manifest = yaml.safe_load(Path("fleet.yml").read_text())
-          owner = manifest["owner"]
-          checkout_root = Path("registry-checkouts")
-          checkout_root.mkdir(exist_ok=True)
-          token = "${{ steps.app-token.outputs.token }}"
-          auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-          clone_env = {
-              key: os.environ[key]
-              for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
-              if key in os.environ
-          }
-          clone_env.update(
-              {
-                  "GIT_CONFIG_COUNT": "1",
-                  "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-                  "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {auth}",
-              }
-          )
-          verify_env = {
-              key: os.environ[key]
-              for key in (
-                  "DOCKER_CONFIG",
-                  "HOME",
-                  "PATH",
-                  "SSL_CERT_FILE",
-                  "REQUESTS_CA_BUNDLE",
-                  "XDG_RUNTIME_DIR",
-              )
-              if key in os.environ
-          }
-          report = {"repos": []}
-          status = 0
-
-          for repo, repo_config in manifest["repos"].items():
-              if repo_config.get("publish_profile") == "template":
-                  report["repos"].append(
-                      {
-                          "repo": repo,
-                          "sha": "",
-                          "dockerhub": [],
-                          "ghcr": [],
-                          "failures": [],
-                          "skipped": "manual-template-publish",
-                      }
-                  )
-                  continue
-              worktree = checkout_root / repo
-              if worktree.exists():
-                  shutil.rmtree(worktree)
-              clone = subprocess.run(
-                  [
-                      "git",
-                      "clone",
-                      f"https://github.com/{owner}/{repo}.git",
-                      str(worktree),
-                  ],
-                  env=clone_env,
-                  check=False,
-                  text=True,
-                  capture_output=True,
-              )
-              if clone.returncode != 0:
-                  status = 1
-                  detail = (clone.stderr or clone.stdout).strip() or "clone failed"
-                  report["repos"].append(
-                      {
-                          "repo": repo,
-                          "sha": "",
-                          "dockerhub": [],
-                          "ghcr": [],
-                          "failures": [detail],
-                      }
-                  )
-                  continue
-
-              sha = subprocess.check_output(
-                  ["git", "-C", str(worktree), "rev-parse", "HEAD"],
-                  env=verify_env,
-                  text=True,
-              ).strip()
-              components = ["aio"]
-              component_config = repo_config.get("components")
-              if isinstance(component_config, dict):
-                  components = [
-                      name
-                      for name, config in component_config.items()
-                      if name == "aio"
-                      or (isinstance(config, dict) and config.get("image_name"))
-                  ] or ["aio"]
-              for component in components:
-                  verify = subprocess.run(
-                      [
-                          sys.executable,
-                          "-m",
-                          "aio_fleet",
-                          "registry",
-                          "verify",
-                          "--repo",
-                          repo,
-                          "--repo-path",
-                          str(worktree),
-                          "--sha",
-                          sha,
-                          "--component",
-                          component,
-                          "--format",
-                          "json",
-                      ],
-                      env=verify_env,
-                      check=False,
-                      text=True,
-                      capture_output=True,
-                  )
-                  if verify.stderr:
-                      print(verify.stderr, file=sys.stderr, end="")
-                  if verify.returncode != 0:
-                      status = 1
-                  try:
-                      parsed = json.loads(verify.stdout)
-                  except json.JSONDecodeError:
-                      status = 1
-                      report["repos"].append(
-                          {
-                              "repo": repo,
-                              "component": component,
-                              "sha": sha,
-                              "dockerhub": [],
-                              "ghcr": [],
-                              "failures": [
-                                  (verify.stdout or verify.stderr).strip()
-                                  or "registry verify produced invalid JSON"
-                              ],
-                          }
-                      )
-                      continue
-                  report["repos"].extend(parsed.get("repos", []))
-
-          Path("registry-report.json").write_text(
-              json.dumps(report, indent=2, sort_keys=True) + "\n"
-          )
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"status={status}\n")
-          PY
+          set -euo pipefail
+          python -m aio_fleet workflow registry-audit \
+            --checkout-root registry-checkouts \
+            --output registry-report.json \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Publish registry summary
         env:
           VERIFY_STATUS: ${{ steps.verify.outputs.status }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          report_path = Path("registry-report.json")
-          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          status = os.environ.get("VERIFY_STATUS", "")
-          lines = ["# Registry Audit", "", f"Verify command exit status: `{status}`", ""]
-          if not report_path.exists():
-              lines.extend(["Registry report was not generated.", ""])
-              summary_path.write_text("\n".join(lines))
-              raise SystemExit(0)
-
-          report = json.loads(report_path.read_text())
-          lines.extend(
-              [
-                  "| Repo | Component | SHA | State | Docker Hub tags | GHCR tags |",
-                  "| --- | --- | --- | --- | ---: | ---: |",
-              ]
-          )
-          failures = []
-          for item in report.get("repos", []):
-              repo_failures = item.get("failures", [])
-              state = (
-                  f"skipped:{item['skipped']}"
-                  if item.get("skipped")
-                  else "failed" if repo_failures else "ok"
-              )
-              sha = str(item.get("sha", ""))[:12]
-              lines.append(
-                  "| {repo} | {component} | `{sha}` | {state} | {dockerhub} | {ghcr} |".format(
-                      repo=item.get("repo", ""),
-                      component=item.get("component", "aio"),
-                      sha=sha,
-                      state=state,
-                      dockerhub=len(item.get("dockerhub", [])),
-                      ghcr=len(item.get("ghcr", [])),
-                  )
-              )
-              for failure in repo_failures:
-                  failures.append(f"{item.get('repo', '')}: {failure}")
-
-          if failures:
-              lines.extend(["", "## Missing Or Failed Tags", ""])
-              lines.extend(f"- `{failure}`" for failure in failures)
-          else:
-              lines.extend(["", "All expected registry tags resolved."])
-          summary_path.write_text("\n".join(lines) + "\n")
-          PY
+          set -euo pipefail
+          python -m aio_fleet workflow registry-summary \
+            --input registry-report.json \
+            --status "${VERIFY_STATUS}" \
+            --output "${GITHUB_STEP_SUMMARY}"
 
       - name: Alert registry audit
         if: ${{ always() }}

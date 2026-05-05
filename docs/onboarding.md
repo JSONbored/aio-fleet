@@ -41,12 +41,22 @@ Generate the starting checklist from the control plane:
 python -m aio_fleet onboard-repo --repo <repo> --mode existing
 python -m aio_fleet onboard-repo --repo <repo> --mode new-from-template
 python -m aio_fleet onboard-repo --repo <repo> --mode rehab
+python -m aio_fleet onboard-repo --repo <repo> --shape single-image
+python -m aio_fleet onboard-repo --repo <repo> --shape multi-component
+python -m aio_fleet onboard-repo --repo <repo> --shape submodule-backed
+python -m aio_fleet onboard-repo --repo <repo> --shape destination-only
+python -m aio_fleet onboard-repo --repo <repo> --shape rehab-only
+python -m aio_fleet promote-rehab --repo <repo> --dry-run --format json
 ```
 
 Use `existing` for a current app repo that is already structurally close to the
 fleet model, `new-from-template` for a brand new repo created from
 `unraid-aio-template`, and `rehab` for neglected repos such as `nanoclaw-aio`
 that should appear on the dashboard without blocking active fleet validation.
+Use `--shape` to generate the acceptance pack for the repo surface: normal
+single-image apps, multi-component repos such as `signoz-aio`, future
+submodule-backed apps, dashboard-only catalog/destination repos, and rehab-only
+repos that must stay non-blocking.
 
 1. Create the repo from `unraid-aio-template`.
 2. Keep only app-specific source/runtime/template/docs/tests in the app repo.
@@ -92,6 +102,12 @@ Promote a rehab repo only after:
 - legacy workflows/config/scripts that `aio-fleet` replaces are removed;
 - central validation and cleanup verification pass;
 - `aio-fleet / required` appears on a real PR.
+
+`promote-rehab` does not mutate `fleet.yml`; it produces the acceptance pack
+for moving a rehab repo into the active `repos` map. It blocks on missing local
+checkout, dirty worktree, and retired shared files, and it prints the exact
+manifest entry and first central validation commands needed for the promotion
+PR.
 
 ## Multi-Image Repos
 

@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -29,16 +31,23 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install package
-        run: python -m pip install -e ".[dev]"
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
 
       - name: Run tests
-        run: python -m pytest
+        run: |
+          set -euo pipefail
+          python -m pytest
 
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
 
       - name: Run actionlint
         run: |
+          set -euo pipefail
           "$(go env GOPATH)/bin/actionlint" \
             -shellcheck '' \
             -pyflakes '' \
@@ -52,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -61,7 +72,9 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install package
-        run: python -m pip install -e ".[dev]"
+        run: |
+          set -euo pipefail
+          python -m pip install -e ".[dev]"
 
       - name: Install OpenTofu
         env:
@@ -79,6 +92,7 @@ jobs:
 
       - name: Validate OpenTofu module
         run: |
+          set -euo pipefail
           cd infra/github
           tofu init -backend=false
           tofu fmt -check -recursive
@@ -86,4 +100,5 @@ jobs:
 
       - name: Validate GitHub policy files
         run: |
+          set -euo pipefail
           python -m aio_fleet infra doctor --skip-tofu
