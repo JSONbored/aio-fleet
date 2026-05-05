@@ -28,6 +28,7 @@ def _repo(tmp_path: Path, **overrides: object) -> RepoConfig:
         "pytest_image_tag": "example-aio:pytest",
         "publish_profile": "changelog-version",
         "publish_platforms": "linux/amd64,linux/arm64",
+        "public": True,
         "catalog_assets": [{"source": "example-aio.xml", "target": "example-aio.xml"}],
     }
     raw.update(overrides)
@@ -46,6 +47,58 @@ def _write_minimal_derived_repo(tmp_path: Path) -> None:
         file_path = tmp_path / path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text("ok\n")
+
+
+def _write_catalog_readme(
+    catalog_path: Path,
+    *,
+    available: list[str] | None = None,
+    in_progress: list[str] | None = None,
+    candidates: list[str] | None = None,
+    available_count: int | None = None,
+    star_repos: list[str] | None = None,
+    star_type: str = "Date",
+) -> None:
+    available = ["example-aio"] if available is None else available
+    in_progress = [] if in_progress is None else in_progress
+    candidates = [] if candidates is None else candidates
+    count = len(available) if available_count is None else available_count
+    star_repos = star_repos or ["JSONbored/awesome-unraid", "JSONbored/example-aio"]
+    image_query = f"repos={','.join(star_repos)}&type={star_type}&theme=dark"
+    link_fragment = "&".join(star_repos + ["Date"])
+    lines = [
+        "# Awesome Unraid",
+        "",
+        f"- Available templates: `{count}`",
+        "",
+        f"### Available Templates ({count})",
+        "",
+        *[
+            f"- **[{name}](https://github.com/JSONbored/{name})** - Ready."
+            for name in available
+        ],
+        "",
+        f"### In Progress ({len(in_progress)})",
+        "",
+        *[
+            f"- **[{name}](https://github.com/JSONbored/{name})** - In progress."
+            for name in in_progress
+        ],
+        "",
+        "### Upcoming Candidates",
+        "",
+        *[f"- **{name}** - Candidate." for name in candidates],
+        "",
+        "## Star History",
+        "",
+        (
+            "[![Star History Chart]"
+            f"(https://api.star-history.com/svg?{image_query})]"
+            f"(https://star-history.com/#{link_fragment})"
+        ),
+        "",
+    ]
+    (catalog_path / "README.md").write_text("\n".join(lines))
 
 
 def test_pinned_action_validation_rejects_tagged_actions(tmp_path: Path) -> None:
@@ -301,6 +354,7 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
     catalog_path = tmp_path / "catalog"
     (catalog_path / "icons").mkdir(parents=True)
     (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(catalog_path)
     (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
 <Container version="2">
   <Name>example-aio</Name>
@@ -316,6 +370,91 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
 """)
 
     assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
+
+
+def test_catalog_validation_reports_readme_template_drift(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "missing-repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(
+        catalog_path,
+        available=[],
+        candidates=["example-aio"],
+        available_count=0,
+        star_repos=["JSONbored/awesome-unraid", "JSONbored/example-aio"],
+    )
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+""")
+
+    failures = catalog_repo_failures(manifest, catalog_path)  # type: ignore[arg-type]
+
+    assert any(
+        "available template count must be 1, got 0" in failure for failure in failures
+    )  # nosec B101
+    assert any(
+        "Available Templates missing published template(s): example-aio" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Upcoming Candidates lists published template(s): example-aio" in failure
+        for failure in failures
+    )  # nosec B101
+
+
+def test_catalog_validation_reports_star_history_drift(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "missing-repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(
+        catalog_path,
+        star_repos=["JSONbored/awesome-unraid", "JSONbored/nanoclaw-aio"],
+        star_type="",
+    )
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+""")
+
+    failures = catalog_repo_failures(manifest, catalog_path)  # type: ignore[arg-type]
+
+    assert any(
+        "Star History image missing repo(s): jsonbored/example-aio" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Star History image includes unpublished repo(s): jsonbored/nanoclaw-aio"
+        in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Star History image URL must set type=Date" in failure for failure in failures
+    )  # nosec B101
 
 
 def test_catalog_quality_audit_reports_catalog_presentation_drift(

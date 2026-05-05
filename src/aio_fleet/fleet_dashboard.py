@@ -73,7 +73,11 @@ def dashboard_report(
 
     for repo in manifest.repos.values():
         if include_activity:
-            activity_rows.append(repo_activity(repo.name, repo.github_repo, stale_days))
+            activity_rows.append(
+                _repo_activity_for_config(
+                    repo.name, repo.github_repo, repo.raw, stale_days
+                )
+            )
         if repo.publish_profile == "template":
             active_rows.append(_template_row(repo, include_registry=include_registry))
             continue
@@ -533,9 +537,9 @@ def _destination_row(
     stale_days: int,
 ) -> dict[str, Any]:
     activity = (
-        repo_activity(ref.name, ref.github_repo, stale_days)
+        _repo_activity_for_config(ref.name, ref.github_repo, ref.raw, stale_days)
         if include_activity
-        else _empty_activity(ref.name, ref.github_repo)
+        else _empty_activity_for_config(ref.name, ref.github_repo, ref.raw)
     )
     catalog_path = Path(str(ref.raw.get("catalog_path") or ref.path))
     failures = catalog_repo_failures(manifest, catalog_path)
@@ -569,9 +573,9 @@ def _rehab_row(
     stale_days: int,
 ) -> dict[str, Any]:
     activity = (
-        repo_activity(ref.name, ref.github_repo, stale_days)
+        _repo_activity_for_config(ref.name, ref.github_repo, ref.raw, stale_days)
         if include_activity
-        else _empty_activity(ref.name, ref.github_repo)
+        else _empty_activity_for_config(ref.name, ref.github_repo, ref.raw)
     )
     repo_config = RepoConfig(
         name=ref.name,
@@ -1023,6 +1027,39 @@ def _gh_json(args: list[str], *, cli_scope: str = "activity") -> Any:
     result = _run(["gh", *args], check=True, cli_scope=cli_scope)
     text = result.stdout.strip()
     return json.loads(text) if text else None
+
+
+def _repo_activity_for_config(
+    name: str, github_repo: str, raw: dict[str, Any], stale_days: int
+) -> dict[str, Any]:
+    if raw.get("public") is not True:
+        return _private_activity(name)
+    return repo_activity(name, github_repo, stale_days)
+
+
+def _empty_activity_for_config(
+    name: str, github_repo: str, raw: dict[str, Any]
+) -> dict[str, Any]:
+    if raw.get("public") is not True:
+        return _private_activity(name)
+    return _empty_activity(name, github_repo)
+
+
+def _private_activity(name: str) -> dict[str, Any]:
+    return {
+        "repo": name,
+        "github_repo": "",
+        "activity_state": "private-skipped",
+        "open_prs": "private",
+        "open_issues": "private",
+        "draft_prs": "private",
+        "blocked_prs": "private",
+        "clean_prs": "private",
+        "stale_prs": "private",
+        "oldest_pr_age_days": "private",
+        "newest_issue_age_days": "private",
+        "prs": [],
+    }
 
 
 def _empty_activity(name: str, github_repo: str) -> dict[str, Any]:

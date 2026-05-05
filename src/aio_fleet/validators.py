@@ -6,7 +6,7 @@ import shutil
 import subprocess  # nosec B404
 import tomllib
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from xml.etree.ElementTree import Element, ParseError, tostring  # nosec B405
 
 import defusedxml.ElementTree as DefusedET
@@ -17,6 +17,8 @@ from aio_fleet.manifest import FleetManifest, RepoConfig
 ACTION_REF = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
 SHA_REF = re.compile(r"^[0-9a-f]{40}$")
 CATALOG_RAW_PREFIX = "https://raw.githubusercontent.com/"
+STAR_HISTORY_IMAGE_RE = re.compile(r"https://api\.star-history\.com/svg\?[^)\s]+")
+STAR_HISTORY_LINK_RE = re.compile(r"https://star-history\.com/#(?P<fragment>[^)\s]+)")
 
 DERIVED_REQUIRED_FILES = [
     ".aio-fleet.yml",
@@ -441,7 +443,207 @@ def catalog_repo_failures(manifest: FleetManifest, catalog_path: Path) -> list[s
                     f"{repo.name}: source XML missing for catalog target {target}: {source}"
                 )
 
+    failures.extend(_catalog_readme_failures(manifest, catalog_path))
     return failures
+
+
+def _catalog_readme_failures(manifest: FleetManifest, catalog_path: Path) -> list[str]:
+    expected = _published_catalog_template_names(manifest)
+    if not expected:
+        return []
+    readme_path = catalog_path / "README.md"
+    if not readme_path.exists():
+        return ["catalog README missing: README.md"]
+
+    text = readme_path.read_text()
+    failures: list[str] = []
+
+    glance_count = _readme_count(
+        text, r"^- Available templates:\s*`?(?P<count>\d+)`?\s*$"
+    )
+    if glance_count != len(expected):
+        failures.append(
+            f"catalog README available template count must be {len(expected)}, got {_count_label(glance_count)}"
+        )
+
+    heading_count = _readme_count(
+        text, r"^### Available Templates\s*\((?P<count>\d+)\)\s*$"
+    )
+    if heading_count != len(expected):
+        failures.append(
+            f"catalog README Available Templates heading must be {len(expected)}, got {_count_label(heading_count)}"
+        )
+
+    available = _catalog_readme_section_names(text, "Available Templates")
+    missing = expected - available
+    extra = available - expected
+    if missing:
+        failures.append(
+            "catalog README Available Templates missing published template(s): "
+            + ", ".join(sorted(missing))
+        )
+    if extra:
+        failures.append(
+            "catalog README Available Templates includes unpublished template(s): "
+            + ", ".join(sorted(extra))
+        )
+
+    for heading in ("In Progress", "Upcoming Candidates"):
+        misplaced = expected & _catalog_readme_section_names(text, heading)
+        if misplaced:
+            failures.append(
+                f"catalog README {heading} lists published template(s): "
+                + ", ".join(sorted(misplaced))
+            )
+
+    failures.extend(_catalog_star_history_failures(manifest, text))
+    return failures
+
+
+def _catalog_star_history_failures(
+    manifest: FleetManifest, readme_text: str
+) -> list[str]:
+    expected = _expected_star_history_repos(manifest)
+    failures: list[str] = []
+    image_match = STAR_HISTORY_IMAGE_RE.search(readme_text)
+    link_match = STAR_HISTORY_LINK_RE.search(readme_text)
+
+    if image_match is None:
+        failures.append("catalog README Star History image URL is missing")
+    else:
+        image_url = image_match.group(0).replace("&amp;", "&")
+        image_repos = _star_history_image_repos(image_url)
+        failures.extend(_star_history_repo_failures("image", expected, image_repos))
+        query = parse_qs(urlparse(image_url).query)
+        if query.get("type", [""])[0] != "Date":
+            failures.append("catalog README Star History image URL must set type=Date")
+
+    if link_match is None:
+        failures.append("catalog README Star History link URL is missing")
+    else:
+        link_repos = _star_history_link_repos(link_match.group("fragment"))
+        failures.extend(_star_history_repo_failures("link", expected, link_repos))
+
+    if image_match is not None and link_match is not None:
+        image_repos = _star_history_image_repos(
+            image_match.group(0).replace("&amp;", "&")
+        )
+        link_repos = _star_history_link_repos(link_match.group("fragment"))
+        if image_repos != link_repos:
+            failures.append(
+                "catalog README Star History image and link repo sets differ"
+            )
+
+    return failures
+
+
+def _published_catalog_template_names(manifest: FleetManifest) -> set[str]:
+    names: set[str] = set()
+    for repo in manifest.repos.values():
+        if repo.raw.get("catalog_published") is False:
+            continue
+        for _source, target in _catalog_xml_assets(repo):
+            names.add(Path(target).stem)
+    return names
+
+
+def _expected_star_history_repos(manifest: FleetManifest) -> set[str]:
+    repos = {
+        _normalize_repo(
+            str(
+                manifest.raw.get(
+                    "awesome_unraid_repository", "JSONbored/awesome-unraid"
+                )
+            )
+        )
+    }
+    for repo in manifest.repos.values():
+        if repo.raw.get("catalog_published") is False:
+            continue
+        if repo.raw.get("public") is not True:
+            continue
+        if _catalog_xml_assets(repo):
+            repos.add(_normalize_repo(repo.github_repo))
+    return repos
+
+
+def _catalog_readme_section_names(readme_text: str, heading: str) -> set[str]:
+    section = _catalog_readme_section(readme_text, heading)
+    names: set[str] = set()
+    for line in section.splitlines():
+        match = re.match(
+            r"^-\s+\*\*(?:\[(?P<link>[^\]]+)\]\([^)]+\)|(?P<plain>[^*]+))\*\*",
+            line.strip(),
+        )
+        if match:
+            names.add(str(match.group("link") or match.group("plain")).strip())
+    return names
+
+
+def _catalog_readme_section(readme_text: str, heading: str) -> str:
+    lines = readme_text.splitlines()
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if re.match(rf"^### {re.escape(heading)}(?:\s*\(\d+\))?\s*$", line):
+            start = index + 1
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for index in range(start, len(lines)):
+        if lines[index].startswith("##"):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def _readme_count(readme_text: str, pattern: str) -> int | None:
+    match = re.search(pattern, readme_text, re.MULTILINE)
+    return int(match.group("count")) if match else None
+
+
+def _count_label(value: int | None) -> str:
+    return "missing" if value is None else str(value)
+
+
+def _star_history_image_repos(url: str) -> set[str]:
+    query = parse_qs(urlparse(url).query)
+    values = query.get("repos", [])
+    if not values:
+        return set()
+    return {_normalize_repo(repo) for repo in values[0].split(",") if repo.strip()}
+
+
+def _star_history_link_repos(fragment: str) -> set[str]:
+    repos: set[str] = set()
+    for part in fragment.replace("%2F", "/").split("&"):
+        if not part or part == "Date":
+            continue
+        repos.add(_normalize_repo(part))
+    return repos
+
+
+def _star_history_repo_failures(
+    source: str, expected: set[str], actual: set[str]
+) -> list[str]:
+    failures: list[str] = []
+    missing = expected - actual
+    extra = actual - expected
+    if missing:
+        failures.append(
+            f"catalog README Star History {source} missing repo(s): "
+            + ", ".join(sorted(missing))
+        )
+    if extra:
+        failures.append(
+            f"catalog README Star History {source} includes unpublished repo(s): "
+            + ", ".join(sorted(extra))
+        )
+    return failures
+
+
+def _normalize_repo(repo: str) -> str:
+    return repo.strip().rstrip("/").lower()
 
 
 def catalog_quality_findings(

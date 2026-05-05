@@ -198,12 +198,14 @@ dashboard:
     awesome-unraid:
       path: {catalog_path}
       github_repo: JSONbored/awesome-unraid
+      public: true
       role: catalog destination
       catalog_path: {catalog_path}
   rehab_repos:
     nanoclaw-aio:
       path: {rehab_path}
       github_repo: JSONbored/nanoclaw-aio
+      public: true
       status: rehab
 repos:
   example-aio:
@@ -264,6 +266,142 @@ repos:
     )  # nosec B101
 
 
+def test_dashboard_skips_private_active_repo_activity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "private-service-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  private-service-aio:
+    path: {repo_path}
+    github_repo: PrivateOrg/private-service-aio
+    public: false
+    app_slug: private-service-aio
+    image_name: jsonbored/private-service-aio
+    docker_cache_scope: private-service-aio-image
+    pytest_image_tag: private-service-aio:pytest
+""")
+
+    monkeypatch.setattr(fleet_dashboard, "monitor_repo", lambda *_args, **_kwargs: [])
+
+    def unexpected_activity(*_args: object, **_kwargs: object):
+        raise AssertionError("private repo activity should not be queried")
+
+    monkeypatch.setattr(fleet_dashboard, "repo_activity", unexpected_activity)
+
+    report = fleet_dashboard.dashboard_report(load_manifest(manifest), env={})
+
+    activity = report["state"]["activity"][0]
+    hidden = _hidden_dashboard_state(str(report["body"]))
+    assert activity["activity_state"] == "private-skipped"  # nosec B101
+    assert activity["github_repo"] == ""  # nosec B101
+    assert activity["prs"] == []  # nosec B101
+    assert "PrivateOrg/private-service-aio" not in hidden  # nosec B101
+    assert "rotate production signing key" not in hidden  # nosec B101
+
+
+def test_dashboard_collects_public_active_repo_activity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "example-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    github_repo: JSONbored/example-aio
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(fleet_dashboard, "monitor_repo", lambda *_args, **_kwargs: [])
+
+    def fake_activity(name: str, github_repo: str, _stale_days: int):
+        calls.append((name, github_repo))
+        return {
+            "repo": name,
+            "github_repo": github_repo,
+            "activity_state": "ok",
+            "open_prs": 1,
+            "open_issues": 0,
+            "draft_prs": 0,
+            "blocked_prs": 0,
+            "clean_prs": 1,
+            "stale_prs": 0,
+            "oldest_pr_age_days": 1,
+            "newest_issue_age_days": 0,
+            "prs": [{"title": "public maintenance PR", "url": "https://example"}],
+        }
+
+    monkeypatch.setattr(fleet_dashboard, "repo_activity", fake_activity)
+
+    report = fleet_dashboard.dashboard_report(load_manifest(manifest), env={})
+
+    assert calls == [("example-aio", "JSONbored/example-aio")]  # nosec B101
+    assert "public maintenance PR" in _hidden_dashboard_state(
+        str(report["body"])
+    )  # nosec B101
+
+
+def test_dashboard_skips_private_destination_and_rehab_activity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    catalog_path = tmp_path / "private-catalog"
+    rehab_path = tmp_path / "private-rehab"
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  destination_repos:
+    private-catalog:
+      path: {catalog_path}
+      github_repo: PrivateOrg/private-catalog
+      catalog_path: {catalog_path}
+  rehab_repos:
+    private-rehab:
+      path: {rehab_path}
+      github_repo: PrivateOrg/private-rehab
+      status: rehab
+repos:
+  private-service-aio:
+    path: {tmp_path / "private-service-aio"}
+    github_repo: PrivateOrg/private-service-aio
+    public: false
+    app_slug: private-service-aio
+    image_name: jsonbored/private-service-aio
+    docker_cache_scope: private-service-aio-image
+    pytest_image_tag: private-service-aio:pytest
+""")
+
+    def unexpected_activity(*_args: object, **_kwargs: object):
+        raise AssertionError("private dashboard repo activity should not be queried")
+
+    monkeypatch.setattr(fleet_dashboard, "repo_activity", unexpected_activity)
+    monkeypatch.setattr(fleet_dashboard, "catalog_repo_failures", lambda *_args: [])
+    monkeypatch.setattr(fleet_dashboard, "monitor_repo", lambda *_args, **_kwargs: [])
+
+    report = fleet_dashboard.dashboard_report(load_manifest(manifest), env={})
+
+    destination = report["state"]["destination_repos"][0]
+    rehab = report["state"]["rehab_repos"][0]
+    hidden = _hidden_dashboard_state(str(report["body"]))
+    assert destination["activity_state"] == "private-skipped"  # nosec B101
+    assert rehab["activity_state"] == "private-skipped"  # nosec B101
+    assert destination["github_repo"] == ""  # nosec B101
+    assert rehab["github_repo"] == ""  # nosec B101
+    assert "PrivateOrg/private-catalog" not in hidden  # nosec B101
+    assert "PrivateOrg/private-rehab" not in hidden  # nosec B101
+
+
 def test_destination_row_tracks_ready_source_sync_queue(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -279,6 +417,7 @@ dashboard:
     awesome-unraid:
       path: {catalog_path}
       github_repo: JSONbored/awesome-unraid
+      public: true
       role: catalog destination
       catalog_path: {catalog_path}
 repos:
