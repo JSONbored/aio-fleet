@@ -13,6 +13,7 @@ SECRET_ENV_KEYS = {
     "AIO_FLEET_CHECK_TOKEN",
     "AIO_FLEET_DASHBOARD_TOKEN",
     "AIO_FLEET_GHCR_TOKEN",
+    "AIO_FLEET_ISSUE_TOKEN",
     "AIO_FLEET_KUMA_PUSH_URL",
     "AIO_FLEET_ALERT_WEBHOOK_URL",
     "AIO_FLEET_UPSTREAM_TOKEN",
@@ -66,12 +67,13 @@ def test_dashboard_checkout_does_not_put_auth_header_in_git_argv() -> None:
     assert '"config",' not in dashboard["run"]  # nosec B101
 
 
-def test_dashboard_update_uses_app_token_for_github_cli() -> None:
+def test_dashboard_update_scopes_dashboard_tokens() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     dashboard = _step(workflow["jobs"]["control-plane"], "Update fleet dashboard issue")
 
     assert "AIO_FLEET_DASHBOARD_TOKEN" in dashboard["env"]  # nosec B101
     assert "AIO_FLEET_UPSTREAM_TOKEN" in dashboard["env"]  # nosec B101
+    assert "AIO_FLEET_ISSUE_TOKEN" in dashboard["env"]  # nosec B101
     assert "APP_TOKEN" not in dashboard["env"]  # nosec B101
     assert "GH_TOKEN" not in dashboard["env"]  # nosec B101
     assert "GITHUB_TOKEN" not in dashboard["env"]  # nosec B101

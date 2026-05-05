@@ -618,8 +618,8 @@ def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> No
         ],
     }
 
-    def fake_run(command: list[str], *, check=True, cwd=None):
-        del check, cwd
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd, cli_scope
         key = tuple(command[1:8])
         return subprocess.CompletedProcess(
             command,
@@ -639,8 +639,8 @@ def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> No
 
 
 def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
-    def fake_run(command: list[str], *, check=True, cwd=None):
-        del check, cwd
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd, cli_scope
         assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
         return subprocess.CompletedProcess(
             command,
@@ -670,8 +670,8 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
 def test_dashboard_issue_commands_accepts_labeled_dashboard_issue(
     monkeypatch,
 ) -> None:
-    def fake_run(command: list[str], *, check=True, cwd=None):
-        del check, cwd
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd, cli_scope
         assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
         return subprocess.CompletedProcess(
             command,
@@ -706,8 +706,8 @@ def test_dashboard_issue_commands_accepts_labeled_dashboard_issue(
 def test_dashboard_issue_commands_rejects_unlabeled_body_controls(
     monkeypatch,
 ) -> None:
-    def fake_run(command: list[str], *, check=True, cwd=None):
-        del check, cwd
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd, cli_scope
         assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
         return subprocess.CompletedProcess(
             command,
@@ -753,6 +753,7 @@ def test_dashboard_gh_reads_prefer_app_token(monkeypatch) -> None:
         )
 
     monkeypatch.setenv("AIO_FLEET_DASHBOARD_TOKEN", "app-token")
+    monkeypatch.setenv("AIO_FLEET_ISSUE_TOKEN", "issue-token")
     monkeypatch.setenv("GH_TOKEN", "lower-priority-token")
     monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -761,6 +762,34 @@ def test_dashboard_gh_reads_prefer_app_token(monkeypatch) -> None:
 
     assert result == []  # nosec B101
     assert captured_env["GH_TOKEN"] == "app-token"  # nosec B101
+    assert "AIO_FLEET_ISSUE_TOKEN" not in captured_env  # nosec B101
+    assert "GITHUB_TOKEN" not in captured_env  # nosec B101
+
+
+def test_dashboard_issue_reads_prefer_issue_token(monkeypatch) -> None:
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args: object, **kwargs: object):
+        nonlocal captured_env
+        captured_env = dict(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps({"number": 55}),
+            stderr="",
+        )
+
+    monkeypatch.setenv("AIO_FLEET_DASHBOARD_TOKEN", "app-token")
+    monkeypatch.setenv("AIO_FLEET_ISSUE_TOKEN", "issue-token")
+    monkeypatch.setenv("GH_TOKEN", "lower-priority-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = fleet_dashboard._gh_json(["issue", "view", "55"], cli_scope="issue")
+
+    assert result == {"number": 55}  # nosec B101
+    assert captured_env["GH_TOKEN"] == "issue-token"  # nosec B101
+    assert "AIO_FLEET_DASHBOARD_TOKEN" not in captured_env  # nosec B101
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
 
 
@@ -774,8 +803,8 @@ def _hidden_dashboard_state(body: str) -> str:
 def test_dashboard_issue_commands_rejects_unlabeled_non_dashboard_issue(
     monkeypatch,
 ) -> None:
-    def fake_run(command: list[str], *, check=True, cwd=None):
-        del check, cwd
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd, cli_scope
         assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
         return subprocess.CompletedProcess(
             command,
