@@ -8,8 +8,11 @@ import shutil
 import subprocess  # nosec B404
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+TRANSIENT_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def main() -> int:
@@ -70,14 +73,50 @@ def create_installation_token(
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = json.loads(read_urlopen_with_retry(request, timeout=30).decode("utf-8"))
     token = str(payload.get("token", ""))
     if not token:
         raise RuntimeError(
             "GitHub App installation token response did not include token"
         )
     return token
+
+
+def read_urlopen_with_retry(
+    request: urllib.request.Request | str,
+    *,
+    timeout: int,
+    attempts: int = 4,
+) -> bytes:
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(  # nosec B310
+                request, timeout=timeout
+            ) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if not _should_retry_http(exc, attempt=attempt, attempts=attempts):
+                raise
+            _sleep_before_retry(attempt)
+        except (TimeoutError, urllib.error.URLError):
+            if attempt >= attempts:
+                raise
+            _sleep_before_retry(attempt)
+
+    raise RuntimeError("unreachable retry state")
+
+
+def _should_retry_http(
+    exc: urllib.error.HTTPError, *, attempt: int, attempts: int
+) -> bool:
+    return attempt < attempts and exc.code in TRANSIENT_HTTP_STATUS_CODES
+
+
+def _sleep_before_retry(attempt: int) -> None:
+    time.sleep(min(2 ** (attempt - 1), 8))
 
 
 def _create_jwt(app_id: str, private_key: str) -> str:
