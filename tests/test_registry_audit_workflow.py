@@ -7,6 +7,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "registry-audit.yml"
 SECRET_ENV_KEYS = {
+    "APP_TOKEN",
     "AIO_FLEET_APP_ID",
     "AIO_FLEET_APP_INSTALLATION_ID",
     "AIO_FLEET_APP_PRIVATE_KEY",
@@ -39,8 +40,14 @@ def test_registry_audit_sanitizes_verify_subprocess_environment() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     verify = _step(workflow["jobs"]["registry-audit"], "Verify registry tags")
 
+    assert "APP_TOKEN" not in verify.get("env", {})  # nosec B101
+    assert 'os.environ["APP_TOKEN"]' not in verify["run"]  # nosec B101
     assert "verify_env" in verify["run"]  # nosec B101
+    assert "env=clone_env" in verify["run"]  # nosec B101
     assert "env=verify_env" in verify["run"]  # nosec B101
+    assert "GIT_CONFIG_KEY_0" in verify["run"]  # nosec B101
+    assert "GIT_CONFIG_VALUE_0" in verify["run"]  # nosec B101
+    assert "extraheader=AUTHORIZATION" not in verify["run"]  # nosec B101
     assert (
         "APP_TOKEN"
         not in verify["run"].split("verify_env = ", 1)[1].split("report = ", 1)[0]
