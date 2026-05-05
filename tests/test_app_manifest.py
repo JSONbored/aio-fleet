@@ -34,6 +34,15 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
     assert '    - "Productivity:"\n' in content  # nosec B101
 
 
+def test_render_app_manifest_quotes_numeric_string_targets() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+
+    content = render_app_manifest(repo)
+
+    assert '    - "3000"\n' in content  # nosec B101
+    assert '    - "8765"\n' in content  # nosec B101
+
+
 def test_load_app_manifest_validates_required_sections(tmp_path: Path) -> None:
     path = tmp_path / APP_MANIFEST_NAME
     path.write_text("""
