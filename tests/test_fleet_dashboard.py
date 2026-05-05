@@ -739,6 +739,31 @@ def test_dashboard_issue_commands_rejects_unlabeled_body_controls(
     assert result["commands"] == {}  # nosec B101
 
 
+def test_dashboard_gh_reads_prefer_app_token(monkeypatch) -> None:
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args: object, **kwargs: object):
+        nonlocal captured_env
+        captured_env = dict(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps([]),
+            stderr="",
+        )
+
+    monkeypatch.setenv("AIO_FLEET_DASHBOARD_TOKEN", "app-token")
+    monkeypatch.setenv("GH_TOKEN", "lower-priority-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = fleet_dashboard._gh_json(["pr", "list", "--repo", "JSONbored/private"])
+
+    assert result == []  # nosec B101
+    assert captured_env["GH_TOKEN"] == "app-token"  # nosec B101
+    assert "GITHUB_TOKEN" not in captured_env  # nosec B101
+
+
 def _hidden_dashboard_state(body: str) -> str:
     hidden = body.split(fleet_dashboard.STATE_START_BASE64, 1)[1].split(
         fleet_dashboard.STATE_END, 1
