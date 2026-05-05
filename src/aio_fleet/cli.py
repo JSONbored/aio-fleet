@@ -66,9 +66,13 @@ from aio_fleet.validators import (
 )
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # nosec B603
-        cmd, cwd=cwd, check=False, text=True, capture_output=True
+        cmd, cwd=cwd, env=env, check=False, text=True, capture_output=True
     )
 
 
@@ -1178,7 +1182,10 @@ def _run_generator_for_write(repo: RepoConfig) -> None:
     if not generator:
         return
     command = [part for part in shlex.split(generator) if part != "--check"]
-    result = _run(command, cwd=repo.path)
+    safe_env = os.environ.copy()
+    for key in ["APP_TOKEN", "AIO_FLEET_CHECK_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]:
+        safe_env.pop(key, None)
+    result = _run(command, cwd=repo.path, env=safe_env)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"{repo.name}: generator update failed: {detail}")

@@ -845,6 +845,50 @@ repos:
     assert "repo: example-aio" in exported.read_text()  # nosec B101
 
 
+def test_upstream_write_generator_strips_token_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    generator_check_command: python -V --check
+""")
+    observed: dict[str, str] = {}
+
+    def fake_run(
+        command: list[str],
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ):
+        assert command == ["python", "-V"]  # nosec B101
+        assert cwd == repo_path  # nosec B101
+        assert isinstance(env, dict)  # nosec B101
+        observed.update(env)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setenv("APP_TOKEN", "app")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
+    monkeypatch.setenv("GH_TOKEN", "gh")
+    monkeypatch.setenv("GITHUB_TOKEN", "github")
+
+    cli._run_generator_for_write(load_manifest(manifest).repo("example-aio"))
+
+    assert "APP_TOKEN" not in observed  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in observed  # nosec B101
+    assert "GH_TOKEN" not in observed  # nosec B101
+    assert "GITHUB_TOKEN" not in observed  # nosec B101
+
+
 def test_upstream_assess_outputs_json(tmp_path: Path, monkeypatch, capsys) -> None:
     manifest, _repo_path = _write_minimal_manifest(tmp_path)
 

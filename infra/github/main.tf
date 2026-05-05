@@ -68,6 +68,39 @@ resource "github_branch_protection" "main" {
   }
 }
 
+resource "github_repository_ruleset" "trusted_required_checks" {
+  for_each = {
+    for name, repo in var.repositories : name => repo
+    if repo.required_check_app_id != null && length(repo.required_checks) > 0
+  }
+
+  repository  = github_repository.aio[each.key].name
+  name        = "Trusted required checks"
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["~DEFAULT_BRANCH"]
+      exclude = []
+    }
+  }
+
+  rules {
+    required_status_checks {
+      strict_required_status_checks_policy = each.value.strict_required_checks
+
+      dynamic "required_check" {
+        for_each = each.value.required_checks
+        content {
+          context        = required_check.value
+          integration_id = each.value.required_check_app_id
+        }
+      }
+    }
+  }
+}
+
 resource "github_actions_repository_permissions" "aio" {
   for_each = var.repositories
 

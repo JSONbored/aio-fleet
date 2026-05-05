@@ -174,8 +174,6 @@ jobs:
           RUN_CHECKS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           set -euo pipefail
@@ -214,8 +212,6 @@ jobs:
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout and PR creation
@@ -279,14 +275,13 @@ jobs:
                       "git",
                       "-C",
                       str(worktree),
-                      "config",
-                      "http.https://github.com/.extraheader",
-                      f"AUTHORIZATION: basic {auth}",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--recursive",
                   ],
-                  check=True,
-              )
-              subprocess.run(
-                  ["git", "-C", str(worktree), "submodule", "update", "--init", "--recursive"],
                   check=True,
               )
               args = [
@@ -543,8 +538,6 @@ jobs:
           TARGET_SHA: ${{ inputs.sha }}
           TARGET_EVENT: ${{ inputs.event }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           python -m aio_fleet check run \
@@ -590,8 +583,6 @@ jobs:
           TARGET_EVENT: ${{ inputs.event }}
           CHECK_OUTCOME: ${{ steps.central-control-check.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           conclusion=success
@@ -735,8 +726,6 @@ jobs:
           TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_EVENT: ${{ matrix.target.event }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           python -m aio_fleet check run \
@@ -778,8 +767,6 @@ jobs:
           TARGET_EVENT: ${{ matrix.target.event }}
           CHECK_OUTCOME: ${{ steps.poll-central-control-check.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           conclusion=success

@@ -75,6 +75,43 @@ def test_webhook_sends_failure_with_dedupe_key(monkeypatch) -> None:
     assert body["status"] == "failure"  # nosec B101
 
 
+def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:
+    seen: list[urllib.request.Request] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"OK"
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int):
+        seen.append(request)
+        assert timeout == 20  # nosec B101
+        return Response()
+
+    monkeypatch.setattr(alerts.urllib.request, "urlopen", fake_urlopen)
+    payload = alerts.alert_payload(
+        event="upstream-monitor",
+        status="warning",
+        summary="upstream updates available",
+        dedupe_key="upstream-monitor:fleet:all",
+        annotations=["sure-aio:aio 0.7.0 -> 0.7.1"],
+    )
+
+    alerts.send_webhook("https://discord.com/api/webhooks/example/token", payload)
+
+    body = json.loads(seen[0].data.decode())  # type: ignore[union-attr]
+    assert body["allowed_mentions"]["parse"] == []  # nosec B101
+    assert body["content"].startswith("aio-fleet: upstream updates")  # nosec B101
+    assert body["embeds"][0]["fields"][2]["value"] == (  # nosec B101
+        "upstream-monitor:fleet:all"
+    )
+
+
 def test_success_webhook_is_skipped_unless_recovery_or_forced() -> None:
     payload = alerts.alert_payload(
         event="control-plane",

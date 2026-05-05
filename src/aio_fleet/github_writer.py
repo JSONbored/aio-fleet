@@ -94,16 +94,25 @@ def _commit_with_contents_api(
     token: str | None,
     require_verified: bool,
 ) -> BranchCommitResult:
-    if any(_is_gitlink_path(repo.path, path) for path in paths):
+    safe_paths = [
+        _safe_repo_path(repo.path, path, repo_name=repo.name)[0] for path in paths
+    ]
+    if len(safe_paths) > 1 or any(
+        _is_gitlink_path(repo.path, path) for path in safe_paths
+    ):
         return _commit_with_git_data_api(
             repo,
             branch=branch,
-            paths=paths,
+            paths=safe_paths,
             message=message,
             base=base,
             token=token,
             require_verified=require_verified,
         )
+    validated_paths = [
+        (path, _safe_repo_file(repo.path, path, repo_name=repo.name))
+        for path in safe_paths
+    ]
 
     token = _token(token)
     owner, repo_name = repo.github_repo.split("/", 1)
@@ -118,12 +127,7 @@ def _commit_with_contents_api(
             _update_ref(owner, repo_name, branch_ref, sha=base_sha, token=token)
         else:
             _create_ref(owner, repo_name, branch_ref, sha=base_sha, token=token)
-        for relative_path in paths:
-            local_path = repo.path / relative_path
-            if not local_path.exists():
-                raise RuntimeError(
-                    f"{repo.name}: missing generated path: {relative_path}"
-                )
+        for relative_path, local_path in validated_paths:
             response = _put_contents(
                 owner,
                 repo_name,
@@ -179,6 +183,9 @@ def _commit_with_git_data_api(
     token: str | None,
     require_verified: bool,
 ) -> BranchCommitResult:
+    safe_paths = [
+        _safe_repo_path(repo.path, path, repo_name=repo.name)[0] for path in paths
+    ]
     token = _token(token)
     owner, repo_name = repo.github_repo.split("/", 1)
     branch_ref = f"heads/{branch}"
@@ -190,7 +197,7 @@ def _commit_with_git_data_api(
         base_tree = _tree_sha(base_commit, owner, repo_name, base_sha)
         entries = [
             _tree_entry_for_path(owner, repo_name, repo.path, path, token=token)
-            for path in paths
+            for path in safe_paths
         ]
         tree_sha = _create_tree(
             owner,
@@ -236,7 +243,7 @@ def _commit_with_git_data_api(
             method="api",
             verified=bool(verification.get("verified")),
             verification=verification,
-            committed_paths=paths,
+            committed_paths=safe_paths,
         )
     except Exception:
         _restore_branch(
@@ -261,9 +268,12 @@ def _commit_with_git(
     require_verified: bool,
     sign: bool,
 ) -> BranchCommitResult:
+    safe_paths = [
+        _safe_repo_path(repo.path, path, repo_name=repo.name)[0] for path in paths
+    ]
     _run_git(repo.path, ["fetch", "origin", base])
     _run_git(repo.path, ["checkout", "-B", branch, f"origin/{base}"])
-    _run_git(repo.path, ["add", *paths])
+    _run_git(repo.path, ["add", *safe_paths])
     diff = _run_git(repo.path, ["diff", "--cached", "--quiet"], check=False)
     if diff.returncode == 0:
         sha = _run_git(repo.path, ["rev-parse", "HEAD"]).stdout.strip()
@@ -297,7 +307,7 @@ def _commit_with_git(
         method="git-signed" if sign else "git",
         verified=bool(verification.get("verified")),
         verification=verification,
-        committed_paths=paths,
+        committed_paths=safe_paths,
     )
 
 
@@ -458,7 +468,12 @@ def _tree_entry_for_path(
     *,
     token: str,
 ) -> dict[str, str]:
-    local_path = repo_path / relative_path
+    safe_path, local_path = _safe_repo_path(
+        repo_path,
+        relative_path,
+        repo_name=f"{owner}/{repo_name}",
+    )
+    relative_path = safe_path
     index_entry = _git_index_entry(repo_path, relative_path)
     if index_entry and index_entry[0] == "160000":
         gitlink_sha = index_entry[1]
@@ -470,6 +485,11 @@ def _tree_entry_for_path(
             "type": "commit",
             "sha": gitlink_sha,
         }
+    local_path = _safe_repo_file(
+        repo_path,
+        relative_path,
+        repo_name=f"{owner}/{repo_name}",
+    )
     if not local_path.is_file():
         raise RuntimeError(f"missing generated path: {relative_path}")
     blob_sha = _create_blob(
@@ -492,6 +512,31 @@ def _tree_entry_for_path(
 def _is_gitlink_path(repo_path: Path, relative_path: str) -> bool:
     entry = _git_index_entry(repo_path, relative_path)
     return bool(entry and entry[0] == "160000")
+
+
+def _safe_repo_path(
+    repo_path: Path,
+    relative_path: str,
+    *,
+    repo_name: str,
+) -> tuple[str, Path]:
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    local_path = repo_path / relative
+    if local_path.is_symlink():
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    resolved_repo = repo_path.resolve()
+    if local_path.exists() and not local_path.resolve().is_relative_to(resolved_repo):
+        raise RuntimeError(f"{repo_name}: invalid commit path: {relative_path}")
+    return relative.as_posix(), local_path
+
+
+def _safe_repo_file(repo_path: Path, relative_path: str, *, repo_name: str) -> Path:
+    _, local_path = _safe_repo_path(repo_path, relative_path, repo_name=repo_name)
+    if not local_path.is_file():
+        raise RuntimeError(f"{repo_name}: missing generated path: {relative_path}")
+    return local_path
 
 
 def _git_index_entry(repo_path: Path, relative_path: str) -> tuple[str, str] | None:

@@ -213,6 +213,9 @@ def send_webhook(
     if webhook_format == "text":
         body = _text_body(payload).encode()
         headers = {"Content-Type": "text/plain; charset=utf-8"}
+    elif _is_discord_webhook(webhook_url):
+        body = json.dumps(_discord_body(payload), sort_keys=True).encode()
+        headers = {"Content-Type": "application/json"}
     else:
         body = json.dumps(payload.as_dict(), sort_keys=True).encode()
         headers = {"Content-Type": "application/json"}
@@ -263,3 +266,44 @@ def _text_body(payload: AlertPayload) -> str:
         lines.append(payload.details_url)
     lines.extend(f"- {annotation}" for annotation in payload.annotations)
     return "\n".join(lines) + "\n"
+
+
+def _is_discord_webhook(webhook_url: str) -> bool:
+    hostname = (urllib.parse.urlsplit(webhook_url).hostname or "").lower()
+    return hostname in {"discord.com", "www.discord.com", "discordapp.com"}
+
+
+def _discord_body(payload: AlertPayload) -> dict[str, Any]:
+    description = _text_body(payload).strip()
+    if len(description) > 3900:
+        description = description[:3897] + "..."
+    color = {
+        "failure": 0xD73A49,
+        "warning": 0xD29922,
+        "success": 0x2DA44E,
+    }.get(payload.status, 0x57606A)
+    embed: dict[str, Any] = {
+        "title": payload.summary[:256],
+        "description": description,
+        "color": color,
+        "fields": [
+            {"name": "Event", "value": payload.event[:1024], "inline": True},
+            {"name": "Status", "value": payload.status[:1024], "inline": True},
+            {"name": "Dedupe", "value": payload.dedupe_key[:1024], "inline": False},
+        ],
+    }
+    if payload.repo:
+        embed["fields"].append(
+            {"name": "Repo", "value": payload.repo[:1024], "inline": True}
+        )
+    if payload.component:
+        embed["fields"].append(
+            {"name": "Component", "value": payload.component[:1024], "inline": True}
+        )
+    if payload.details_url:
+        embed["url"] = payload.details_url
+    return {
+        "content": f"aio-fleet: {payload.summary}"[:2000],
+        "embeds": [embed],
+        "allowed_mentions": {"parse": []},
+    }

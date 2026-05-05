@@ -22,12 +22,6 @@ concurrency:
 jobs:
   registry-audit:
     runs-on: ubuntu-latest
-    env:
-      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
-      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
-      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -48,6 +42,9 @@ jobs:
       - name: Resolve GitHub App token
         id: app-token
         env:
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -82,6 +79,24 @@ jobs:
           checkout_root.mkdir(exist_ok=True)
           token = os.environ["APP_TOKEN"]
           auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+          clone_env = {
+              key: os.environ[key]
+              for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+              if key in os.environ
+          }
+          clone_env["GIT_HTTP_EXTRAHEADER"] = f"AUTHORIZATION: basic {auth}"
+          verify_env = {
+              key: os.environ[key]
+              for key in (
+                  "DOCKER_CONFIG",
+                  "HOME",
+                  "PATH",
+                  "SSL_CERT_FILE",
+                  "REQUESTS_CA_BUNDLE",
+                  "XDG_RUNTIME_DIR",
+              )
+              if key in os.environ
+          }
           report = {"repos": []}
           status = 0
 
@@ -104,12 +119,11 @@ jobs:
               clone = subprocess.run(
                   [
                       "git",
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "clone",
                       f"https://github.com/{owner}/{repo}.git",
                       str(worktree),
                   ],
+                  env=clone_env,
                   check=False,
                   text=True,
                   capture_output=True,
@@ -160,6 +174,7 @@ jobs:
                           "--format",
                           "json",
                       ],
+                      env=verify_env,
                       check=False,
                       text=True,
                       capture_output=True,
@@ -253,6 +268,8 @@ jobs:
       - name: Alert registry audit
         if: ${{ always() }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
