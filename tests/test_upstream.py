@@ -98,6 +98,63 @@ repos:
     )  # nosec B101
 
 
+def test_upstream_monitor_write_updates_configured_submodule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "openmemory").mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text("ARG UPSTREAM_VERSION=v2.0.0\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  mem0-aio:
+    path: {repo_path}
+    app_slug: mem0-aio
+    image_name: jsonbored/mem0-aio
+    docker_cache_scope: mem0-aio-image
+    pytest_image_tag: mem0-aio:pytest
+    upstream_monitor:
+      - source: github-releases
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        strategy: pr
+        submodule_path: openmemory
+        submodule_remote: fork
+        submodule_ref_template: codex/openmemory-{{version}}-aio
+""")
+    calls: list[tuple[Path, list[str]]] = []
+
+    monkeypatch.setattr(
+        upstream,
+        "latest_github_release_result",
+        lambda *_args, **_kwargs: ("v2.0.1", ()),
+    )
+    monkeypatch.setattr(
+        upstream,
+        "run_git",
+        lambda cwd, args, **_kwargs: calls.append((cwd, args)) or None,
+    )
+
+    result = upstream.monitor_repo(
+        load_manifest(manifest).repo("mem0-aio"), write=True
+    )[0]
+
+    assert "ARG UPSTREAM_VERSION=v2.0.1" in dockerfile.read_text()  # nosec B101
+    assert result.submodule_path == "openmemory"  # nosec B101
+    assert result.submodule_ref == "codex/openmemory-v2.0.1-aio"  # nosec B101
+    assert calls == [  # nosec B101
+        (
+            repo_path / "openmemory",
+            ["fetch", "--tags", "fork", "codex/openmemory-v2.0.1-aio"],
+        ),
+        (repo_path / "openmemory", ["checkout", "--detach", "FETCH_HEAD"]),
+    ]
+
+
 def test_upstream_monitor_does_not_write_notify_strategy(
     tmp_path: Path, monkeypatch
 ) -> None:

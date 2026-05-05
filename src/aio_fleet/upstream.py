@@ -54,6 +54,8 @@ class UpstreamMonitorResult:
     version_key: str
     digest_key: str
     release_notes_url: str
+    submodule_path: str = ""
+    submodule_ref: str = ""
     skipped_versions: tuple[dict[str, str], ...] = ()
 
     @property
@@ -74,6 +76,8 @@ def monitor_repo(
             write_arg(result.dockerfile, result.version_key, result.latest_version)
             if result.digest_key and result.latest_digest:
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
+            if result.version_update:
+                update_submodule(repo, config, result)
     return results
 
 
@@ -166,6 +170,12 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
         digest_key=digest_key,
         release_notes_url=str(config.get("release_notes_url", "")).strip()
         or default_release_notes_url(config),
+        submodule_path=str(config.get("submodule_path", "")).strip(),
+        submodule_ref=submodule_ref_for_version(
+            config,
+            latest_version=latest_version,
+            current_version=current_version,
+        ),
         skipped_versions=skipped_versions,
     )
 
@@ -193,6 +203,46 @@ def write_arg(dockerfile: Path, arg_name: str, value: str) -> None:
     if not changed:
         raise ValueError(f"unable to update ARG {arg_name} in {dockerfile}")
     dockerfile.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def update_submodule(
+    repo: RepoConfig,
+    config: dict[str, Any],
+    result: UpstreamMonitorResult,
+) -> None:
+    submodule_path = result.submodule_path
+    if not submodule_path:
+        return
+    submodule_dir = repo.path / submodule_path
+    if not submodule_dir.exists():
+        raise RuntimeError(
+            f"{repo.name}: submodule path does not exist: {submodule_path}"
+        )
+    ref = result.submodule_ref
+    if not ref:
+        raise RuntimeError(
+            f"{repo.name}: submodule ref is required for {submodule_path}"
+        )
+    remote = str(config.get("submodule_remote", "")).strip()
+    if remote:
+        run_git(submodule_dir, ["fetch", "--tags", remote, ref])
+        target = "FETCH_HEAD"
+    else:
+        run_git(submodule_dir, ["fetch", "--tags"])
+        target = ref
+    run_git(submodule_dir, ["checkout", "--detach", target])
+
+
+def submodule_ref_for_version(
+    config: dict[str, Any],
+    *,
+    latest_version: str,
+    current_version: str,
+) -> str:
+    if not str(config.get("submodule_path", "")).strip():
+        return ""
+    template = str(config.get("submodule_ref_template", "{version}")).strip()
+    return template.format(version=latest_version, current_version=current_version)
 
 
 def latest_github_tag(repo: str, *, stable_only: bool, strip_prefix: str = "") -> str:
@@ -527,6 +577,10 @@ def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
     skipped_versions = getattr(result, "skipped_versions", ())
     if skipped_versions:
         data["skipped_versions"] = list(skipped_versions)
+    submodule_path = getattr(result, "submodule_path", "")
+    if submodule_path:
+        data["submodule_path"] = submodule_path
+        data["submodule_ref"] = getattr(result, "submodule_ref", "")
     return data
 
 

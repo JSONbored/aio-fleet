@@ -94,6 +94,17 @@ def _commit_with_contents_api(
     token: str | None,
     require_verified: bool,
 ) -> BranchCommitResult:
+    if any(_is_gitlink_path(repo.path, path) for path in paths):
+        return _commit_with_git_data_api(
+            repo,
+            branch=branch,
+            paths=paths,
+            message=message,
+            base=base,
+            token=token,
+            require_verified=require_verified,
+        )
+
     token = _token(token)
     owner, repo_name = repo.github_repo.split("/", 1)
     branch_ref = f"heads/{branch}"
@@ -156,6 +167,87 @@ def _commit_with_contents_api(
         verification=verification,
         committed_paths=committed_paths,
     )
+
+
+def _commit_with_git_data_api(
+    repo: RepoConfig,
+    *,
+    branch: str,
+    paths: list[str],
+    message: str,
+    base: str,
+    token: str | None,
+    require_verified: bool,
+) -> BranchCommitResult:
+    token = _token(token)
+    owner, repo_name = repo.github_repo.split("/", 1)
+    branch_ref = f"heads/{branch}"
+    base_sha = _ref_sha(owner, repo_name, f"heads/{base}", token=token)
+    old_sha = _optional_ref_sha(owner, repo_name, branch_ref, token=token)
+    created_branch = old_sha is None
+    try:
+        base_commit = _git_commit(owner, repo_name, base_sha, token=token)
+        base_tree = _tree_sha(base_commit, owner, repo_name, base_sha)
+        entries = [
+            _tree_entry_for_path(owner, repo_name, repo.path, path, token=token)
+            for path in paths
+        ]
+        tree_sha = _create_tree(
+            owner,
+            repo_name,
+            base_tree=base_tree,
+            entries=entries,
+            token=token,
+        )
+        if tree_sha == base_tree:
+            if old_sha:
+                _update_ref(owner, repo_name, branch_ref, sha=base_sha, token=token)
+            return BranchCommitResult(
+                action="no-diff",
+                branch=branch,
+                sha=base_sha,
+                method="api",
+                verified=True,
+                verification={"verified": True, "reason": "no-diff"},
+                committed_paths=[],
+            )
+        commit_sha = _create_commit(
+            owner,
+            repo_name,
+            message=message,
+            tree=tree_sha,
+            parents=[base_sha],
+            token=token,
+        )
+        if old_sha:
+            _update_ref(owner, repo_name, branch_ref, sha=commit_sha, token=token)
+        else:
+            _create_ref(owner, repo_name, branch_ref, sha=commit_sha, token=token)
+        verification = _verification_from_response(repo, sha=commit_sha, token=token)
+        if require_verified and not verification.get("verified"):
+            reason = verification.get("reason", "unknown")
+            raise RuntimeError(
+                f"{repo.name}: GitHub API commit {commit_sha} is not verified: {reason}"
+            )
+        return BranchCommitResult(
+            action="committed",
+            branch=branch,
+            sha=commit_sha,
+            method="api",
+            verified=bool(verification.get("verified")),
+            verification=verification,
+            committed_paths=paths,
+        )
+    except Exception:
+        _restore_branch(
+            owner,
+            repo_name,
+            branch_ref,
+            old_sha=old_sha,
+            created_branch=created_branch,
+            token=token,
+        )
+        raise
 
 
 def _commit_with_git(
@@ -267,6 +359,156 @@ def _verification_from_response(
 ) -> dict[str, Any]:
     verification = commit_verification(repo, sha=sha, token=token)
     return verification or {"verified": False, "reason": "missing-verification"}
+
+
+def _git_commit(
+    owner: str,
+    repo_name: str,
+    sha: str,
+    *,
+    token: str,
+) -> dict[str, Any]:
+    return _github_request(
+        f"https://api.github.com/repos/{owner}/{repo_name}/git/commits/{sha}",
+        token=token,
+        method="GET",
+    )
+
+
+def _tree_sha(
+    commit: dict[str, Any], owner: str, repo_name: str, commit_sha: str
+) -> str:
+    tree = commit.get("tree", {})
+    sha = str(tree.get("sha") or "") if isinstance(tree, dict) else ""
+    if not sha:
+        raise RuntimeError(
+            f"{owner}/{repo_name}: unable to resolve tree for {commit_sha}"
+        )
+    return sha
+
+
+def _create_blob(
+    owner: str,
+    repo_name: str,
+    *,
+    content: bytes,
+    token: str,
+) -> str:
+    response = _github_request(
+        f"https://api.github.com/repos/{owner}/{repo_name}/git/blobs",
+        token=token,
+        method="POST",
+        payload={
+            "content": base64.b64encode(content).decode("ascii"),
+            "encoding": "base64",
+        },
+    )
+    sha = str(response.get("sha") or "")
+    if not sha:
+        raise RuntimeError(f"{owner}/{repo_name}: GitHub did not return a blob SHA")
+    return sha
+
+
+def _create_tree(
+    owner: str,
+    repo_name: str,
+    *,
+    base_tree: str,
+    entries: list[dict[str, str]],
+    token: str,
+) -> str:
+    response = _github_request(
+        f"https://api.github.com/repos/{owner}/{repo_name}/git/trees",
+        token=token,
+        method="POST",
+        payload={"base_tree": base_tree, "tree": entries},
+    )
+    sha = str(response.get("sha") or "")
+    if not sha:
+        raise RuntimeError(f"{owner}/{repo_name}: GitHub did not return a tree SHA")
+    return sha
+
+
+def _create_commit(
+    owner: str,
+    repo_name: str,
+    *,
+    message: str,
+    tree: str,
+    parents: list[str],
+    token: str,
+) -> str:
+    response = _github_request(
+        f"https://api.github.com/repos/{owner}/{repo_name}/git/commits",
+        token=token,
+        method="POST",
+        payload={"message": message, "tree": tree, "parents": parents},
+    )
+    sha = str(response.get("sha") or "")
+    if not sha:
+        raise RuntimeError(f"{owner}/{repo_name}: GitHub did not return a commit SHA")
+    return sha
+
+
+def _tree_entry_for_path(
+    owner: str,
+    repo_name: str,
+    repo_path: Path,
+    relative_path: str,
+    *,
+    token: str,
+) -> dict[str, str]:
+    local_path = repo_path / relative_path
+    index_entry = _git_index_entry(repo_path, relative_path)
+    if index_entry and index_entry[0] == "160000":
+        gitlink_sha = index_entry[1]
+        if local_path.exists():
+            gitlink_sha = _run_git(local_path, ["rev-parse", "HEAD"]).stdout.strip()
+        return {
+            "path": relative_path,
+            "mode": "160000",
+            "type": "commit",
+            "sha": gitlink_sha,
+        }
+    if not local_path.is_file():
+        raise RuntimeError(f"missing generated path: {relative_path}")
+    blob_sha = _create_blob(
+        owner,
+        repo_name,
+        content=local_path.read_bytes(),
+        token=token,
+    )
+    mode = index_entry[0] if index_entry else "100644"
+    if mode not in {"100644", "100755"}:
+        mode = "100644"
+    return {
+        "path": relative_path,
+        "mode": mode,
+        "type": "blob",
+        "sha": blob_sha,
+    }
+
+
+def _is_gitlink_path(repo_path: Path, relative_path: str) -> bool:
+    entry = _git_index_entry(repo_path, relative_path)
+    return bool(entry and entry[0] == "160000")
+
+
+def _git_index_entry(repo_path: Path, relative_path: str) -> tuple[str, str] | None:
+    result = _run_git(
+        repo_path,
+        ["ls-files", "-s", "--", relative_path],
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    if not line:
+        return None
+    parts = line.split()
+    if len(parts) < 2:
+        return None
+    return parts[0], parts[1]
 
 
 def _ref_sha(owner: str, repo_name: str, ref: str, *, token: str) -> str:
