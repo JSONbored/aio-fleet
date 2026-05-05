@@ -31,8 +31,32 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     steps = central_check_steps(repo, event="push", publish=True)
 
     names = [step.name for step in steps]
+    assert "build-pytest-image" in names  # nosec B101
     assert "integration-tests" in names  # nosec B101
     assert names[-2:] == ["trunk", "registry-publish"]  # nosec B101
+    build = steps[names.index("build-pytest-image")]
+    assert build.stream_output is True  # nosec B101
+    assert build.command[:6] == [  # nosec B101
+        "docker",
+        "build",
+        "--progress=plain",
+        "--platform",
+        "linux/amd64",
+        "-t",
+    ]
+    integration = steps[names.index("integration-tests")]
+    assert integration.env == {"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"}  # nosec B101
+
+
+def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    steps = central_check_steps(repo, event="push", publish=False)
+
+    names = [step.name for step in steps]
+    assert "build-pytest-image" not in names  # nosec B101
+    integration = steps[names.index("integration-tests")]
+    assert integration.env is None  # nosec B101
 
 
 def test_central_check_steps_publish_signoz_components() -> None:

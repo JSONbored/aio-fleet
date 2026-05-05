@@ -18,6 +18,8 @@ class Step:
     name: str
     command: list[str]
     cwd: Path
+    env: dict[str, str] | None = None
+    stream_output: bool = False
 
 
 def central_check_steps(
@@ -63,11 +65,15 @@ def central_check_steps(
             )
         )
     integration_args = str(repo.get("integration_pytest_args", "") or "").strip()
+    prebuilt_integration_image = False
     if (
         include_integration
         and event in {"push", "release", "workflow_dispatch"}
         and integration_args
     ):
+        if publish:
+            steps.append(_pytest_image_build_step(repo))
+            prebuilt_integration_image = True
         steps.append(
             Step(
                 "integration-tests",
@@ -78,6 +84,11 @@ def central_check_steps(
                     *shlex.split(integration_args),
                 ],
                 repo.path,
+                env=(
+                    {"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"}
+                    if prebuilt_integration_image
+                    else None
+                ),
             )
         )
     if include_trunk:
@@ -135,9 +146,33 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
     failures: list[str] = []
     for step in steps:
         if dry_run:
+            env_prefix = ""
+            if step.env:
+                env_prefix = " ".join(
+                    f"{key}={shlex.quote(value)}"
+                    for key, value in sorted(step.env.items())
+                )
+                env_prefix += " "
             print(
-                f"{step.name}: {' '.join(shlex.quote(part) for part in step.command)}"
+                f"{step.name}: {env_prefix}"
+                f"{' '.join(shlex.quote(part) for part in step.command)}"
             )
+            continue
+        env = None
+        if step.env:
+            env = dict(os.environ)
+            env.update(step.env)
+        if step.stream_output:
+            result = subprocess.run(  # nosec B603
+                step.command,
+                cwd=step.cwd,
+                check=False,
+                text=True,
+                env=env,
+            )
+            if result.returncode != 0:
+                failures.append(f"{step.name}: exit {result.returncode}")
+                break
             continue
         result = subprocess.run(  # nosec B603
             step.command,
@@ -145,6 +180,7 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             check=False,
             text=True,
             capture_output=True,
+            env=env,
         )
         if result.stdout:
             print(result.stdout, end="")
@@ -154,6 +190,28 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             failures.append(f"{step.name}: exit {result.returncode}")
             break
     return failures
+
+
+def _pytest_image_build_step(repo: RepoConfig) -> Step:
+    image_tag = str(repo.get("pytest_image_tag", "") or "").strip()
+    if not image_tag:
+        raise ValueError(f"{repo.name} is missing pytest_image_tag")
+    platform = str(repo.get("pytest_image_platform", "linux/amd64") or "linux/amd64")
+    dockerfile = str(repo.get("pytest_dockerfile", "Dockerfile") or "Dockerfile")
+    context = str(repo.get("pytest_build_context", ".") or ".")
+    command = [
+        "docker",
+        "build",
+        "--progress=plain",
+        "--platform",
+        platform,
+        "-t",
+        image_tag,
+    ]
+    if dockerfile != "Dockerfile":
+        command.extend(["-f", dockerfile])
+    command.append(context)
+    return Step("build-pytest-image", command, repo.path, stream_output=True)
 
 
 def publish_components(repo: RepoConfig) -> list[str]:
