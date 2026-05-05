@@ -1306,17 +1306,44 @@ def _issue_number_from_url(url: str) -> int | None:
 def _run(
     command: list[str], *, check: bool = True, cwd: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
+    env = _github_cli_env() if command and command[0] == "gh" else None
     result = subprocess.run(  # nosec B603
         command,
         cwd=cwd,
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     if check and result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
     return result
+
+
+def _github_cli_env() -> dict[str, str] | None:
+    token = _github_cli_token()
+    if not token:
+        return None
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)
+    return env
+
+
+def _github_cli_token() -> str:
+    for key in (
+        "AIO_FLEET_DASHBOARD_TOKEN",
+        "AIO_FLEET_UPSTREAM_TOKEN",
+        "AIO_FLEET_CHECK_TOKEN",
+        "APP_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        token = os.environ.get(key, "").strip()
+        if token:
+            return token
+    return ""
 
 
 def _cell(value: object) -> str:
