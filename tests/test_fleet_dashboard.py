@@ -634,3 +634,34 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
 
     assert issue is not None  # nosec B101
     assert issue["number"] == 55  # nosec B101
+
+
+def test_dashboard_issue_commands_require_dashboard_label(monkeypatch) -> None:
+    def fake_run(command: list[str], *, check=True, cwd=None):
+        del check, cwd
+        assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "number": 55,
+                    "title": "Fleet Update Dashboard",
+                    "state": "OPEN",
+                    "body": "- [x] Run upstream monitor",
+                    "labels": [],
+                    "url": "https://github.com/JSONbored/aio-fleet/issues/55",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
+
+    result = fleet_dashboard.dashboard_issue_commands(
+        issue_repo="JSONbored/aio-fleet", issue_number=55
+    )
+
+    assert result["is_dashboard"] is False  # nosec B101
+    assert result["requested"] is False  # nosec B101
+    assert result["commands"] == {}  # nosec B101
