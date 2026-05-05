@@ -281,14 +281,13 @@ jobs:
                       "git",
                       "-C",
                       str(worktree),
-                      "config",
-                      "http.https://github.com/.extraheader",
-                      f"AUTHORIZATION: basic {auth}",
+                      "-c",
+                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--recursive",
                   ],
-                  check=True,
-              )
-              subprocess.run(
-                  ["git", "-C", str(worktree), "submodule", "update", "--init", "--recursive"],
                   check=True,
               )
               args = [
