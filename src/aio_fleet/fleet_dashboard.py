@@ -206,10 +206,6 @@ def render_dashboard(state: dict[str, Any]) -> str:
 
 def alert_warnings(env: dict[str, str]) -> list[str]:
     warnings: list[str] = []
-    if not env.get("AIO_FLEET_KUMA_PUSH_URL"):
-        warnings.append(
-            "AIO_FLEET_KUMA_PUSH_URL is not configured; heartbeat alerts are disabled."
-        )
     if not env.get("AIO_FLEET_ALERT_WEBHOOK_URL"):
         warnings.append(
             "AIO_FLEET_ALERT_WEBHOOK_URL is not configured; rich digest alerts are disabled."

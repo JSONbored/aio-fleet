@@ -187,6 +187,86 @@ def test_api_writer_commits_submodule_gitlinks(tmp_path: Path, monkeypatch) -> N
     )  # nosec B101
 
 
+def test_api_writer_commits_multiple_submodule_gitlinks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    github_writer._run_git(repo_path, ["init"])
+    github_writer._run_git(
+        repo_path,
+        [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{'b' * 40},openmemory",
+        ],
+    )
+    github_writer._run_git(
+        repo_path,
+        [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{'c' * 40},providers",
+        ],
+    )
+    repo = load_manifest(_manifest(tmp_path, repo_path)).repo("example-aio")
+
+    def fake_request(
+        url: str,
+        *,
+        token: str,
+        method: str,
+        payload: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        if method == "GET" and url.endswith("/git/ref/heads/main"):
+            return {"object": {"sha": "m" * 40}}
+        if method == "GET" and url.endswith("/git/ref/heads/codex/update"):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        if method == "GET" and url.endswith(f"/git/commits/{'m' * 40}"):
+            return {"tree": {"sha": "t" * 40}}
+        if method == "POST" and url.endswith("/git/trees"):
+            assert payload is not None  # nosec B101
+            assert payload["tree"] == [  # nosec B101
+                {
+                    "path": "openmemory",
+                    "mode": "160000",
+                    "type": "commit",
+                    "sha": "b" * 40,
+                },
+                {
+                    "path": "providers",
+                    "mode": "160000",
+                    "type": "commit",
+                    "sha": "c" * 40,
+                },
+            ]
+            return {"sha": "n" * 40}
+        if method == "POST" and url.endswith("/git/commits"):
+            return {"sha": "d" * 40}
+        if method == "POST" and url.endswith("/git/refs"):
+            return {}
+        if method == "GET" and f"/commits/{'d' * 40}" in url:
+            return {"commit": {"verification": {"verified": True, "reason": "valid"}}}
+        raise AssertionError((method, url, payload))
+
+    monkeypatch.setattr(github_writer, "_github_request", fake_request)
+
+    api_token = "dummy-token"  # nosec B105
+
+    result = github_writer.commit_paths_to_branch(
+        repo,
+        branch="codex/update",
+        paths=["openmemory", "providers"],
+        message="chore(sync): bump submodules",
+        token=api_token,
+    )
+
+    assert result.sha == "d" * 40  # nosec B101
+    assert result.committed_paths == ["openmemory", "providers"]  # nosec B101
+
+
 def _manifest(tmp_path: Path, repo_path: Path) -> Path:
     manifest = tmp_path / "fleet.yml"
     manifest.write_text(f"""

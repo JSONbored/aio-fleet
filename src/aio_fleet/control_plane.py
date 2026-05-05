@@ -12,6 +12,40 @@ from pathlib import Path
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.registry import compute_registry_tags
 
+_SECRET_ENV_EXACT = {
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "AIO_FLEET_ALERT_WEBHOOK_URL",
+    "AIO_FLEET_APP_ID",
+    "AIO_FLEET_APP_INSTALLATION_ID",
+    "AIO_FLEET_APP_PRIVATE_KEY",
+    "AIO_FLEET_CHECK_TOKEN",
+    "AIO_FLEET_GHCR_TOKEN",
+    "AIO_FLEET_KUMA_PUSH_URL",
+    "APP_TOKEN",
+    "DOCKERHUB_PASSWORD",
+    "DOCKERHUB_TOKEN",
+    "DOCKERHUB_USERNAME",
+    "GH_TOKEN",
+    "GITHUB_ENV",
+    "GITHUB_OUTPUT",
+    "GITHUB_PATH",
+    "GITHUB_STEP_SUMMARY",
+    "GITHUB_TOKEN",
+    "GIT_ASKPASS",
+    "SSH_AGENT_PID",
+    "SSH_AUTH_SOCK",
+}
+_SECRET_ENV_MARKERS = (
+    "AUTHORIZATION",
+    "COOKIE",
+    "CREDENTIAL",
+    "PASSWORD",
+    "PRIVATE_KEY",
+    "SECRET",
+    "TOKEN",
+    "WEBHOOK",
+)
+
 
 @dataclass(frozen=True)
 class Step:
@@ -21,6 +55,7 @@ class Step:
     env: dict[str, str] | None = None
     stream_output: bool = False
     timeout_seconds: int | None = None
+    inherit_secrets: bool = True
 
 
 def central_check_steps(
@@ -52,10 +87,17 @@ def central_check_steps(
     ]
     install = _install_test_dependencies_step(repo.path)
     if install is not None:
-        steps.append(install)
+        steps.append(Step(**{**install.__dict__, "inherit_secrets": False}))
     generator = str(repo.get("generator_check_command", "") or "").strip()
     if generator:
-        steps.append(Step("generator-check", shlex.split(generator), repo.path))
+        steps.append(
+            Step(
+                "generator-check",
+                shlex.split(generator),
+                repo.path,
+                inherit_secrets=False,
+            )
+        )
     unit_args = str(repo.get("unit_pytest_args", "") or "").strip()
     if unit_args:
         steps.append(
@@ -63,6 +105,7 @@ def central_check_steps(
                 "unit-tests",
                 [_repo_python(repo.path), "-m", "pytest", *shlex.split(unit_args)],
                 repo.path,
+                inherit_secrets=False,
             )
         )
     integration_args = str(repo.get("integration_pytest_args", "") or "").strip()
@@ -93,6 +136,7 @@ def central_check_steps(
                 timeout_seconds=_repo_timeout_seconds(
                     repo, "integration_timeout_seconds", default=1800
                 ),
+                inherit_secrets=False,
             )
         )
     if include_trunk:
@@ -166,10 +210,7 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
                 f"{' '.join(shlex.quote(part) for part in step.command)}"
             )
             continue
-        env = None
-        if step.env:
-            env = dict(os.environ)
-            env.update(step.env)
+        env = _step_environment(step.env, inherit_secrets=step.inherit_secrets)
         if step.stream_output:
             try:
                 result = subprocess.run(  # nosec B603
@@ -214,6 +255,40 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             failures.append(f"{step.name}: exit {result.returncode}")
             break
     return failures
+
+
+def _step_environment(
+    extra_env: dict[str, str] | None = None, *, inherit_secrets: bool = True
+) -> dict[str, str]:
+    env = (
+        dict(os.environ)
+        if inherit_secrets
+        else {
+            key: value
+            for key, value in os.environ.items()
+            if not _secret_environment_key(key)
+        }
+    )
+    if extra_env:
+        unsafe_keys = (
+            sorted(key for key in extra_env if _secret_environment_key(key))
+            if not inherit_secrets
+            else []
+        )
+        if unsafe_keys:
+            raise ValueError(
+                "refusing to pass secret-like environment keys to repo step: "
+                + ", ".join(unsafe_keys)
+            )
+        env.update(extra_env)
+    return env
+
+
+def _secret_environment_key(key: str) -> bool:
+    upper = key.upper()
+    return upper in _SECRET_ENV_EXACT or any(
+        marker in upper for marker in _SECRET_ENV_MARKERS
+    )
 
 
 def _pytest_image_build_step(repo: RepoConfig) -> Step:
@@ -344,7 +419,11 @@ def run_central_trunk(
             "--color=false",
             "--fix" if fix else "--no-fix",
         ]
-        env = dict(os.environ)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("AIO_FLEET_")
+        }
         env.setdefault("FORCE_COLOR", "0")
         return subprocess.run(  # nosec B603
             command, cwd=scratch, check=False, text=True, capture_output=True, env=env

@@ -74,16 +74,11 @@ jobs:
       poll_has_targets: ${{ steps.poll.outputs.has_targets }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
-      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
-      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
-      AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
-      AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -102,6 +97,9 @@ jobs:
         id: app-token
         if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'issues' }}
         env:
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -474,6 +472,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         run: |
           set -euo pipefail
@@ -491,6 +491,8 @@ jobs:
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
@@ -532,9 +534,30 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Start central control check
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_EVENT: ${{ inputs.event }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status in_progress \
+            --summary "aio-fleet central check started"
 
       - name: Run central control check
+        id: central-control-check
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        continue-on-error: true
         env:
           TARGET_REPO: ${{ inputs.repo }}
           TARGET_SHA: ${{ inputs.sha }}
@@ -543,25 +566,56 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
           args=(
             control-check
             --repo "${TARGET_REPO}"
             --repo-path app-repo
             --sha "${TARGET_SHA}"
             --event "${TARGET_EVENT}"
-            --check-run
           )
           if [[ "${PUBLISH}" == "true" ]]; then
             args+=(--publish)
           fi
           if [[ "${DRY_RUN}" == "true" ]]; then
-            args+=(--dry-run)
+            args+=(--check-run --dry-run)
           fi
-          python -m aio_fleet "${args[@]}"
+          python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
+
+      - name: Complete central control check
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_EVENT: ${{ inputs.event }}
+          CHECK_OUTCOME: ${{ steps.central-control-check.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            summary="aio-fleet central check failed"
+          fi
+          python -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            exit 1
+          fi
 
       - name: Alert control-plane status
         if: ${{ always() }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           MODE: ${{ inputs.mode }}
@@ -587,16 +641,11 @@ jobs:
         target: ${{ fromJSON(needs.control-plane.outputs.poll_targets) }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
-      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
-      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
-      AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
-      AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -614,6 +663,9 @@ jobs:
       - name: Resolve GitHub App token
         id: app-token
         env:
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -675,18 +727,36 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
-      - name: Run central control check
+      - name: Start central control check
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
           TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_EVENT: ${{ matrix.target.event }}
-          TARGET_PUBLISH: ${{ matrix.target.publish }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          python -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status in_progress \
+            --summary "aio-fleet central check started"
+
+      - name: Run central control check
+        id: poll-central-control-check
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+        run: |
+          set -euo pipefail
+          unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
           args=(
             control-check
             --repo "${TARGET_REPO}"
@@ -694,16 +764,46 @@ jobs:
             --sha "${TARGET_SHA}"
             --event "${TARGET_EVENT}"
             --no-integration
-            --check-run
           )
           if [[ "${TARGET_PUBLISH}" == "true" ]]; then
             args+=(--publish)
           fi
-          python -m aio_fleet "${args[@]}"
+          python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
+
+      - name: Complete central control check
+        if: ${{ always() }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          CHECK_OUTCOME: ${{ steps.poll-central-control-check.outcome }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          summary="aio-fleet central check passed"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            summary="aio-fleet central check failed"
+          fi
+          python -m aio_fleet check run \
+            --repo "${TARGET_REPO}" \
+            --sha "${TARGET_SHA}" \
+            --event "${TARGET_EVENT}" \
+            --status completed \
+            --conclusion "${conclusion}" \
+            --summary "${summary}"
+          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+            exit 1
+          fi
 
       - name: Alert poll-check failure
         if: ${{ always() }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           TARGET_REPO: ${{ matrix.target.repo }}

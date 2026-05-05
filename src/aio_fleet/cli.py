@@ -740,15 +740,13 @@ def cmd_alert_doctor(args: argparse.Namespace) -> int:
     webhook_url = args.webhook_url or os.environ.get("AIO_FLEET_ALERT_WEBHOOK_URL", "")
     findings: list[str] = []
     warnings: list[str] = []
-    if not kuma_url:
-        warnings.append("AIO_FLEET_KUMA_PUSH_URL is not configured")
     if not webhook_url:
         warnings.append("AIO_FLEET_ALERT_WEBHOOK_URL is not configured")
     if args.require_alerts:
         findings.extend(warnings)
         warnings = []
     report = {
-        "kuma": "configured" if kuma_url else "missing",
+        "kuma": "configured" if kuma_url else "disabled",
         "webhook": "configured" if webhook_url else "missing",
         "warnings": warnings,
         "findings": findings,

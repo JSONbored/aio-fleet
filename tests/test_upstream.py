@@ -155,6 +155,88 @@ repos:
     ]
 
 
+def test_upstream_monitor_write_updates_multiple_configured_submodules(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    for submodule in ("openmemory", "providers"):
+        (repo_path / submodule).mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text(
+        "ARG OPENMEMORY_VERSION=v2.0.0\n" "ARG PROVIDERS_VERSION=v1.4.0\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  submodule-aio:
+    path: {repo_path}
+    app_slug: submodule-aio
+    image_name: jsonbored/submodule-aio
+    docker_cache_scope: submodule-aio-image
+    pytest_image_tag: submodule-aio:pytest
+    upstream_monitor:
+      - component: openmemory
+        source: github-releases
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: OPENMEMORY_VERSION
+        strategy: pr
+        submodule_path: openmemory
+        submodule_remote: origin
+        submodule_ref_template: codex/openmemory-{{version}}-aio
+      - component: providers
+        source: github-releases
+        repo: example/providers
+        dockerfile: Dockerfile
+        version_key: PROVIDERS_VERSION
+        strategy: pr
+        submodule_path: providers
+        submodule_remote: upstream
+        submodule_ref_template: release/{{version}}
+""")
+    latest_by_repo = {
+        "mem0ai/mem0": "v2.0.1",
+        "example/providers": "v1.4.1",
+    }
+    calls: list[tuple[Path, list[str]]] = []
+
+    monkeypatch.setattr(
+        upstream,
+        "latest_github_release_result",
+        lambda repo, *_args, **_kwargs: (latest_by_repo[repo], ()),
+    )
+    monkeypatch.setattr(
+        upstream,
+        "run_git",
+        lambda cwd, args, **_kwargs: calls.append((cwd, args)) or None,
+    )
+
+    results = upstream.monitor_repo(
+        load_manifest(manifest).repo("submodule-aio"), write=True
+    )
+
+    assert "ARG OPENMEMORY_VERSION=v2.0.1" in dockerfile.read_text()  # nosec B101
+    assert "ARG PROVIDERS_VERSION=v1.4.1" in dockerfile.read_text()  # nosec B101
+    assert [result.submodule_path for result in results] == [  # nosec B101
+        "openmemory",
+        "providers",
+    ]
+    assert calls == [  # nosec B101
+        (
+            repo_path / "openmemory",
+            ["fetch", "--tags", "origin", "codex/openmemory-v2.0.1-aio"],
+        ),
+        (repo_path / "openmemory", ["checkout", "--detach", "FETCH_HEAD"]),
+        (
+            repo_path / "providers",
+            ["fetch", "--tags", "upstream", "release/v1.4.1"],
+        ),
+        (repo_path / "providers", ["checkout", "--detach", "FETCH_HEAD"]),
+    ]
+
+
 def test_upstream_monitor_does_not_write_notify_strategy(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -292,6 +374,76 @@ repos:
     )
     assert result.skipped_versions == (  # nosec B101
         {"version": "0.7.1-alpha.2", "reason": "github-prerelease"},
+    )
+
+
+def test_sure_monitor_skips_stable_release_without_published_digest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    digest = "sha256:f49fc95b95706fcb7752466edef3c902ba9a746ed6b8ae1206ff22e180ac5006"
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=0.7.0-hotfix.1\n"
+        f"ARG UPSTREAM_IMAGE_DIGEST={digest}\n"
+        "FROM ghcr.io/we-promise/sure:${UPSTREAM_VERSION}@${UPSTREAM_IMAGE_DIGEST}\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    upstream_monitor:
+      - component: aio
+        name: Sure
+        source: github-releases
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: true
+        strategy: pr
+""")
+
+    def fake_http_json(url: str, _headers=None):
+        assert "repos/we-promise/sure/releases" in url  # nosec B101
+        return [
+            {"tag_name": "v0.7.1-alpha.3", "prerelease": True},
+            {"tag_name": "v0.7.0-hotfix.2", "prerelease": False},
+            {"tag_name": "v0.7.0-hotfix.1", "prerelease": False},
+            {"tag_name": "v0.7.0", "prerelease": False},
+        ]
+
+    def fake_digest(
+        _image: str, version: str, *, registry: str, prefix: str = ""
+    ) -> str:
+        assert registry == "ghcr"  # nosec B101
+        assert prefix == ""  # nosec B101
+        if version == "0.7.0-hotfix.2":
+            raise upstream.RegistryDigestNotFoundError("missing")
+        assert version == "0.7.0-hotfix.1"  # nosec B101
+        return digest
+
+    monkeypatch.setattr(upstream, "http_json", fake_http_json)
+    monkeypatch.setattr(upstream, "registry_digest_for_version", fake_digest)
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("sure-aio"))[0]
+
+    assert result.latest_version == "0.7.0-hotfix.1"  # nosec B101
+    assert result.version_update is False  # nosec B101
+    assert result.digest_update is False  # nosec B101
+    assert result.latest_digest == digest  # nosec B101
+    assert result.skipped_versions == (  # nosec B101
+        {"version": "0.7.0-hotfix.2", "reason": "missing-ghcr-digest"},
+        {"version": "0.7.1-alpha.3", "reason": "github-prerelease"},
     )
 
 
