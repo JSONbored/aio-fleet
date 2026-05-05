@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from aio_fleet.github_app import resolve_token
+from aio_fleet.github_app import read_urlopen_with_retry, resolve_token
 from aio_fleet.manifest import RepoConfig
 
 API_VERSION = "2022-11-28"
@@ -374,8 +374,7 @@ def _github_request(
             **({"Content-Type": "application/json"} if payload is not None else {}),
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-        raw = response.read().decode("utf-8")
+    raw = read_urlopen_with_retry(request, timeout=30).decode("utf-8")
     return json.loads(raw or "{}")
 
 
