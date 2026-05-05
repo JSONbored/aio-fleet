@@ -367,7 +367,11 @@ def run_central_trunk(
             "--color=false",
             "--fix" if fix else "--no-fix",
         ]
-        env = dict(os.environ)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("AIO_FLEET_")
+        }
         env.setdefault("FORCE_COLOR", "0")
         return subprocess.run(  # nosec B603
             command, cwd=scratch, check=False, text=True, capture_output=True, env=env

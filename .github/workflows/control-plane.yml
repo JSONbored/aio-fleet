@@ -74,13 +74,6 @@ jobs:
       poll_has_targets: ${{ steps.poll.outputs.has_targets }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
-      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
-      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
-      AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
-      AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -102,6 +95,9 @@ jobs:
         id: app-token
         if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'issues' }}
         env:
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -562,6 +558,8 @@ jobs:
       - name: Alert control-plane status
         if: ${{ always() }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           MODE: ${{ inputs.mode }}
@@ -587,13 +585,6 @@ jobs:
         target: ${{ fromJSON(needs.control-plane.outputs.poll_targets) }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
-      AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
-      AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
-      AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
-      AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -614,6 +605,9 @@ jobs:
       - name: Resolve GitHub App token
         id: app-token
         env:
+          AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
+          AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
+          AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -704,6 +698,8 @@ jobs:
       - name: Alert poll-check failure
         if: ${{ always() }}
         env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           TARGET_REPO: ${{ matrix.target.repo }}
