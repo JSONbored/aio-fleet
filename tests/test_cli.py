@@ -438,10 +438,16 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
     manifest, repo_path = _write_minimal_manifest(tmp_path)
     seen: dict[str, object] = {}
     verify_results = iter([1, 0])
+    monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
 
-    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+    def fake_run(
+        command: list[str], cwd: Path | None = None, env=None
+    ) -> SimpleNamespace:
         seen["publish_command"] = command
         seen["publish_cwd"] = cwd
+        seen["publish_env"] = env
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def fake_registry_verify(args: Namespace) -> int:
@@ -464,6 +470,7 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
 
     assert result == 0  # nosec B101
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
+    assert seen["publish_env"] is None  # nosec B101
     verify_calls = seen["verify_calls"]
     assert len(verify_calls) == 2  # nosec B101
     assert verify_calls[0].repo_path == str(repo_path)  # nosec B101
@@ -474,8 +481,14 @@ def test_registry_publish_skips_build_when_tags_are_current(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
 
-    def fail_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+    def fail_run(
+        command: list[str], cwd: Path | None = None, env=None
+    ) -> SimpleNamespace:
+        del command, cwd, env
         raise AssertionError("current registry tags should skip docker build")
 
     monkeypatch.setattr(cli, "_run", fail_run)
@@ -496,6 +509,78 @@ def test_registry_publish_skips_build_when_tags_are_current(
     assert (
         "example-aio:aio: registry=already-current" in capsys.readouterr().out
     )  # nosec B101
+
+
+def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    seen: dict[str, object] = {"login_commands": []}
+    verify_results = iter([1, 0])
+
+    def fake_login(command: list[str], **kwargs: object):
+        seen["login_commands"].append(command)  # type: ignore[union-attr]
+        login_env = kwargs["env"]
+        assert isinstance(login_env, dict)  # nosec B101
+        assert "DOCKER_CONFIG" in login_env  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in login_env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in login_env  # nosec B101
+        assert kwargs["input"] in {"hub-token\n", "ghcr-token\n"}  # nosec B101
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        seen["publish_command"] = command
+        seen["publish_cwd"] = cwd
+        seen["publish_env"] = env
+        assert isinstance(env, dict)  # nosec B101
+        assert "DOCKER_CONFIG" in env  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in env  # nosec B101
+        assert "GH_TOKEN" not in env  # nosec B101
+        assert "GITHUB_TOKEN" not in env  # nosec B101
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "hub-token")
+    monkeypatch.setenv("AIO_FLEET_GHCR_TOKEN", "ghcr-token")
+    monkeypatch.setenv("AIO_FLEET_GHCR_USERNAME", "JSONbored")
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+    monkeypatch.setattr(cli.subprocess, "run", fake_login)
+    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: next(verify_results))
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            component="aio",
+            dry_run=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert seen["login_commands"] == [  # nosec B101
+        [
+            "docker",
+            "login",
+            "docker.io",
+            "--username",
+            "jsonbored",
+            "--password-stdin",
+        ],
+        [
+            "docker",
+            "login",
+            "ghcr.io",
+            "--username",
+            "JSONbored",
+            "--password-stdin",
+        ],
+    ]
+    assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
 
 
 def test_registry_verify_all_skips_manual_template_publish(

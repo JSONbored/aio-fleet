@@ -68,3 +68,25 @@ def test_catalog_asset_check_rejects_missing_and_mismatched_icon(
         "mem0-aio: catalog_assets target icons/mem0.png "
         "is not referenced by any catalog XML Icon"
     ) in failures
+
+
+def test_catalog_asset_check_rejects_unsafe_paths(tmp_path: Path) -> None:
+    _write_mem0_xml(tmp_path)
+
+    failures = catalog_asset_failures(
+        _repo(
+            tmp_path,
+            [
+                {"source": "../secret.txt", "target": "mem0-aio.xml"},
+                {"source": "mem0-aio.xml", "target": ".git/hooks/pre-push"},
+            ],
+        )
+    )
+
+    assert (  # nosec B101
+        "mem0-aio: catalog_assets source path is invalid: ../secret.txt" in failures
+    )
+    assert (  # nosec B101
+        "mem0-aio: catalog_assets target path is reserved: .git/hooks/pre-push"
+        in failures
+    )

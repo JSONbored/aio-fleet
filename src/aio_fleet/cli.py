@@ -8,6 +8,9 @@ import shlex
 import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from aio_fleet.alerts import alert_payload, emit_alert, payload_from_report
@@ -31,6 +34,7 @@ from aio_fleet.checks import (
 )
 from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
 from aio_fleet.control_plane import (
+    _secret_environment_key,
     central_check_steps,
     publish_components,
     registry_publish_command,
@@ -1036,7 +1040,12 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if preflight == 0:
         print(f"{repo.name}:{args.component}: registry=already-current")
         return 0
-    result = _run(command, cwd=repo.path)
+    try:
+        with _registry_publish_environment(repo) as publish_env:
+            result = _run(command, cwd=repo.path, env=publish_env)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -1057,6 +1066,78 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
             verbose=True,
         )
     )
+
+
+@contextmanager
+def _registry_publish_environment(repo: RepoConfig) -> Iterator[dict[str, str] | None]:
+    dockerhub_username = os.environ.get("DOCKERHUB_USERNAME", "")
+    dockerhub_token = os.environ.get("DOCKERHUB_TOKEN", "")
+    ghcr_token = os.environ.get("AIO_FLEET_GHCR_TOKEN", "")
+    configured = any([dockerhub_username, dockerhub_token, ghcr_token])
+    if not configured:
+        yield None
+        return
+
+    missing = []
+    if not dockerhub_username:
+        missing.append("DOCKERHUB_USERNAME")
+    if not dockerhub_token:
+        missing.append("DOCKERHUB_TOKEN")
+    if not ghcr_token:
+        missing.append("AIO_FLEET_GHCR_TOKEN")
+    if missing:
+        raise RuntimeError(
+            "registry publish credentials are incomplete: " + ", ".join(missing)
+        )
+
+    ghcr_username = (
+        os.environ.get("AIO_FLEET_GHCR_USERNAME")
+        or os.environ.get("GITHUB_REPOSITORY_OWNER")
+        or repo.owner
+    )
+    with tempfile.TemporaryDirectory(prefix="aio-fleet-docker-") as docker_config:
+        publish_env = {
+            key: value
+            for key, value in os.environ.items()
+            if not _secret_environment_key(key)
+        }
+        publish_env["DOCKER_CONFIG"] = docker_config
+        _docker_login(
+            "docker.io",
+            username=dockerhub_username,
+            token=dockerhub_token,
+            env=publish_env,
+        )
+        _docker_login(
+            "ghcr.io",
+            username=ghcr_username,
+            token=ghcr_token,
+            env=publish_env,
+        )
+        yield publish_env
+
+
+def _docker_login(
+    registry: str, *, username: str, token: str, env: dict[str, str]
+) -> None:
+    result = subprocess.run(  # nosec B603 B607
+        [
+            "docker",
+            "login",
+            registry,
+            "--username",
+            username,
+            "--password-stdin",
+        ],
+        input=f"{token}\n",
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"docker login failed for {registry}: {detail}")
 
 
 def cmd_upstream_monitor(args: argparse.Namespace) -> int:

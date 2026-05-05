@@ -149,22 +149,6 @@ jobs:
             exit 1
           fi
 
-      - name: Login to Docker Hub
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GHCR
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-
       - name: Poll active repos
         id: poll
         if: ${{ github.event.schedule == '17 * * * *' || inputs.mode == 'poll' }}
@@ -585,6 +569,10 @@ jobs:
           TARGET_EVENT: ${{ inputs.event }}
           PUBLISH: ${{ inputs.publish }}
           DRY_RUN: ${{ inputs.dry_run }}
+          DOCKERHUB_USERNAME: ${{ inputs.publish && !inputs.dry_run && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.DOCKERHUB_TOKEN || '' }}
+          AIO_FLEET_GHCR_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
+          AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
@@ -721,22 +709,6 @@ jobs:
             exit 1
           fi
 
-      - name: Login to Docker Hub
-        if: ${{ matrix.target.publish == true }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GHCR
-        if: ${{ matrix.target.publish == true }}
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-
       - name: Checkout app repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -771,6 +743,10 @@ jobs:
           TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH: ${{ matrix.target.publish }}
+          DOCKERHUB_USERNAME: ${{ matrix.target.publish && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ matrix.target.publish && secrets.DOCKERHUB_TOKEN || '' }}
+          AIO_FLEET_GHCR_TOKEN: ${{ matrix.target.publish && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
+          AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY

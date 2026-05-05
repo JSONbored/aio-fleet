@@ -83,6 +83,7 @@ def central_check_steps(
                 str(repo.path),
             ],
             repo.path,
+            inherit_secrets=False,
         )
     ]
     install = _install_test_dependencies_step(repo.path)
@@ -157,6 +158,7 @@ def central_check_steps(
                     "--no-fix",
                 ],
                 repo.path,
+                inherit_secrets=False,
             )
         )
     if publish:
@@ -318,6 +320,7 @@ def _pytest_image_build_step(repo: RepoConfig) -> Step:
         timeout_seconds=_repo_timeout_seconds(
             repo, "pytest_image_build_timeout_seconds", default=1800
         ),
+        inherit_secrets=False,
     )
 
 
@@ -400,8 +403,12 @@ def run_central_trunk(
     tmp_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f"{repo.name}-trunk-", dir=tmp_root) as tmp:
         scratch = Path(tmp) / repo.name
+        env = _step_environment(inherit_secrets=False)
+        env.setdefault("FORCE_COLOR", "0")
         subprocess.run(
-            [git, "clone", "--quiet", str(repo.path), str(scratch)], check=True
+            [git, "clone", "--quiet", str(repo.path), str(scratch)],
+            check=True,
+            env=env,
         )  # nosec B603
         scratch_trunk = scratch / ".trunk"
         if scratch_trunk.exists():
@@ -419,12 +426,6 @@ def run_central_trunk(
             "--color=false",
             "--fix" if fix else "--no-fix",
         ]
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("AIO_FLEET_")
-        }
-        env.setdefault("FORCE_COLOR", "0")
         return subprocess.run(  # nosec B603
             command, cwd=scratch, check=False, text=True, capture_output=True, env=env
         )
