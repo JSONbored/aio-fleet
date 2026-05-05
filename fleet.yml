@@ -8,6 +8,7 @@ dashboard:
     awesome-unraid:
       path: /Users/shadowbook/Documents/awesome-unraid
       github_repo: JSONbored/awesome-unraid
+      public: true
       role: catalog destination
       description: Community Apps-facing XML and icon catalog for validated AIO source repo changes.
       catalog_path: /Users/shadowbook/Documents/awesome-unraid
@@ -16,6 +17,7 @@ dashboard:
     nanoclaw-aio:
       path: /Users/shadowbook/Documents/nanoclaw-aio
       github_repo: JSONbored/nanoclaw-aio
+      public: true
       status: rehab
       description: Neglected pre-aio-fleet AIO repo that needs a full template/runtime/container overhaul before active fleet promotion.
       next_action: Run a rehab audit, remove legacy shared files, export .aio-fleet.yml, then prove aio-fleet / required before promotion.
