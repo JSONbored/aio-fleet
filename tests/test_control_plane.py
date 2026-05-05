@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import subprocess  # nosec B404
 from pathlib import Path
 
-from aio_fleet.control_plane import central_check_steps
+from aio_fleet.control_plane import Step, central_check_steps, run_steps
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,7 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     assert names[-2:] == ["trunk", "registry-publish"]  # nosec B101
     build = steps[names.index("build-pytest-image")]
     assert build.stream_output is True  # nosec B101
+    assert build.timeout_seconds == 1800  # nosec B101
     assert build.command[:6] == [  # nosec B101
         "docker",
         "build",
@@ -46,6 +48,10 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     ]
     integration = steps[names.index("integration-tests")]
     assert integration.env == {"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"}  # nosec B101
+    assert integration.timeout_seconds == 1800  # nosec B101
+    publish = steps[names.index("registry-publish")]
+    assert publish.stream_output is True  # nosec B101
+    assert publish.timeout_seconds == 3600  # nosec B101
 
 
 def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:
@@ -81,6 +87,20 @@ def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
     assert "integration-tests" not in names  # nosec B101
     assert "unit-tests" in names  # nosec B101
     assert "trunk" in names  # nosec B101
+
+
+def test_run_steps_reports_timeout(monkeypatch, tmp_path: Path) -> None:
+    def fake_run(*args: object, **kwargs: object):
+        raise subprocess.TimeoutExpired(cmd=["slow"], timeout=5)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    failures = run_steps(
+        [Step("slow-step", ["slow"], tmp_path, timeout_seconds=5)],
+        dry_run=False,
+    )
+
+    assert failures == ["slow-step: timed out after 5s"]  # nosec B101
 
 
 def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:
