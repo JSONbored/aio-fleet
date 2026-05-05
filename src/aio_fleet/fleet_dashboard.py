@@ -26,6 +26,15 @@ DASHBOARD_COMMANDS = {
     "rescan": "Rescan dashboard",
     "upstream_monitor": "Run upstream monitor",
 }
+GITHUB_CLI_TOKEN_KEYS = (
+    "AIO_FLEET_DASHBOARD_TOKEN",
+    "AIO_FLEET_UPSTREAM_TOKEN",
+    "AIO_FLEET_ISSUE_TOKEN",
+    "AIO_FLEET_CHECK_TOKEN",
+    "APP_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+)
 CHECKED_COMMAND_RE = re.compile(
     r"^-\s+\[[xX]\]\s+(?P<label>.+?)\s*$",
     re.MULTILINE,
@@ -255,7 +264,8 @@ def upsert_dashboard_issue(
                 title,
                 "--body",
                 body,
-            ]
+            ],
+            cli_scope="issue",
         )
         _add_dashboard_label(issue_repo, number=number, label=label)
         _close_duplicate_dashboard_issues(
@@ -281,7 +291,8 @@ def upsert_dashboard_issue(
             body,
             "--label",
             label,
-        ]
+        ],
+        cli_scope="issue",
     )
     url = created.stdout.strip()
     return DashboardIssueResult(
@@ -308,7 +319,8 @@ def dashboard_issue_commands(*, issue_repo: str, issue_number: int) -> dict[str,
             issue_repo,
             "--json",
             "number,title,state,body,labels,url",
-        ]
+        ],
+        cli_scope="issue",
     )
     if not isinstance(issue, dict):
         return {
@@ -779,6 +791,7 @@ def _dashboard_issue_by_number(
             "number,title,url,labels,updatedAt,body,state",
         ],
         check=False,
+        cli_scope="issue",
     )
     if result.returncode != 0:
         return None
@@ -810,6 +823,7 @@ def _dashboard_issue_candidates(issue_repo: str, *, label: str) -> list[dict[str
             "number,title,url,labels,updatedAt,body",
         ],
         check=False,
+        cli_scope="issue",
     )
     if result.returncode == 0:
         issues.extend(_json_issue_list(result.stdout))
@@ -828,6 +842,7 @@ def _dashboard_issue_candidates(issue_repo: str, *, label: str) -> list[dict[str
             "number,title,url,labels,updatedAt,body",
         ],
         check=False,
+        cli_scope="issue",
     )
     if title_result.returncode == 0:
         issues.extend(_json_issue_list(title_result.stdout))
@@ -891,6 +906,7 @@ def _close_duplicate_dashboard_issues(
                 "not planned",
             ],
             check=False,
+            cli_scope="issue",
         )
 
 
@@ -909,6 +925,7 @@ def _ensure_label(issue_repo: str, *, label: str) -> None:
             "Central AIO fleet update dashboard",
         ],
         check=False,
+        cli_scope="issue",
     )
 
 
@@ -925,6 +942,7 @@ def _add_dashboard_label(issue_repo: str, *, number: int, label: str) -> None:
             label,
         ],
         check=False,
+        cli_scope="issue",
     )
 
 
@@ -1001,8 +1019,8 @@ def _git_state(path: Path) -> dict[str, Any]:
     }
 
 
-def _gh_json(args: list[str]) -> Any:
-    result = _run(["gh", *args], check=True)
+def _gh_json(args: list[str], *, cli_scope: str = "activity") -> Any:
+    result = _run(["gh", *args], check=True, cli_scope=cli_scope)
     text = result.stdout.strip()
     return json.loads(text) if text else None
 
@@ -1304,9 +1322,13 @@ def _issue_number_from_url(url: str) -> int | None:
 
 
 def _run(
-    command: list[str], *, check: bool = True, cwd: Path | None = None
+    command: list[str],
+    *,
+    check: bool = True,
+    cwd: Path | None = None,
+    cli_scope: str = "activity",
 ) -> subprocess.CompletedProcess[str]:
-    env = _github_cli_env() if command and command[0] == "gh" else None
+    env = _github_cli_env(cli_scope) if command and command[0] == "gh" else None
     result = subprocess.run(  # nosec B603
         command,
         cwd=cwd,
@@ -1321,25 +1343,31 @@ def _run(
     return result
 
 
-def _github_cli_env() -> dict[str, str] | None:
-    token = _github_cli_token()
+def _github_cli_env(cli_scope: str) -> dict[str, str] | None:
+    token = _github_cli_token(cli_scope)
     if not token:
         return None
     env = os.environ.copy()
+    for key in GITHUB_CLI_TOKEN_KEYS:
+        env.pop(key, None)
     env["GH_TOKEN"] = token
-    env.pop("GITHUB_TOKEN", None)
     return env
 
 
-def _github_cli_token() -> str:
-    for key in (
-        "AIO_FLEET_DASHBOARD_TOKEN",
-        "AIO_FLEET_UPSTREAM_TOKEN",
-        "AIO_FLEET_CHECK_TOKEN",
-        "APP_TOKEN",
-        "GH_TOKEN",
-        "GITHUB_TOKEN",
-    ):
+def _github_cli_token(cli_scope: str) -> str:
+    keys = (
+        ("AIO_FLEET_ISSUE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+        if cli_scope == "issue"
+        else (
+            "AIO_FLEET_DASHBOARD_TOKEN",
+            "AIO_FLEET_UPSTREAM_TOKEN",
+            "AIO_FLEET_CHECK_TOKEN",
+            "APP_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+        )
+    )
+    for key in keys:
         token = os.environ.get(key, "").strip()
         if token:
             return token
