@@ -559,9 +559,16 @@ def http_json(url: str, headers: dict[str, str] | None = None) -> object:
 
 @lru_cache(maxsize=1)
 def github_token() -> str:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token:
-        return token
+    for env_name in (
+        "AIO_FLEET_UPSTREAM_TOKEN",
+        "APP_TOKEN",
+        "AIO_FLEET_CHECK_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        token = os.environ.get(env_name, "").strip()
+        if token:
+            return token
     gh = shutil.which("gh")
     if gh is None:
         return ""
@@ -572,6 +579,16 @@ def github_token() -> str:
         check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def github_cli_env() -> dict[str, str] | None:
+    token = github_token()
+    if not token:
+        return None
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)
+    return env
 
 
 def filter_versions(values: list[str], stable_only: bool) -> list[str]:
@@ -853,6 +870,7 @@ def run_git(
 
 def upsert_pr(repo: RepoConfig, *, branch: str, title: str, body: str) -> str:
     gh = required_executable("gh")
+    env = github_cli_env()
     existing = subprocess.run(  # nosec B603
         [
             gh,
@@ -870,6 +888,7 @@ def upsert_pr(repo: RepoConfig, *, branch: str, title: str, body: str) -> str:
             ".[0].url // empty",
         ],
         cwd=repo.path,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -881,6 +900,7 @@ def upsert_pr(repo: RepoConfig, *, branch: str, title: str, body: str) -> str:
         edit = subprocess.run(  # nosec B603
             [gh, "pr", "edit", url, "--title", title, "--body", body],
             cwd=repo.path,
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -905,6 +925,7 @@ def upsert_pr(repo: RepoConfig, *, branch: str, title: str, body: str) -> str:
             body,
         ],
         cwd=repo.path,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -918,6 +939,7 @@ def close_superseded_upstream_prs(
     repo: RepoConfig, *, current_branch: str, current_pr_url: str
 ) -> list[int]:
     gh = required_executable("gh")
+    env = github_cli_env()
     listed = subprocess.run(  # nosec B603
         [
             gh,
@@ -931,6 +953,7 @@ def close_superseded_upstream_prs(
             "number,headRefName",
         ],
         cwd=repo.path,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -959,6 +982,7 @@ def close_superseded_upstream_prs(
         closed_pr = subprocess.run(  # nosec B603
             [gh, "pr", "close", str(number), "--comment", message],
             cwd=repo.path,
+            env=env,
             text=True,
             capture_output=True,
             check=False,

@@ -54,6 +54,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "simplelogin-aio" = {
@@ -83,6 +84,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "khoj-aio" = {
@@ -112,6 +114,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "mem0-aio" = {
@@ -141,6 +144,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "infisical-aio" = {
@@ -170,6 +174,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "dify-aio" = {
@@ -199,6 +204,7 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 
   "signoz-aio" = {
@@ -228,5 +234,6 @@ repositories = {
     required_checks = [
       "aio-fleet / required",
     ]
+    required_check_app_id = 3565017
   }
 }

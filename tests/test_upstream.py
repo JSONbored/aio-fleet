@@ -591,6 +591,35 @@ def test_upstream_body_mentions_source_first_catalog_sync(tmp_path: Path) -> Non
     assert "Release notes: https://example.invalid/releases" in body  # nosec B101
 
 
+def test_github_token_uses_app_token_without_standard_gh_env(monkeypatch) -> None:
+    upstream.github_token.cache_clear()
+    for env_name in (
+        "AIO_FLEET_UPSTREAM_TOKEN",
+        "APP_TOKEN",
+        "AIO_FLEET_CHECK_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("APP_TOKEN", "app-token")
+
+    assert upstream.github_token() == "app-token"  # nosec B101
+    upstream.github_token.cache_clear()
+
+
+def test_github_cli_env_exposes_only_gh_token(monkeypatch) -> None:
+    upstream.github_token.cache_clear()
+    monkeypatch.setenv("APP_TOKEN", "app-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
+
+    env = upstream.github_cli_env()
+
+    assert env is not None  # nosec B101
+    assert env["GH_TOKEN"] == "app-token"  # nosec B101
+    assert "GITHUB_TOKEN" not in env  # nosec B101
+    upstream.github_token.cache_clear()
+
+
 def _minimal_manifest(repo_path: Path) -> Path:
     manifest = repo_path / "fleet.yml"
     manifest.write_text(f"""
