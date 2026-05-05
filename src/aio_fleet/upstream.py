@@ -37,6 +37,16 @@ PRERELEASE_SUFFIXES = {
 STABLE_MAINTENANCE_SUFFIXES = {"hotfix"}
 
 
+class RegistryDigestNotFoundError(ValueError):
+    """Raised when no manifest digest exists for an otherwise valid image tag."""
+
+
+@dataclass(frozen=True)
+class GitHubReleaseCandidate:
+    tag: str
+    version: str
+
+
 @dataclass(frozen=True)
 class UpstreamMonitorResult:
     repo: str
@@ -110,9 +120,13 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
     current_digest = read_arg(dockerfile, digest_key) if digest_key else ""
     source = str(config.get("source", "manual"))
     strategy = str(config.get("strategy", "notify"))
+    digest_source = str(config.get("digest_source", ""))
+    image = str(config.get("image", "")).strip()
     latest_version = current_version
     latest_digest = current_digest
     skipped_versions: tuple[dict[str, str], ...] = ()
+    release_candidates: tuple[GitHubReleaseCandidate, ...] = ()
+    skipped_release_candidates: tuple[dict[str, str], ...] = ()
 
     if source == "github-tags":
         latest_version = latest_github_tag(
@@ -121,11 +135,25 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
             strip_prefix=str(config.get("version_strip_prefix", "")),
         )
     elif source == "github-releases":
-        latest_version, skipped_versions = latest_github_release_result(
-            str(config["repo"]),
-            stable_only=bool(config.get("stable_only", True)),
-            strip_prefix=str(config.get("version_strip_prefix", "")),
-        )
+        if digest_key and digest_source and image:
+            release_candidates, skipped_release_candidates = (
+                github_release_candidates_result(
+                    str(config["repo"]),
+                    stable_only=bool(config.get("stable_only", True)),
+                    strip_prefix=str(config.get("version_strip_prefix", "")),
+                )
+            )
+            latest_version = release_candidates[0].version
+            skipped_versions = skipped_github_release_report(
+                skipped_release_candidates,
+                latest_tag=release_candidates[0].tag,
+            )
+        else:
+            latest_version, skipped_versions = latest_github_release_result(
+                str(config["repo"]),
+                stable_only=bool(config.get("stable_only", True)),
+                strip_prefix=str(config.get("version_strip_prefix", "")),
+            )
     elif source == "ghcr-tags":
         latest_version = latest_registry_tag(
             str(config["image"]),
@@ -143,15 +171,24 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
     elif source != "manual":
         raise ValueError(f"{repo.name}: unsupported upstream monitor source: {source}")
 
-    digest_source = str(config.get("digest_source", ""))
-    image = str(config.get("image", "")).strip()
     if digest_key and digest_source and image:
-        latest_digest = registry_digest_for_version(
-            image,
-            latest_version,
-            registry=digest_source,
-            prefix=str(config.get("digest_tag_prefix", "")),
-        )
+        if source == "github-releases" and release_candidates:
+            latest_version, latest_digest, skipped_versions = (
+                release_with_resolvable_digest(
+                    release_candidates,
+                    skipped_release_candidates,
+                    image=image,
+                    registry=digest_source,
+                    prefix=str(config.get("digest_tag_prefix", "")),
+                )
+            )
+        else:
+            latest_digest = registry_digest_for_version(
+                image,
+                latest_version,
+                registry=digest_source,
+                prefix=str(config.get("digest_tag_prefix", "")),
+            )
 
     return UpstreamMonitorResult(
         repo=repo.name,
@@ -274,10 +311,24 @@ def latest_github_release(
 def latest_github_release_result(
     repo: str, *, stable_only: bool, strip_prefix: str = ""
 ) -> tuple[str, tuple[dict[str, str], ...]]:
+    candidates, skipped = github_release_candidates_result(
+        repo,
+        stable_only=stable_only,
+        strip_prefix=strip_prefix,
+    )
+    return candidates[0].version, skipped_github_release_report(
+        skipped,
+        latest_tag=candidates[0].tag,
+    )
+
+
+def github_release_candidates_result(
+    repo: str, *, stable_only: bool, strip_prefix: str = ""
+) -> tuple[tuple[GitHubReleaseCandidate, ...], tuple[dict[str, str], ...]]:
     data = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=100")
     if not isinstance(data, list):
         raise ValueError(f"unexpected GitHub release response for {repo}")
-    tags: list[str] = []
+    candidates: list[GitHubReleaseCandidate] = []
     skipped: list[dict[str, str]] = []
     for entry in data:
         if not isinstance(entry, dict):
@@ -303,17 +354,71 @@ def latest_github_release_result(
                 }
             )
             continue
-        tags.append(tag)
-    if not tags:
+        candidates.append(
+            GitHubReleaseCandidate(
+                tag=tag,
+                version=normalize_version(tag, strip_prefix=strip_prefix),
+            )
+        )
+    if not candidates:
         raise ValueError(f"no matching GitHub releases found for {repo}")
-    latest_tag = sorted(tags, key=version_sort_key)[-1]
-    latest = normalize_version(latest_tag, strip_prefix=strip_prefix)
-    skipped_report = [
+    return (
+        tuple(
+            sorted(
+                candidates, key=lambda item: version_sort_key(item.tag), reverse=True
+            )
+        ),
+        tuple(skipped),
+    )
+
+
+def skipped_github_release_report(
+    skipped: tuple[dict[str, str], ...],
+    *,
+    latest_tag: str,
+) -> tuple[dict[str, str], ...]:
+    return tuple(
         {"version": item["version"], "reason": item["reason"]}
         for item in skipped
         if version_sort_key(item["tag"]) > version_sort_key(latest_tag)
-    ][:10]
-    return latest, tuple(skipped_report)
+    )[:10]
+
+
+def release_with_resolvable_digest(
+    candidates: tuple[GitHubReleaseCandidate, ...],
+    skipped: tuple[dict[str, str], ...],
+    *,
+    image: str,
+    registry: str,
+    prefix: str = "",
+) -> tuple[str, str, tuple[dict[str, str], ...]]:
+    missing: list[dict[str, str]] = []
+    for candidate in candidates:
+        try:
+            digest = registry_digest_for_version(
+                image,
+                candidate.version,
+                registry=registry,
+                prefix=prefix,
+            )
+        except RegistryDigestNotFoundError:
+            missing.append(
+                {
+                    "version": candidate.version,
+                    "reason": f"missing-{registry}-digest",
+                }
+            )
+            continue
+        return (
+            candidate.version,
+            digest,
+            tuple(missing)
+            + skipped_github_release_report(skipped, latest_tag=candidate.tag),
+        )
+    versions = ", ".join(candidate.version for candidate in candidates[:10])
+    raise RegistryDigestNotFoundError(
+        f"unable to resolve {registry} digest for {image} using release candidates: {versions}"
+    )
 
 
 def latest_registry_tag(
@@ -354,7 +459,7 @@ def registry_digest_for_version(
         digest = registry_digest(image, tag, registry=registry)
         if digest:
             return digest
-    raise ValueError(
+    raise RegistryDigestNotFoundError(
         f"unable to resolve {registry} digest for {image} using tags: {', '.join(candidates)}"
     )
 

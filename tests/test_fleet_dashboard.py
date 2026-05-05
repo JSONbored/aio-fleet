@@ -27,7 +27,7 @@ class _FakeAssessment:
         }
 
 
-def test_dashboard_renders_notify_only_update_and_alert_warnings(
+def test_dashboard_renders_notify_only_update_and_webhook_warning(
     tmp_path: Path, monkeypatch
 ) -> None:
     repo_path = tmp_path / "repo"
@@ -88,7 +88,8 @@ repos:
     assert (
         "python -m aio_fleet upstream assess --repo mem0-aio --format json" in body
     )  # nosec B101
-    assert "AIO_FLEET_KUMA_PUSH_URL is not configured" in body  # nosec B101
+    assert "AIO_FLEET_KUMA_PUSH_URL is not configured" not in body  # nosec B101
+    assert "AIO_FLEET_ALERT_WEBHOOK_URL is not configured" in body  # nosec B101
     assert report["state"]["rows"][0]["strategy"] == "notify"  # nosec B101
     assert report["state"]["summary"]["triage_updates"] == 1  # nosec B101
 
