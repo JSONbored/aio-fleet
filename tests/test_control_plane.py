@@ -103,30 +103,44 @@ def test_run_steps_reports_timeout(monkeypatch, tmp_path: Path) -> None:
     assert failures == ["slow-step: timed out after 5s"]  # nosec B101
 
 
-def test_run_steps_scrubs_tokens_for_untrusted_steps(
+def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
     monkeypatch, tmp_path: Path
 ) -> None:
-    captured_env: dict[str, str] = {}
+    captured_env: dict[str, str] | None = None
 
-    def fake_run(*args: object, **kwargs: object):
+    def fake_run(*_args: object, **kwargs: object):
         nonlocal captured_env
-        captured_env = dict(kwargs.get("env", {}))
-        return subprocess.CompletedProcess(args=["ok"], returncode=0, stdout="", stderr="")
+        captured_env = kwargs["env"]
+        return subprocess.CompletedProcess(["probe"], 0, "", "")
 
-    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "secret")
-    monkeypatch.setenv("APP_TOKEN", "secret")
-    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setenv("GITHUB_ENV", str(tmp_path / "github-env"))
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+    monkeypatch.setenv("SAFE_ENV", "safe")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     failures = run_steps(
-        [Step("safe", ["echo", "ok"], tmp_path, inherit_secrets=False)],
+        [
+            Step(
+                "safe-step",
+                ["probe"],
+                tmp_path,
+                env={"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"},
+                inherit_secrets=False,
+            )
+        ],
         dry_run=False,
     )
 
     assert failures == []  # nosec B101
+    assert captured_env is not None  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in captured_env  # nosec B101
-    assert "APP_TOKEN" not in captured_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in captured_env  # nosec B101
+    assert "GITHUB_ENV" not in captured_env  # nosec B101
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
+    assert captured_env["SAFE_ENV"] == "safe"  # nosec B101
+    assert captured_env["AIO_PYTEST_USE_PREBUILT_IMAGE"] == "true"  # nosec B101
 
 
 def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:

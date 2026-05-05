@@ -155,6 +155,88 @@ repos:
     ]
 
 
+def test_upstream_monitor_write_updates_multiple_configured_submodules(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    for submodule in ("openmemory", "providers"):
+        (repo_path / submodule).mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text(
+        "ARG OPENMEMORY_VERSION=v2.0.0\n" "ARG PROVIDERS_VERSION=v1.4.0\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  submodule-aio:
+    path: {repo_path}
+    app_slug: submodule-aio
+    image_name: jsonbored/submodule-aio
+    docker_cache_scope: submodule-aio-image
+    pytest_image_tag: submodule-aio:pytest
+    upstream_monitor:
+      - component: openmemory
+        source: github-releases
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: OPENMEMORY_VERSION
+        strategy: pr
+        submodule_path: openmemory
+        submodule_remote: origin
+        submodule_ref_template: codex/openmemory-{{version}}-aio
+      - component: providers
+        source: github-releases
+        repo: example/providers
+        dockerfile: Dockerfile
+        version_key: PROVIDERS_VERSION
+        strategy: pr
+        submodule_path: providers
+        submodule_remote: upstream
+        submodule_ref_template: release/{{version}}
+""")
+    latest_by_repo = {
+        "mem0ai/mem0": "v2.0.1",
+        "example/providers": "v1.4.1",
+    }
+    calls: list[tuple[Path, list[str]]] = []
+
+    monkeypatch.setattr(
+        upstream,
+        "latest_github_release_result",
+        lambda repo, *_args, **_kwargs: (latest_by_repo[repo], ()),
+    )
+    monkeypatch.setattr(
+        upstream,
+        "run_git",
+        lambda cwd, args, **_kwargs: calls.append((cwd, args)) or None,
+    )
+
+    results = upstream.monitor_repo(
+        load_manifest(manifest).repo("submodule-aio"), write=True
+    )
+
+    assert "ARG OPENMEMORY_VERSION=v2.0.1" in dockerfile.read_text()  # nosec B101
+    assert "ARG PROVIDERS_VERSION=v1.4.1" in dockerfile.read_text()  # nosec B101
+    assert [result.submodule_path for result in results] == [  # nosec B101
+        "openmemory",
+        "providers",
+    ]
+    assert calls == [  # nosec B101
+        (
+            repo_path / "openmemory",
+            ["fetch", "--tags", "origin", "codex/openmemory-v2.0.1-aio"],
+        ),
+        (repo_path / "openmemory", ["checkout", "--detach", "FETCH_HEAD"]),
+        (
+            repo_path / "providers",
+            ["fetch", "--tags", "upstream", "release/v1.4.1"],
+        ),
+        (repo_path / "providers", ["checkout", "--detach", "FETCH_HEAD"]),
+    ]
+
+
 def test_upstream_monitor_does_not_write_notify_strategy(
     tmp_path: Path, monkeypatch
 ) -> None:

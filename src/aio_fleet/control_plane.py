@@ -12,6 +12,40 @@ from pathlib import Path
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.registry import compute_registry_tags
 
+_SECRET_ENV_EXACT = {
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "AIO_FLEET_ALERT_WEBHOOK_URL",
+    "AIO_FLEET_APP_ID",
+    "AIO_FLEET_APP_INSTALLATION_ID",
+    "AIO_FLEET_APP_PRIVATE_KEY",
+    "AIO_FLEET_CHECK_TOKEN",
+    "AIO_FLEET_GHCR_TOKEN",
+    "AIO_FLEET_KUMA_PUSH_URL",
+    "APP_TOKEN",
+    "DOCKERHUB_PASSWORD",
+    "DOCKERHUB_TOKEN",
+    "DOCKERHUB_USERNAME",
+    "GH_TOKEN",
+    "GITHUB_ENV",
+    "GITHUB_OUTPUT",
+    "GITHUB_PATH",
+    "GITHUB_STEP_SUMMARY",
+    "GITHUB_TOKEN",
+    "GIT_ASKPASS",
+    "SSH_AGENT_PID",
+    "SSH_AUTH_SOCK",
+}
+_SECRET_ENV_MARKERS = (
+    "AUTHORIZATION",
+    "COOKIE",
+    "CREDENTIAL",
+    "PASSWORD",
+    "PRIVATE_KEY",
+    "SECRET",
+    "TOKEN",
+    "WEBHOOK",
+)
+
 
 @dataclass(frozen=True)
 class Step:
@@ -57,7 +91,12 @@ def central_check_steps(
     generator = str(repo.get("generator_check_command", "") or "").strip()
     if generator:
         steps.append(
-            Step("generator-check", shlex.split(generator), repo.path, inherit_secrets=False)
+            Step(
+                "generator-check",
+                shlex.split(generator),
+                repo.path,
+                inherit_secrets=False,
+            )
         )
     unit_args = str(repo.get("unit_pytest_args", "") or "").strip()
     if unit_args:
@@ -171,9 +210,7 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
                 f"{' '.join(shlex.quote(part) for part in step.command)}"
             )
             continue
-        env = dict(os.environ) if step.inherit_secrets else _scrubbed_env()
-        if step.env:
-            env.update(step.env)
+        env = _step_environment(step.env, inherit_secrets=step.inherit_secrets)
         if step.stream_output:
             try:
                 result = subprocess.run(  # nosec B603
@@ -220,23 +257,38 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
     return failures
 
 
-def _scrubbed_env() -> dict[str, str]:
-    blocked_prefixes = ("AIO_FLEET_",)
-    blocked_keys = {
-        "APP_TOKEN",
-        "GH_TOKEN",
-        "GITHUB_TOKEN",
-        "DOCKERHUB_TOKEN",
-        "CR_PAT",
-    }
-    env: dict[str, str] = {}
-    for key, value in os.environ.items():
-        if key in blocked_keys:
-            continue
-        if any(key.startswith(prefix) for prefix in blocked_prefixes):
-            continue
-        env[key] = value
+def _step_environment(
+    extra_env: dict[str, str] | None = None, *, inherit_secrets: bool = True
+) -> dict[str, str]:
+    env = (
+        dict(os.environ)
+        if inherit_secrets
+        else {
+            key: value
+            for key, value in os.environ.items()
+            if not _secret_environment_key(key)
+        }
+    )
+    if extra_env:
+        unsafe_keys = (
+            sorted(key for key in extra_env if _secret_environment_key(key))
+            if not inherit_secrets
+            else []
+        )
+        if unsafe_keys:
+            raise ValueError(
+                "refusing to pass secret-like environment keys to repo step: "
+                + ", ".join(unsafe_keys)
+            )
+        env.update(extra_env)
     return env
+
+
+def _secret_environment_key(key: str) -> bool:
+    upper = key.upper()
+    return upper in _SECRET_ENV_EXACT or any(
+        marker in upper for marker in _SECRET_ENV_MARKERS
+    )
 
 
 def _pytest_image_build_step(repo: RepoConfig) -> Step:
