@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess  # nosec B404
 from pathlib import Path
@@ -450,8 +451,38 @@ repos:
     assert "Needs Triage" in body  # nosec B101
     assert "Safety Review" in body  # nosec B101
     assert "| example-aio | aio | 1.0.0 | 1.1.0 |" in body  # nosec B101
-    hidden = body.split(fleet_dashboard.STATE_START, 1)[1]
+    hidden = _hidden_dashboard_state(body)
     assert '"safety": "warn"' in hidden  # nosec B101
+
+
+def test_dashboard_state_comment_is_safe_for_pr_titles() -> None:
+    state = {
+        "generated_at": "2026-05-05T00:00:00+00:00",
+        "summary": {},
+        "warnings": [],
+        "rows": [],
+        "activity": [
+            {
+                "repo": "example-aio",
+                "prs": [
+                    {
+                        "title": "--><a href='https://evil.example'>click</a><!--",
+                    }
+                ],
+            }
+        ],
+        "destination_repos": [],
+        "rehab_repos": [],
+    }
+
+    body = fleet_dashboard.render_dashboard(state)
+    hidden_block = body.split(fleet_dashboard.STATE_START_BASE64, 1)[1].split(
+        fleet_dashboard.STATE_END, 1
+    )[0]
+
+    assert "-->" not in hidden_block  # nosec B101
+    assert "<a href='https://evil.example'>" not in body  # nosec B101
+    assert "evil.example" in _hidden_dashboard_state(body)  # nosec B101
 
 
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
@@ -706,6 +737,13 @@ def test_dashboard_issue_commands_rejects_unlabeled_body_controls(
     assert result["is_dashboard"] is False  # nosec B101
     assert result["requested"] is False  # nosec B101
     assert result["commands"] == {}  # nosec B101
+
+
+def _hidden_dashboard_state(body: str) -> str:
+    hidden = body.split(fleet_dashboard.STATE_START_BASE64, 1)[1].split(
+        fleet_dashboard.STATE_END, 1
+    )[0]
+    return base64.b64decode(hidden.strip()).decode("utf-8")
 
 
 def test_dashboard_issue_commands_rejects_unlabeled_non_dashboard_issue(

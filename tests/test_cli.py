@@ -389,6 +389,63 @@ repos:
     return manifest, repo_path
 
 
+def test_latest_main_ci_requires_external_id_bound_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    repo = load_manifest(manifest).repo("example-aio")
+    sha = "a" * 40
+    expected_external_id = cli.check_external_id(repo, sha=sha, event="push")
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        del cwd
+        if "commits/main" in command[2]:
+            return SimpleNamespace(returncode=0, stdout=f"{sha}\n", stderr="")
+        if "check-runs" in command[2]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "check_runs": [
+                            {
+                                "external_id": "attacker-controlled",
+                                "status": "completed",
+                                "conclusion": "success",
+                            },
+                            {
+                                "external_id": expected_external_id,
+                                "status": "completed",
+                                "conclusion": "failure",
+                            },
+                        ]
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cli._latest_main_ci(repo)
+
+    assert result["state"] == "failure"  # nosec B101
+
+
+def test_release_version_catches_changelog_system_exit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    repo = load_manifest(_manifest).repo("example-aio")
+
+    monkeypatch.setattr(
+        cli,
+        "latest_changelog_version",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit("bad changelog")),
+    )
+
+    assert cli._release_version(repo) == ""  # nosec B101
+
+
 def test_debt_report_text_prints_publish_state_once(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -641,7 +698,7 @@ repos:
     assert any("example-aio" in tag for tag in verified)  # nosec B101
 
 
-def test_debt_report_treats_repos_missing_from_github_policy_as_manual(
+def test_debt_report_flags_repos_missing_from_github_policy(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     repo_path = tmp_path / "repo"
@@ -650,13 +707,12 @@ def test_debt_report_treats_repos_missing_from_github_policy_as_manual(
     manifest.write_text(f"""
 owner: JSONbored
 repos:
-  unraid-aio-template:
+  example-aio:
     path: {repo_path}
-    app_slug: unraid-aio-template
-    image_name: jsonbored/unraid-aio-template
-    docker_cache_scope: unraid-aio-template-image
-    pytest_image_tag: aio-template:pytest
-    publish_profile: template
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
 """)
     policy = tmp_path / "github-policy.yml"
     policy.write_text("repositories: {}\n")
@@ -687,7 +743,10 @@ repos:
 
     assert result == 0  # nosec B101
     report = json.loads(capsys.readouterr().out)
-    assert report["repos"][0]["github_policy_failures"] == []  # nosec B101
+    assert report["repos"][0]["github_policy_failures"] == [  # nosec B101
+        "example-aio: missing from github policy"
+    ]
+    assert report["repos"][0]["publish"] == "publish=blocked:policy"  # nosec B101
 
 
 def test_validate_template_common_accepts_manifest_repo(tmp_path: Path, capsys) -> None:

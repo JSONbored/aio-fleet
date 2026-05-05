@@ -177,6 +177,8 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
                 release_with_resolvable_digest(
                     release_candidates,
                     skipped_release_candidates,
+                    current_version=current_version,
+                    current_digest=current_digest,
                     image=image,
                     registry=digest_source,
                     prefix=str(config.get("digest_tag_prefix", "")),
@@ -388,12 +390,37 @@ def release_with_resolvable_digest(
     candidates: tuple[GitHubReleaseCandidate, ...],
     skipped: tuple[dict[str, str], ...],
     *,
+    current_version: str = "",
+    current_digest: str = "",
     image: str,
     registry: str,
     prefix: str = "",
 ) -> tuple[str, str, tuple[dict[str, str], ...]]:
     missing: list[dict[str, str]] = []
+    current_key = (
+        version_sort_key(current_version) if SEMVER_RE.match(current_version) else None
+    )
     for candidate in candidates:
+        if (
+            current_key is not None
+            and version_sort_key(candidate.version) <= current_key
+        ):
+            return (
+                current_version,
+                current_digest,
+                tuple(missing)
+                + (
+                    ()
+                    if candidate.version == current_version
+                    else (
+                        {
+                            "version": candidate.version,
+                            "reason": "not-newer-than-current",
+                        },
+                    )
+                )
+                + skipped_github_release_report(skipped, latest_tag=candidate.tag),
+            )
         try:
             digest = registry_digest_for_version(
                 image,
@@ -630,9 +657,12 @@ def is_prerelease_version(value: str) -> bool:
 def is_prerelease_suffix(suffix: str) -> bool:
     if not suffix:
         return False
-    label = suffix.split(".", 1)[0].split("-", 1)[0].lower()
-    if label in STABLE_MAINTENANCE_SUFFIXES:
+    lowered = suffix.lower()
+    if lowered in STABLE_MAINTENANCE_SUFFIXES:
         return False
+    if re.fullmatch(r"hotfix\.[0-9]+", lowered):
+        return False
+    label = suffix.split(".", 1)[0].split("-", 1)[0].lower()
     if label in PRERELEASE_SUFFIXES:
         return True
     # Unknown suffixes stay prerelease-like until a repo needs an explicit stable allowlist entry.

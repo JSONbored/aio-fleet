@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from aio_fleet.validators import catalog_repo_failures
 DASHBOARD_LABEL = "fleet-dashboard"
 DASHBOARD_TITLE = "Fleet Update Dashboard"
 STATE_START = "<!-- aio-fleet-dashboard-state"
+STATE_START_BASE64 = "<!-- aio-fleet-dashboard-state:base64"
 STATE_END = "-->"
 DASHBOARD_COMMANDS = {
     "rescan": "Rescan dashboard",
@@ -195,13 +197,18 @@ def render_dashboard(state: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            STATE_START,
-            json.dumps(state, indent=2, sort_keys=True),
+            STATE_START_BASE64,
+            _encoded_dashboard_state(state),
             STATE_END,
             "",
         ]
     )
     return "\n".join(lines)
+
+
+def _encoded_dashboard_state(state: dict[str, Any]) -> str:
+    raw = json.dumps(state, indent=2, sort_keys=True).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
 
 
 def alert_warnings(env: dict[str, str]) -> list[str]:

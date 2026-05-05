@@ -28,6 +28,7 @@ from aio_fleet.changelog import (
 )
 from aio_fleet.checks import (
     CHECK_NAME,
+    check_external_id,
     check_run_payload,
     check_run_satisfied,
     upsert_check_run,
@@ -312,10 +313,6 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
         "catalog_path": str(catalog_path) if catalog_path else None,
         "repos": [],
     }
-    policy_repos: set[str] = set()
-    if args.github:
-        policy_repos = set(load_policy(Path(args.policy))["repositories"])
-
     for repo in manifest.repos.values():
         git_status = _run(["git", "status", "--short"], cwd=repo.path)
         dirty = "dirty" if git_status.stdout.strip() else "clean"
@@ -337,7 +334,7 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
             if failure.startswith(f"{repo.name}:")
         ]
         github_policy_failures: list[str] = []
-        if args.github and repo.name in policy_repos:
+        if args.github:
             try:
                 github_policy_failures = validate_github_policy(
                     Path(args.policy), repos=[repo.name], check_secrets=False
@@ -663,6 +660,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
             "sha": target.sha,
             "event": target.event,
             "source": target.source,
+            "checkout_submodules": target.checkout_submodules,
             "publish": target.event == "push"
             and target.repo.publish_profile != "template",
         }
@@ -1385,7 +1383,21 @@ def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
             "head_sha": sha,
             "detail": f"no {CHECK_NAME} check found",
         }
-    run = runs[0]
+    external_id = check_external_id(repo, sha=sha, event="push")
+    run = next(
+        (
+            item
+            for item in runs
+            if isinstance(item, dict) and item.get("external_id") == external_id
+        ),
+        None,
+    )
+    if run is None:
+        return {
+            "state": "missing",
+            "head_sha": sha,
+            "detail": f"no externally-bound {CHECK_NAME} check found",
+        }
     state = (
         "success"
         if run.get("status") == "completed" and run.get("conclusion") == "success"
@@ -1403,7 +1415,7 @@ def _release_version(repo: RepoConfig) -> str:
         return latest_changelog_version(
             repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
         )
-    except Exception:
+    except (Exception, SystemExit):
         return ""
 
 

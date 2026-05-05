@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess  # nosec B404
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ class PollTarget:
     sha: str
     event: str
     source: str
+    checkout_submodules: bool = False
 
 
 def poll_targets(
@@ -37,13 +39,20 @@ def poll_targets(
                             sha=sha,
                             event="pull_request",
                             source=f"pr:{number}",
+                            checkout_submodules=False,
                         )
                     )
         if include_main:
             sha = _main_sha(repo)
             if sha:
                 targets.append(
-                    PollTarget(repo=repo, sha=sha, event="push", source="main")
+                    PollTarget(
+                        repo=repo,
+                        sha=sha,
+                        event="push",
+                        source="main",
+                        checkout_submodules=bool(repo.raw.get("checkout_submodules")),
+                    )
                 )
     return targets
 
@@ -110,5 +119,27 @@ def _gh(args: list[str]) -> subprocess.CompletedProcess[str]:
     if gh is None:
         return subprocess.CompletedProcess(["gh", *args], 127, "", "gh CLI is required")
     return subprocess.run(
-        [gh, *args], check=False, text=True, capture_output=True
+        [gh, *args],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=github_cli_env(),
     )  # nosec B603
+
+
+def github_cli_env() -> dict[str, str] | None:
+    token = _github_cli_token()
+    if not token:
+        return None
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)
+    return env
+
+
+def _github_cli_token() -> str:
+    for key in ("GH_TOKEN", "GITHUB_TOKEN", "APP_TOKEN", "AIO_FLEET_CHECK_TOKEN"):
+        token = os.environ.get(key, "").strip()
+        if token:
+            return token
+    return ""

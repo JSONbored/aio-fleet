@@ -55,6 +55,65 @@ repos:
     assert result.latest_digest == "sha256:new"  # nosec B101
 
 
+def test_github_release_digest_fallback_never_downgrades(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text(
+        "ARG UPSTREAM_VERSION=2.0.0\n" "ARG UPSTREAM_IMAGE_DIGEST=sha256:current\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    upstream_monitor:
+      - source: github-releases
+        repo: example/app
+        image: example/app
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        strategy: pr
+""")
+    candidates = (
+        upstream.GitHubReleaseCandidate(tag="v2.1.0", version="2.1.0"),
+        upstream.GitHubReleaseCandidate(tag="v1.9.0", version="1.9.0"),
+    )
+
+    monkeypatch.setattr(
+        upstream,
+        "github_release_candidates_result",
+        lambda *_args, **_kwargs: (candidates, ()),
+    )
+
+    def fake_digest(_image: str, version: str, **_kwargs) -> str:
+        if version == "2.1.0":
+            raise upstream.RegistryDigestNotFoundError("missing")
+        return "sha256:old"
+
+    monkeypatch.setattr(upstream, "registry_digest_for_version", fake_digest)
+
+    result = upstream.monitor_repo(load_manifest(manifest).repo("example-aio"))[0]
+
+    assert result.latest_version == "2.0.0"  # nosec B101
+    assert result.latest_digest == "sha256:current"  # nosec B101
+    assert result.version_update is False  # nosec B101
+    assert result.digest_update is False  # nosec B101
+    assert {item["reason"] for item in result.skipped_versions} == {  # nosec B101
+        "missing-dockerhub-digest",
+        "not-newer-than-current",
+    }
+
+
 def test_upstream_monitor_write_updates_dockerfile(tmp_path: Path, monkeypatch) -> None:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -283,6 +342,21 @@ def test_stable_filter_keeps_hotfix_and_excludes_alpha() -> None:
     assert sorted(filtered, key=upstream.version_sort_key)[-1] == (  # nosec B101
         "v0.7.0-hotfix.1"
     )
+
+
+def test_stable_filter_rejects_hotfix_prefixed_prereleases() -> None:
+    versions = [
+        "v1.2.3",
+        "v1.2.4-hotfix-rc.1",
+        "v1.2.4-hotfix.alpha",
+        "v1.2.4-hotfix.1",
+    ]
+
+    filtered = upstream.filter_versions(versions, stable_only=True)
+
+    assert filtered == ["v1.2.3", "v1.2.4-hotfix.1"]  # nosec B101
+    assert upstream.is_prerelease_version("v1.2.4-hotfix-rc.1") is True  # nosec B101
+    assert upstream.is_prerelease_version("v1.2.4-hotfix.alpha") is True  # nosec B101
 
 
 def test_github_releases_accept_stable_hotfix_and_report_prerelease_skips(

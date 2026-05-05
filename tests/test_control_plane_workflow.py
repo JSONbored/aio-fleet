@@ -74,14 +74,20 @@ def test_app_code_checkouts_do_not_persist_credentials() -> None:
         assert checkout["with"]["persist-credentials"] is False  # nosec B101
 
 
-def test_app_code_checkouts_fetch_submodules_recursively() -> None:
+def test_app_code_checkouts_gate_submodule_checkout() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    for job_name in ("control-plane", "poll-checks"):
-        job = workflow["jobs"][job_name]
-        checkout = _step(job, "Checkout app repo")
+    manual = _step(workflow["jobs"]["control-plane"], "Checkout app repo")
+    poll = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
 
-        assert checkout["with"]["submodules"] == "recursive"  # nosec B101
+    assert "checkout_submodules" in manual["with"]["submodules"]  # nosec B101
+    assert (
+        "inputs.event != 'pull_request'" in manual["with"]["submodules"]
+    )  # nosec B101
+    assert "checkout_submodules" in poll["with"]["submodules"]  # nosec B101
+    assert (
+        "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
+    )  # nosec B101
 
 
 def test_control_check_steps_gate_publish_explicitly() -> None:
@@ -132,6 +138,23 @@ def test_workflow_installs_central_dependencies_before_app_checks() -> None:
         assert install["run"] == 'python -m pip install -e ".[dev]"'  # nosec B101
         assert "python -m aio_fleet" in run_check["run"]  # nosec B101
         assert "control-check" in run_check["run"]  # nosec B101
+
+
+def test_privileged_completion_restores_trusted_checkout_first() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        job = workflow["jobs"][job_name]
+        restore = _step(job, "Restore trusted aio-fleet checkout")
+        complete = _step(job, "Complete central control check")
+
+        assert "AIO_FLEET_CHECK_TOKEN" not in restore.get("env", {})  # nosec B101
+        assert "git reset --hard HEAD" in restore["run"]  # nosec B101
+        assert "git clean -ffd" in restore["run"]  # nosec B101
+        assert (
+            "python -m pip install --force-reinstall ." in restore["run"]
+        )  # nosec B101
+        assert "python -I -m aio_fleet check run" in complete["run"]  # nosec B101
 
 
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:
