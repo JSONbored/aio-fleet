@@ -17,6 +17,13 @@ SECRET_ENV_KEYS = {
     "GH_TOKEN",
     "GITHUB_TOKEN",
 }
+APP_CODE_SECRET_ENV_KEYS = SECRET_ENV_KEYS - {"AIO_FLEET_GHCR_TOKEN"}
+REGISTRY_PUBLISH_ENV_KEYS = {
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "AIO_FLEET_GHCR_TOKEN",
+    "AIO_FLEET_GHCR_USERNAME",
+}
 
 
 def test_poll_checks_job_does_not_export_secrets_to_app_code_step() -> None:
@@ -27,7 +34,9 @@ def test_poll_checks_job_does_not_export_secrets_to_app_code_step() -> None:
 
     run_step = _step(poll_checks, "Run central control check")
     assert run_step.get("continue-on-error") is True  # nosec B101
-    assert not SECRET_ENV_KEYS.intersection(run_step.get("env", {}))  # nosec B101
+    assert not APP_CODE_SECRET_ENV_KEYS.intersection(  # nosec B101
+        run_step.get("env", {})
+    )
     assert "--check-run" not in run_step["run"]  # nosec B101
 
 
@@ -86,6 +95,30 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
     assert "args+=(--publish)" in poll["run"]  # nosec B101
     assert "--no-integration" in poll["run"]  # nosec B101
+
+
+def test_registry_credentials_are_not_logged_in_before_app_checks() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        job = workflow["jobs"][job_name]
+        step_names = [step["name"] for step in job["steps"]]
+        run_check = _step(job, "Run central control check")
+
+        assert "Login to Docker Hub" not in step_names  # nosec B101
+        assert "Login to GHCR" not in step_names  # nosec B101
+        assert REGISTRY_PUBLISH_ENV_KEYS.issubset(set(run_check["env"]))  # nosec B101
+
+
+def test_trunk_setup_actions_do_not_receive_job_scoped_secrets() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        job = workflow["jobs"][job_name]
+        trunk_setup = _step(job, "Install Trunk")
+
+        assert not SECRET_ENV_KEYS.intersection(job.get("env", {}))  # nosec B101
+        assert "env" not in trunk_setup  # nosec B101
 
 
 def test_workflow_installs_central_dependencies_before_app_checks() -> None:

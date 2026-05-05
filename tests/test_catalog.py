@@ -59,3 +59,73 @@ def test_unpublished_xml_targets_reports_blocked_assets(tmp_path: Path) -> None:
     assert unpublished_xml_targets(_Manifest(), [repo]) == [  # type: ignore[arg-type] # nosec B101
         "example-aio: example-aio.xml"
     ]
+
+
+def test_sync_catalog_rejects_source_path_traversal(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo = _repo(repo_path)
+    repo.raw["catalog_assets"] = [
+        {"source": "../secret.txt", "target": "icons/example.png"}
+    ]
+
+    try:
+        sync_catalog_assets(
+            _Manifest(),  # type: ignore[arg-type]
+            catalog_path=tmp_path / "catalog",
+            repos=[repo],
+            icon_only=False,
+            dry_run=True,
+        )
+    except ValueError as exc:
+        assert "source path is invalid" in str(exc)  # nosec B101
+    else:
+        raise AssertionError("expected ValueError for source traversal")
+
+
+def test_sync_catalog_rejects_target_path_traversal(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    (repo_path / "assets").mkdir(parents=True)
+    (repo_path / "assets" / "icon.png").write_bytes(b"icon")
+    repo = _repo(repo_path)
+    repo.raw["catalog_assets"] = [
+        {"source": "assets/icon.png", "target": "../escaped/icon.png"}
+    ]
+
+    try:
+        sync_catalog_assets(
+            _Manifest(),  # type: ignore[arg-type]
+            catalog_path=tmp_path / "catalog",
+            repos=[repo],
+            icon_only=False,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        assert "target path is invalid" in str(exc)  # nosec B101
+    else:
+        raise AssertionError("expected ValueError for target traversal")
+
+    assert not (tmp_path / "escaped" / "icon.png").exists()  # nosec B101
+
+
+def test_sync_catalog_rejects_reserved_git_target(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    (repo_path / "assets").mkdir(parents=True)
+    (repo_path / "assets" / "hook").write_text("#!/bin/sh\n")
+    repo = _repo(repo_path)
+    repo.raw["catalog_assets"] = [
+        {"source": "assets/hook", "target": ".git/hooks/pre-push"}
+    ]
+
+    try:
+        sync_catalog_assets(
+            _Manifest(),  # type: ignore[arg-type]
+            catalog_path=tmp_path / "catalog",
+            repos=[repo],
+            icon_only=False,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        assert "target path is reserved" in str(exc)  # nosec B101
+    else:
+        raise AssertionError("expected ValueError for reserved git target")

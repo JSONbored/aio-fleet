@@ -3,7 +3,12 @@ from __future__ import annotations
 import subprocess  # nosec B404
 from pathlib import Path
 
-from aio_fleet.control_plane import Step, central_check_steps, run_steps
+from aio_fleet.control_plane import (
+    Step,
+    central_check_steps,
+    run_central_trunk,
+    run_steps,
+)
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +43,7 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     build = steps[names.index("build-pytest-image")]
     assert build.stream_output is True  # nosec B101
     assert build.timeout_seconds == 1800  # nosec B101
+    assert build.inherit_secrets is False  # nosec B101
     assert build.command[:6] == [  # nosec B101
         "docker",
         "build",
@@ -52,6 +58,9 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     publish = steps[names.index("registry-publish")]
     assert publish.stream_output is True  # nosec B101
     assert publish.timeout_seconds == 3600  # nosec B101
+    assert publish.inherit_secrets is True  # nosec B101
+    trunk = steps[names.index("trunk")]
+    assert trunk.inherit_secrets is False  # nosec B101
 
 
 def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:
@@ -141,6 +150,46 @@ def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
     assert captured_env["SAFE_ENV"] == "safe"  # nosec B101
     assert captured_env["AIO_PYTEST_USE_PREBUILT_IMAGE"] == "true"  # nosec B101
+
+
+def test_run_central_trunk_scrubs_secret_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    captured_env: dict[str, str] | None = None
+
+    def fake_run(command: list[str], **kwargs: object):
+        nonlocal captured_env
+        if "clone" in command:
+            Path(command[-1]).mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        captured_env = kwargs["env"]  # type: ignore[assignment]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    repo = _repo_with_path(
+        load_manifest(ROOT / "fleet.yml").repo("sure-aio"), repo_path
+    )
+    monkeypatch.setenv("TRUNK_PATH", str(tmp_path / "trunk"))
+    monkeypatch.setenv("AIO_FLEET_TMPDIR", str(tmp_path / "scratch"))
+    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub-token")
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+    monkeypatch.setenv("SAFE_ENV", "safe")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = run_central_trunk(repo)
+
+    assert result.returncode == 0  # nosec B101
+    assert captured_env is not None  # nosec B101
+    assert "AIO_FLEET_APP_PRIVATE_KEY" not in captured_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in captured_env  # nosec B101
+    assert "DOCKERHUB_TOKEN" not in captured_env  # nosec B101
+    assert "GH_TOKEN" not in captured_env  # nosec B101
+    assert "GITHUB_TOKEN" not in captured_env  # nosec B101
+    assert captured_env["SAFE_ENV"] == "safe"  # nosec B101
 
 
 def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:

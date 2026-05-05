@@ -11,6 +11,7 @@ from xml.etree.ElementTree import Element, ParseError, tostring  # nosec B405
 
 import defusedxml.ElementTree as DefusedET
 
+from aio_fleet.catalog import validate_catalog_asset_path
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
 ACTION_REF = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
@@ -125,6 +126,20 @@ def catalog_asset_failures(repo: RepoConfig) -> list[str]:
             failures.append(
                 f"{repo.name}: catalog_assets entries require source and target"
             )
+            continue
+        try:
+            source = validate_catalog_asset_path(
+                source,
+                repo_name=repo.name,
+                field_name="source",
+            )
+            target = validate_catalog_asset_path(
+                target,
+                repo_name=repo.name,
+                field_name="target",
+            )
+        except ValueError as exc:
+            failures.append(str(exc))
             continue
 
         target_sources[target] = source
