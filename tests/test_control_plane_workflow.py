@@ -77,6 +77,26 @@ def test_workflow_installs_central_dependencies_before_app_checks() -> None:
         assert "control-check" in run_check["run"]  # nosec B101
 
 
+def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    dashboard = _step(workflow["jobs"]["control-plane"], "Update fleet dashboard issue")
+    dashboard_env = dashboard["env"]
+
+    assert (  # nosec B101
+        dashboard_env["AIO_FLEET_KUMA_PUSH_URL"]
+        == "${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}"
+    )
+    assert (  # nosec B101
+        dashboard_env["AIO_FLEET_ALERT_WEBHOOK_URL"]
+        == "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}"
+    )
+
+    manual_run = _step(workflow["jobs"]["control-plane"], "Run central control check")
+    poll_run = _step(workflow["jobs"]["poll-checks"], "Run central control check")
+    assert "AIO_FLEET_ALERT_WEBHOOK_URL" not in manual_run.get("env", {})  # nosec B101
+    assert "AIO_FLEET_ALERT_WEBHOOK_URL" not in poll_run.get("env", {})  # nosec B101
+
+
 def _step(job: dict[str, object], name: str) -> dict[str, object]:
     for step in job["steps"]:
         if step.get("name") == name:
