@@ -79,8 +79,6 @@ jobs:
       AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
       AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -492,6 +490,8 @@ jobs:
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
         env:
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
         run: |
           set +e
           if [[ -f upstream-report.json ]]; then
@@ -565,6 +565,8 @@ jobs:
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           MODE: ${{ inputs.mode }}
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
         run: |
           set +e
           mode="${MODE:-${GITHUB_EVENT_NAME}}"
@@ -592,8 +594,6 @@ jobs:
       AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       AIO_FLEET_CHECK_TOKEN: ${{ secrets.AIO_FLEET_CHECK_TOKEN }}
       AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-      AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
-      AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -707,6 +707,8 @@ jobs:
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           TARGET_REPO: ${{ matrix.target.repo }}
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
         run: |
           set +e
           if [[ "${JOB_STATUS}" == "success" ]]; then
