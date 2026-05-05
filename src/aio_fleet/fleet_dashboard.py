@@ -318,7 +318,14 @@ def dashboard_issue_commands(*, issue_repo: str, issue_number: int) -> dict[str,
     is_dashboard = (
         str(issue.get("title", "")) == DASHBOARD_TITLE
         and str(issue.get("state", "")).upper() == "OPEN"
-        and DASHBOARD_LABEL in labels
+        and (
+            DASHBOARD_LABEL in labels
+            or STATE_START in str(issue.get("body", ""))
+            or any(
+                command_label in str(issue.get("body", ""))
+                for command_label in DASHBOARD_COMMANDS.values()
+            )
+        )
     )
     commands = (
         dashboard_commands_from_body(str(issue.get("body", ""))) if is_dashboard else {}

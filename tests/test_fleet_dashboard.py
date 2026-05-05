@@ -636,7 +636,9 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
     assert issue["number"] == 55  # nosec B101
 
 
-def test_dashboard_issue_commands_require_dashboard_label(monkeypatch) -> None:
+def test_dashboard_issue_commands_accepts_hidden_state_without_label(
+    monkeypatch,
+) -> None:
     def fake_run(command: list[str], *, check=True, cwd=None):
         del check, cwd
         assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
@@ -648,7 +650,43 @@ def test_dashboard_issue_commands_require_dashboard_label(monkeypatch) -> None:
                     "number": 55,
                     "title": "Fleet Update Dashboard",
                     "state": "OPEN",
-                    "body": "- [x] Run upstream monitor",
+                    "body": (
+                        "- [x] Run upstream monitor\n"
+                        "<!-- aio-fleet-dashboard-state\n{}"
+                    ),
+                    "labels": [],
+                    "url": "https://github.com/JSONbored/aio-fleet/issues/55",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
+
+    result = fleet_dashboard.dashboard_issue_commands(
+        issue_repo="JSONbored/aio-fleet", issue_number=55
+    )
+
+    assert result["is_dashboard"] is True  # nosec B101
+    assert result["requested"] is True  # nosec B101
+    assert result["commands"]["upstream_monitor"] is True  # nosec B101
+
+
+def test_dashboard_issue_commands_rejects_unlabeled_non_dashboard_issue(
+    monkeypatch,
+) -> None:
+    def fake_run(command: list[str], *, check=True, cwd=None):
+        del check, cwd
+        assert command[:4] == ["gh", "issue", "view", "55"]  # nosec B101
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "number": 55,
+                    "title": "Fleet Update Dashboard",
+                    "state": "OPEN",
+                    "body": "ordinary issue body",
                     "labels": [],
                     "url": "https://github.com/JSONbored/aio-fleet/issues/55",
                 }
