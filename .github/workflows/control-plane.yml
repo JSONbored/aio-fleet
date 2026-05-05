@@ -531,6 +531,25 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve control-check checkout policy
+        id: control-check-policy
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          checkout_submodules = str(bool(repo.raw.get("checkout_submodules"))).lower()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"checkout_submodules={checkout_submodules}\n")
+          PY
+
       - name: Checkout app repo
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -539,7 +558,7 @@ jobs:
           ref: ${{ inputs.sha }}
           path: app-repo
           fetch-depth: 0
-          submodules: recursive
+          submodules: ${{ steps.control-check-policy.outputs.checkout_submodules == 'true' && inputs.event != 'pull_request' && 'recursive' || 'false' }}
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
@@ -591,6 +610,14 @@ jobs:
           fi
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 
+      - name: Restore trusted aio-fleet checkout
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffd
+          python -m pip install --force-reinstall .
+
       - name: Complete central control check
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
         env:
@@ -607,7 +634,7 @@ jobs:
             conclusion=failure
             summary="aio-fleet central check failed"
           fi
-          python -m aio_fleet check run \
+          python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \
@@ -716,7 +743,7 @@ jobs:
           ref: ${{ matrix.target.sha }}
           path: app-repo
           fetch-depth: 0
-          submodules: recursive
+          submodules: ${{ matrix.target.checkout_submodules == true && matrix.target.event != 'pull_request' && 'recursive' || 'false' }}
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
@@ -763,6 +790,14 @@ jobs:
           fi
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 
+      - name: Restore trusted aio-fleet checkout
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffd
+          python -m pip install --force-reinstall .
+
       - name: Complete central control check
         if: ${{ always() }}
         env:
@@ -779,7 +814,7 @@ jobs:
             conclusion=failure
             summary="aio-fleet central check failed"
           fi
-          python -m aio_fleet check run \
+          python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \

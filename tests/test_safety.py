@@ -27,7 +27,7 @@ def test_pin_only_update_is_ok(tmp_path: Path, monkeypatch) -> None:
     assert assessment.template_impact == "manifest-targets-present"  # nosec B101
 
 
-def test_runtime_smoke_deferred_is_an_ok_signal(tmp_path: Path, monkeypatch) -> None:
+def test_runtime_smoke_missing_check_warns(tmp_path: Path, monkeypatch) -> None:
     repo = load_manifest(
         _manifest(tmp_path, integration_args="tests/integration")
     ).repo("example-aio")
@@ -44,10 +44,11 @@ def test_runtime_smoke_deferred_is_an_ok_signal(tmp_path: Path, monkeypatch) -> 
         check_state="success",
     )
 
-    assert assessment.safety_level == "ok"  # nosec B101
-    assert assessment.runtime_smoke == "deferred-to-main"  # nosec B101
-    assert any("deferred" in item for item in assessment.signals)  # nosec B101
-    assert not assessment.warnings  # nosec B101
+    assert assessment.safety_level == "warn"  # nosec B101
+    assert assessment.runtime_smoke == "configured-not-seen"  # nosec B101
+    assert any(
+        "no PR runtime check" in item for item in assessment.warnings
+    )  # nosec B101
 
 
 def test_runtime_smoke_failure_blocks(tmp_path: Path, monkeypatch) -> None:
@@ -75,6 +76,66 @@ def test_runtime_smoke_failure_blocks(tmp_path: Path, monkeypatch) -> None:
     assert assessment.runtime_smoke == "failed"  # nosec B101
     assert any(  # nosec B101
         "runtime/integration check failed" in item for item in assessment.failures
+    )
+
+
+def test_missing_required_check_blocks(tmp_path: Path, monkeypatch) -> None:
+    repo = load_manifest(_manifest(tmp_path)).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(files=["Dockerfile"], checks=[]),
+        signed_state="verified",
+    )
+
+    assert assessment.safety_level == "blocked"  # nosec B101
+    assert any(  # nosec B101
+        "aio-fleet / required check is missing" in item for item in assessment.failures
+    )
+
+
+def test_pending_required_check_blocks(tmp_path: Path, monkeypatch) -> None:
+    repo = load_manifest(_manifest(tmp_path)).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(
+            files=["Dockerfile"],
+            checks=[{"name": "aio-fleet / required", "status": "IN_PROGRESS"}],
+        ),
+        signed_state="verified",
+    )
+
+    assert assessment.safety_level == "blocked"  # nosec B101
+    assert any(  # nosec B101
+        "aio-fleet / required check is in_progress" in item
+        for item in assessment.failures
+    )
+
+
+def test_missing_signed_state_blocks(tmp_path: Path, monkeypatch) -> None:
+    repo = load_manifest(_manifest(tmp_path)).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(files=["Dockerfile"]),
+        signed_state="missing",
+        check_state="success",
+    )
+
+    assert assessment.safety_level == "blocked"  # nosec B101
+    assert any(  # nosec B101
+        "generated commit is not verified: missing" in item
+        for item in assessment.failures
     )
 
 
@@ -249,7 +310,9 @@ def _pr(
         "baseRefName": "main",
         "headRefName": "codex/upstream-example-aio-1.1.0",
         "files": [{"path": path} for path in files],
-        "statusCheckRollup": checks or [_check("aio-fleet / required", "SUCCESS")],
+        "statusCheckRollup": (
+            [_check("aio-fleet / required", "SUCCESS")] if checks is None else checks
+        ),
     }
 
 

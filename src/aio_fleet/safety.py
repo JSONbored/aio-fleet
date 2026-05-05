@@ -200,10 +200,10 @@ def _assessment(
 
     if include_pr_checks:
         state = check_state or _required_check_state(pr)
-        if state in {"failure", "timed_out", "cancelled"}:
+        if state != "success":
             failures.append(f"{CHECK_NAME} check is {state}")
         signed = signed_state or _signed_state(repo, pr)
-        if signed not in {"verified", "not-needed", "missing"}:
+        if signed not in {"verified", "not-needed"}:
             failures.append(f"generated commit is not verified: {signed}")
 
     level = "ok"
@@ -316,10 +316,10 @@ def _runtime_smoke(
         check for check in checks if _runtime_check_name(str(check.get("name", "")))
     ]
     if not runtime_checks:
-        signals.append(
-            "runtime/integration tests are configured but deferred until main, release, or manual dispatch"
+        warnings.append(
+            "runtime/integration tests are configured but no PR runtime check was found"
         )
-        return "deferred-to-main"
+        return "configured-not-seen"
     failures_seen = [
         str(check.get("name", "runtime"))
         for check in runtime_checks

@@ -114,6 +114,8 @@ def _verify_dockerhub_tag(tag: str, *, attempts: int = 3) -> str | None:
                     json.load(response)
                     return None
                 last_error = f"unexpected status {response.status}"
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            last_error = f"invalid Docker Hub JSON response: {error}"
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 return f"{tag}: tag not found on Docker Hub"
@@ -144,8 +146,11 @@ def _dockerhub_tag_parts(tag: str) -> tuple[str, str, str] | None:
 
 
 def _component_image_name(repo: RepoConfig, component: str) -> str:
-    if component == "agent" and repo.is_signoz_suite:
-        return str(repo.raw["components"]["agent"]["image_name"])
+    components = repo.raw.get("components")
+    if isinstance(components, dict):
+        config = components.get(component)
+        if isinstance(config, dict) and config.get("image_name"):
+            return str(config["image_name"])
     return repo.image_name
 
 
