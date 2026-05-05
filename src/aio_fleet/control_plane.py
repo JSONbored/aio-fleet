@@ -21,6 +21,7 @@ class Step:
     env: dict[str, str] | None = None
     stream_output: bool = False
     timeout_seconds: int | None = None
+    inherit_secrets: bool = True
 
 
 def central_check_steps(
@@ -52,10 +53,12 @@ def central_check_steps(
     ]
     install = _install_test_dependencies_step(repo.path)
     if install is not None:
-        steps.append(install)
+        steps.append(Step(**{**install.__dict__, "inherit_secrets": False}))
     generator = str(repo.get("generator_check_command", "") or "").strip()
     if generator:
-        steps.append(Step("generator-check", shlex.split(generator), repo.path))
+        steps.append(
+            Step("generator-check", shlex.split(generator), repo.path, inherit_secrets=False)
+        )
     unit_args = str(repo.get("unit_pytest_args", "") or "").strip()
     if unit_args:
         steps.append(
@@ -63,6 +66,7 @@ def central_check_steps(
                 "unit-tests",
                 [_repo_python(repo.path), "-m", "pytest", *shlex.split(unit_args)],
                 repo.path,
+                inherit_secrets=False,
             )
         )
     integration_args = str(repo.get("integration_pytest_args", "") or "").strip()
@@ -93,6 +97,7 @@ def central_check_steps(
                 timeout_seconds=_repo_timeout_seconds(
                     repo, "integration_timeout_seconds", default=1800
                 ),
+                inherit_secrets=False,
             )
         )
     if include_trunk:
@@ -166,9 +171,8 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
                 f"{' '.join(shlex.quote(part) for part in step.command)}"
             )
             continue
-        env = None
+        env = dict(os.environ) if step.inherit_secrets else _scrubbed_env()
         if step.env:
-            env = dict(os.environ)
             env.update(step.env)
         if step.stream_output:
             try:
@@ -214,6 +218,25 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             failures.append(f"{step.name}: exit {result.returncode}")
             break
     return failures
+
+
+def _scrubbed_env() -> dict[str, str]:
+    blocked_prefixes = ("AIO_FLEET_",)
+    blocked_keys = {
+        "APP_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "DOCKERHUB_TOKEN",
+        "CR_PAT",
+    }
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in blocked_keys:
+            continue
+        if any(key.startswith(prefix) for prefix in blocked_prefixes):
+            continue
+        env[key] = value
+    return env
 
 
 def _pytest_image_build_step(repo: RepoConfig) -> Step:
