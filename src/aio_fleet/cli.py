@@ -1174,6 +1174,8 @@ def cmd_upstream_assess(args: argparse.Namespace) -> int:
 
 
 def _run_generator_for_write(repo: RepoConfig) -> None:
+    if APP_MANIFEST_NAME in repo.list_value("upstream_commit_paths"):
+        (repo.path / APP_MANIFEST_NAME).write_text(render_app_manifest(repo))
     generator = str(repo.get("generator_check_command", "") or "").strip()
     if not generator:
         return

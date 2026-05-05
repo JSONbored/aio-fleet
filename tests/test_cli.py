@@ -821,6 +821,30 @@ def test_upstream_monitor_dry_run_reports_updates(
     assert "example-aio: upstream=updates" in capsys.readouterr().out  # nosec B101
 
 
+def test_upstream_write_exports_app_manifest_when_expected(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    upstream_commit_paths:
+      - .aio-fleet.yml
+""")
+
+    cli._run_generator_for_write(load_manifest(manifest).repo("example-aio"))
+
+    exported = repo_path / ".aio-fleet.yml"
+    assert exported.exists()  # nosec B101
+    assert "repo: example-aio" in exported.read_text()  # nosec B101
+
+
 def test_upstream_assess_outputs_json(tmp_path: Path, monkeypatch, capsys) -> None:
     manifest, _repo_path = _write_minimal_manifest(tmp_path)
 
