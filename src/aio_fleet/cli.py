@@ -47,7 +47,7 @@ from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_ma
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import find_release_target_commit, latest_changelog_version
-from aio_fleet.safety import assess_upstream_pr
+from aio_fleet.safety import assess_expected_update, assess_upstream_pr
 from aio_fleet.upstream import (
     create_or_update_upstream_pr,
     monitor_repo,
@@ -1145,14 +1145,18 @@ def cmd_upstream_assess(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
-    if not args.pr and not args.branch:
-        print("--pr or --branch is required", file=sys.stderr)
-        return 1
-    assessment = assess_upstream_pr(
-        repo,
-        pr_number=args.pr,
-        branch=args.branch,
-    )
+    if args.pr or args.branch:
+        assessment = assess_upstream_pr(
+            repo,
+            pr_number=args.pr,
+            branch=args.branch,
+        )
+    else:
+        assessment = assess_expected_update(
+            repo,
+            monitor_repo(repo, write=False),
+            changed_files=[],
+        )
     payload = assessment.to_dict()
     if args.format == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))

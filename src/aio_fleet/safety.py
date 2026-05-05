@@ -172,7 +172,7 @@ def _assessment(
             next_action="manual triage required before source PR",
             config_delta="not-assessed",
             template_impact="manual",
-            runtime_smoke=_runtime_smoke(repo, pr, warnings, failures),
+            runtime_smoke=_runtime_smoke(repo, pr, signals, warnings, failures),
             changed_files=tuple(sorted(changed_files)),
         )
 
@@ -192,7 +192,7 @@ def _assessment(
         warnings=warnings,
         failures=failures,
     )
-    runtime_smoke = _runtime_smoke(repo, pr, warnings, failures)
+    runtime_smoke = _runtime_smoke(repo, pr, signals, warnings, failures)
     if inspect_release_notes:
         _release_note_signals(result, signals=signals, warnings=warnings)
     elif result is not None and getattr(result, "updates_available", False):
@@ -300,6 +300,7 @@ def _template_assessment(
 def _runtime_smoke(
     repo: RepoConfig,
     pr: dict[str, Any] | None,
+    signals: list[str],
     warnings: list[str],
     failures: list[str],
 ) -> str:
@@ -315,10 +316,10 @@ def _runtime_smoke(
         check for check in checks if _runtime_check_name(str(check.get("name", "")))
     ]
     if not runtime_checks:
-        warnings.append(
-            "runtime/integration tests are configured but no PR check result was found"
+        signals.append(
+            "runtime/integration tests are configured but deferred until main, release, or manual dispatch"
         )
-        return "configured-not-seen"
+        return "deferred-to-main"
     failures_seen = [
         str(check.get("name", "runtime"))
         for check in runtime_checks

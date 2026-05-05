@@ -27,6 +27,57 @@ def test_pin_only_update_is_ok(tmp_path: Path, monkeypatch) -> None:
     assert assessment.template_impact == "manifest-targets-present"  # nosec B101
 
 
+def test_runtime_smoke_deferred_is_an_ok_signal(tmp_path: Path, monkeypatch) -> None:
+    repo = load_manifest(
+        _manifest(tmp_path, integration_args="tests/integration")
+    ).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(
+            files=["Dockerfile"], checks=[_check("aio-fleet / required", "SUCCESS")]
+        ),
+        signed_state="verified",
+        check_state="success",
+    )
+
+    assert assessment.safety_level == "ok"  # nosec B101
+    assert assessment.runtime_smoke == "deferred-to-main"  # nosec B101
+    assert any("deferred" in item for item in assessment.signals)  # nosec B101
+    assert not assessment.warnings  # nosec B101
+
+
+def test_runtime_smoke_failure_blocks(tmp_path: Path, monkeypatch) -> None:
+    repo = load_manifest(
+        _manifest(tmp_path, integration_args="tests/integration")
+    ).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(
+            files=["Dockerfile"],
+            checks=[
+                _check("aio-fleet / required", "SUCCESS"),
+                _check("integration-tests", "FAILURE"),
+            ],
+        ),
+        signed_state="verified",
+        check_state="success",
+    )
+
+    assert assessment.safety_level == "blocked"  # nosec B101
+    assert assessment.runtime_smoke == "failed"  # nosec B101
+    assert any(  # nosec B101
+        "runtime/integration check failed" in item for item in assessment.failures
+    )
+
+
 def test_xml_target_delta_warns(tmp_path: Path, monkeypatch) -> None:
     repo = load_manifest(
         _manifest(tmp_path, commit_paths=["Dockerfile", "example-aio.xml"])
@@ -132,6 +183,7 @@ def _manifest(
     *,
     commit_paths: list[str] | None = None,
     required_targets: list[str] | None = None,
+    integration_args: str = "",
 ) -> Path:
     validation = ""
     if required_targets is not None:
@@ -142,6 +194,9 @@ def _manifest(
         validation = "\n    validation:\n      required_targets:\n        - 8080\n"
     paths = commit_paths or ["Dockerfile"]
     path_lines = "".join(f"      - {path}\n" for path in paths)
+    integration_line = (
+        f"    integration_pytest_args: {integration_args}\n" if integration_args else ""
+    )
     manifest = tmp_path / "fleet.yml"
     manifest.write_text(f"""
 owner: JSONbored
@@ -152,6 +207,7 @@ repos:
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
     pytest_image_tag: example-aio:pytest
+{integration_line.rstrip()}
     upstream_commit_paths:
 {path_lines}
     catalog_assets:

@@ -24,7 +24,8 @@ It does not replace the existing source-of-truth repos:
   later.
 - `fleet-dashboard update` maintains one central `aio-fleet` issue that shows
   upstream updates, PR links, required-check state, commit verification state,
-  registry/release placeholders, alert configuration warnings, and next actions.
+  safety review evidence, deferred runtime-smoke policy, registry/release
+  placeholders, alert configuration warnings, and next actions.
 - `control-check` runs central validation/test/publish steps from `aio-fleet`
   and can post the final required check-run back to the app commit.
 - `check run` renders or upserts the required `aio-fleet / required` check-run

@@ -127,7 +127,15 @@ def dashboard_summary(
         "rehab_repos": len(rehab_rows),
         "upstream_updates": len(update_rows),
         "ready_updates": len([row for row in update_rows if _is_ready_update(row)]),
+        "triage_updates": len([row for row in update_rows if _is_triage_update(row)]),
         "blocked_updates": len([row for row in update_rows if _is_blocked_update(row)]),
+        "runtime_deferred": len(
+            [
+                row
+                for row in update_rows
+                if row.get("runtime_smoke") == "deferred-to-main"
+            ]
+        ),
         "open_prs": sum(_int(row.get("open_prs")) for row in activity_rows)
         + sum(_int(row.get("open_prs")) for row in destination_rows)
         + sum(_int(row.get("open_prs")) for row in rehab_rows),
@@ -152,12 +160,7 @@ def render_dashboard(state: dict[str, Any]) -> str:
     warnings = list(state.get("warnings", []))
     summary = dict(state.get("summary", {}))
     ready = [row for row in rows if _is_ready_update(row)]
-    triage = [
-        row
-        for row in rows
-        if row.get("update")
-        and (row.get("strategy") == "notify" or row.get("safety") in {"warn", "manual"})
-    ]
+    triage = [row for row in rows if _is_triage_update(row)]
     blocked = [row for row in rows if _is_blocked_update(row)]
     lines = [
         "# Fleet Update Dashboard",
@@ -168,9 +171,9 @@ def render_dashboard(state: dict[str, Any]) -> str:
         "",
         "## Summary",
         "",
-        "| Active | Destination | Rehab | Updates | Ready | Blocked | Open PRs | Open Issues | Alert Warnings |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {blocked_updates} | {open_prs} | {open_issues} | {alert_warnings} |".format(
+        "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Runtime Deferred | Open PRs | Open Issues | Alert Warnings |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {runtime_deferred} | {open_prs} | {open_issues} | {alert_warnings} |".format(
             **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
         ),
         "",
@@ -179,6 +182,7 @@ def render_dashboard(state: dict[str, Any]) -> str:
         lines.extend(["## Warnings", ""])
         lines.extend(f"- {warning}" for warning in warnings)
         lines.append("")
+    _render_safety_review_section(lines, rows)
     _render_update_section(lines, "Ready To Merge", ready)
     _render_update_section(lines, "Needs Triage", triage)
     _render_update_section(lines, "Blocked", blocked)
@@ -424,6 +428,7 @@ def _template_row(repo: RepoConfig, *, include_registry: bool) -> dict[str, Any]
         "config_delta": "",
         "template_impact": "",
         "runtime_smoke": "",
+        "safety_signals": [],
         "safety_warnings": [],
         "safety_failures": [],
         "next_action": "manual template baseline",
@@ -448,6 +453,7 @@ def _monitor_failure_row(repo: RepoConfig, exc: Exception) -> dict[str, Any]:
         "config_delta": "unknown",
         "template_impact": "unknown",
         "runtime_smoke": "unknown",
+        "safety_signals": [],
         "safety_warnings": [str(exc)],
         "safety_failures": [],
         "next_action": f"upstream monitor failed: {exc}",
@@ -503,6 +509,7 @@ def _dashboard_row(
         "config_delta": safety["config_delta"],
         "template_impact": safety["template_impact"],
         "runtime_smoke": safety["runtime_smoke"],
+        "safety_signals": safety.get("signals", []),
         "safety_warnings": safety["warnings"],
         "safety_failures": safety["failures"],
         "next_action": next_action,
@@ -643,6 +650,7 @@ def _safety_assessment(
             "config_delta": "none",
             "template_impact": "none",
             "runtime_smoke": "not-run",
+            "signals": [],
             "warnings": [],
             "failures": [],
             "next_action": "none",
@@ -662,6 +670,7 @@ def _safety_assessment(
             "config_delta": "unknown",
             "template_impact": "unknown",
             "runtime_smoke": "unknown",
+            "signals": [],
             "warnings": [f"safety assessment failed: {exc}"],
             "failures": [],
             "next_action": "review safety assessment failure before merge",
@@ -1041,6 +1050,39 @@ def _render_update_section(
     lines.append("")
 
 
+def _render_safety_review_section(lines: list[str], rows: list[dict[str, Any]]) -> None:
+    update_rows = [row for row in rows if row.get("update")]
+    lines.extend(["## Safety Review", ""])
+    lines.extend(
+        [
+            "`ok` means no clear fleet-policy blocker was found. `warn` means human review is still required. `manual` means notify-only or not enough source data. `blocked` means fix before merge.",
+            "",
+        ]
+    )
+    if not update_rows:
+        lines.extend(["- no upstream updates to review", ""])
+        return
+    lines.extend(
+        [
+            "| Repo | Component | Safety | Config | Runtime | Evidence | Next |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in update_rows:
+        lines.append(
+            "| {repo} | {component} | {safety} | {config_delta} | {runtime_smoke} | {evidence} | {next_action} |".format(
+                repo=_cell(row.get("repo", "")),
+                component=_cell(row.get("component", "")),
+                safety=_cell(row.get("safety", "")),
+                config_delta=_cell(row.get("config_delta", "")),
+                runtime_smoke=_cell(row.get("runtime_smoke", "")),
+                evidence=_cell(_safety_evidence(row)),
+                next_action=_cell(row.get("next_action", "")),
+            )
+        )
+    lines.append("")
+
+
 def _render_destination_section(
     lines: list[str], destination_rows: list[dict[str, Any]]
 ) -> None:
@@ -1171,7 +1213,7 @@ def _render_next_commands(
     for row in rows:
         if row.get("update") and row.get("strategy") == "notify":
             commands.append(
-                f"python -m aio_fleet upstream monitor --repo {row['repo']} --dry-run"
+                f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"
             )
         elif row.get("update") and row.get("safety") in {"warn", "blocked"}:
             pr_url = _markdown_url(row.get("pr"))
@@ -1179,6 +1221,10 @@ def _render_next_commands(
             if pr_number.isdigit():
                 commands.append(
                     f"python -m aio_fleet upstream assess --repo {row['repo']} --pr {pr_number} --format json"
+                )
+            else:
+                commands.append(
+                    f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"
                 )
         elif _is_ready_update(row):
             pr_url = _markdown_url(row.get("pr"))
@@ -1211,6 +1257,14 @@ def _is_ready_update(row: dict[str, Any]) -> bool:
     )
 
 
+def _is_triage_update(row: dict[str, Any]) -> bool:
+    return (
+        bool(row.get("update"))
+        and not _is_blocked_update(row)
+        and (row.get("strategy") == "notify" or row.get("safety") in {"warn", "manual"})
+    )
+
+
 def _is_blocked_update(row: dict[str, Any]) -> bool:
     if not row.get("update") or row.get("strategy") == "notify":
         return False
@@ -1222,6 +1276,14 @@ def _is_blocked_update(row: dict[str, Any]) -> bool:
     return action != "human review and merge"
 
 
+def _safety_evidence(row: dict[str, Any]) -> str:
+    for key in ("safety_failures", "safety_warnings", "safety_signals"):
+        values = row.get(key, [])
+        if isinstance(values, list) and values:
+            return str(values[0])
+    return "no clear blocker found"
+
+
 def _summary_keys() -> list[str]:
     return [
         "active_repos",
@@ -1229,7 +1291,9 @@ def _summary_keys() -> list[str]:
         "rehab_repos",
         "upstream_updates",
         "ready_updates",
+        "triage_updates",
         "blocked_updates",
+        "runtime_deferred",
         "open_prs",
         "open_issues",
         "alert_warnings",

@@ -20,6 +20,7 @@ class _FakeAssessment:
             "config_delta": self.values.get("config_delta", "none"),
             "template_impact": self.values.get("template_impact", "no-xml-change"),
             "runtime_smoke": self.values.get("runtime_smoke", "not-configured"),
+            "signals": self.values.get("signals", []),
             "warnings": self.values.get("warnings", []),
             "failures": self.values.get("failures", []),
             "next_action": self.values.get("next_action", "human review and merge"),
@@ -83,8 +84,13 @@ repos:
 
     body = str(report["body"])
     assert "manual triage; notify-only strategy" in body  # nosec B101
+    assert "Safety Review" in body  # nosec B101
+    assert (
+        "python -m aio_fleet upstream assess --repo mem0-aio --format json" in body
+    )  # nosec B101
     assert "AIO_FLEET_KUMA_PUSH_URL is not configured" in body  # nosec B101
     assert report["state"]["rows"][0]["strategy"] == "notify"  # nosec B101
+    assert report["state"]["summary"]["triage_updates"] == 1  # nosec B101
 
 
 def test_dashboard_marks_unsigned_pr_next_action(tmp_path: Path, monkeypatch) -> None:
@@ -438,7 +444,10 @@ repos:
     row = report["state"]["rows"][0]
     assert row["safety"] == "warn"  # nosec B101
     assert row["config_delta"] == "example-aio.xml: +1 -0"  # nosec B101
+    state = report["state"]
+    assert state["summary"]["triage_updates"] == 1  # nosec B101
     assert "Needs Triage" in body  # nosec B101
+    assert "Safety Review" in body  # nosec B101
     assert "| example-aio | aio | 1.0.0 | 1.1.0 |" in body  # nosec B101
     hidden = body.split(fleet_dashboard.STATE_START, 1)[1]
     assert '"safety": "warn"' in hidden  # nosec B101
