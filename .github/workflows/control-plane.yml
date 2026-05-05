@@ -176,8 +176,6 @@ jobs:
           RUN_CHECKS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           set -euo pipefail
@@ -216,8 +214,6 @@ jobs:
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout and PR creation
@@ -683,8 +679,6 @@ jobs:
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH: ${{ matrix.target.publish }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           args=(
