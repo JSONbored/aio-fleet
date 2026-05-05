@@ -241,6 +241,21 @@ jobs:
           report = {"repos": []}
           status = 0
 
+          def git_auth_env(auth_header):
+              env = {
+                  key: os.environ[key]
+                  for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+                  if key in os.environ
+              }
+              env.update(
+                  {
+                      "GIT_CONFIG_COUNT": "1",
+                      "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                      "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {auth_header}",
+                  }
+              )
+              return env
+
           for repo, repo_config in manifest["repos"].items():
               if repo_config.get("publish_profile") == "template":
                   report["repos"].append({"repo": repo, "skipped": "manual-template"})
@@ -251,12 +266,11 @@ jobs:
               clone = subprocess.run(
                   [
                       "git",
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "clone",
                       f"https://github.com/{owner}/{repo}.git",
                       str(worktree),
                   ],
+                  env=git_auth_env(auth),
                   check=False,
                   text=True,
                   capture_output=True,
@@ -275,13 +289,12 @@ jobs:
                       "git",
                       "-C",
                       str(worktree),
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "submodule",
                       "update",
                       "--init",
                       "--recursive",
                   ],
+                  env=git_auth_env(auth),
                   check=True,
               )
               args = [
@@ -390,6 +403,21 @@ jobs:
           checkout_root.mkdir(exist_ok=True)
           refs = []
 
+          def git_auth_env(auth_header):
+              env = {
+                  key: os.environ[key]
+                  for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+                  if key in os.environ
+              }
+              env.update(
+                  {
+                      "GIT_CONFIG_COUNT": "1",
+                      "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                      "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {auth_header}",
+                  }
+              )
+              return env
+
           for name, repo_config in manifest.get("repos", {}).items():
               path = checkout_root / name
               repo_config["path"] = str(path)
@@ -431,12 +459,11 @@ jobs:
               subprocess.run(
                   [
                       "git",
-                      "-c",
-                      f"http.https://github.com/.extraheader=AUTHORIZATION: basic {auth}",
                       "clone",
                       f"https://github.com/{github_repo}.git",
                       str(path),
                   ],
+                  env=git_auth_env(auth),
                   check=True,
               )
               submodules = subprocess.run(
@@ -449,6 +476,7 @@ jobs:
                       "--init",
                       "--recursive",
                   ],
+                  env=git_auth_env(auth),
                   check=False,
                   text=True,
                   capture_output=True,

@@ -162,3 +162,67 @@ repositories:
         )
         == []
     )
+
+
+def test_validate_github_policy_rejects_same_context_wrong_app_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 3565017
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": ["aio-fleet / required"],
+                    "checks": [{"context": "aio-fleet / required", "app_id": 999999}],
+                    "strict": True,
+                }
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {"enabled": True}
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    failures = github_policy.validate_github_policy(
+        policy, repos=["example-aio"], check_secrets=False
+    )
+
+    assert failures == [  # nosec B101
+        "example-aio: required check 'aio-fleet / required' app_id expected 3565017, got 999999"
+    ]
+
+
+def test_infra_uses_rulesets_for_app_bound_required_checks() -> None:
+    main_tf = (Path(__file__).resolve().parents[1] / "infra/github/main.tf").read_text()
+
+    assert (  # nosec B101
+        'resource "github_repository_ruleset" "trusted_required_checks"' in main_tf
+    )
+    assert "integration_id = each.value.required_check_app_id" in main_tf  # nosec B101
+    assert 'dynamic "required_status_checks"' in main_tf  # nosec B101
+    assert "required_check_app_id == null" in main_tf  # nosec B101

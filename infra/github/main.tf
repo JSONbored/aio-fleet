@@ -55,9 +55,12 @@ resource "github_branch_protection" "main" {
   required_linear_history         = each.value.required_linear_history
   require_conversation_resolution = each.value.require_conversation_resolution
 
-  required_status_checks {
-    strict   = each.value.strict_required_checks
-    contexts = each.value.required_checks
+  dynamic "required_status_checks" {
+    for_each = each.value.required_check_app_id == null ? [each.value] : []
+    content {
+      strict   = required_status_checks.value.strict_required_checks
+      contexts = required_status_checks.value.required_checks
+    }
   }
 
   required_pull_request_reviews {

@@ -58,8 +58,6 @@ jobs:
 
       - name: Verify registry tags
         id: verify
-        env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           python - <<'PY'
@@ -77,14 +75,20 @@ jobs:
           owner = manifest["owner"]
           checkout_root = Path("registry-checkouts")
           checkout_root.mkdir(exist_ok=True)
-          token = os.environ["APP_TOKEN"]
+          token = "${{ steps.app-token.outputs.token }}"
           auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
           clone_env = {
               key: os.environ[key]
               for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
               if key in os.environ
           }
-          clone_env["GIT_HTTP_EXTRAHEADER"] = f"AUTHORIZATION: basic {auth}"
+          clone_env.update(
+              {
+                  "GIT_CONFIG_COUNT": "1",
+                  "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                  "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {auth}",
+              }
+          )
           verify_env = {
               key: os.environ[key]
               for key in (
@@ -144,6 +148,7 @@ jobs:
 
               sha = subprocess.check_output(
                   ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+                  env=verify_env,
                   text=True,
               ).strip()
               components = ["aio"]

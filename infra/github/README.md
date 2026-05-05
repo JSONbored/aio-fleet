@@ -42,7 +42,7 @@ outside this v1 module until branch-protection API access is available for it.
 The module currently manages:
 
 - public repo metadata, topics, homepage, and basic feature toggles
-- `main` branch required status checks
+- `main` branch protection and required status checks
 - signed commits, conversation resolution, review requirements, and strict checks
 - merge method policy; rebase-merge stays disabled because it conflicts with
   required signed commits
@@ -73,3 +73,8 @@ App repos should require one check: `aio-fleet / required`. The policy also
 records the GitHub App ID that must produce that check. `validate-github` checks
 `required_status_checks.checks[].app_id`, not only the context name, so a
 same-name workflow cannot satisfy branch protection by accident.
+
+The `github_branch_protection` provider resource only supports name-based
+contexts, so app-bound required checks are enforced through the
+`github_repository_ruleset.trusted_required_checks` ruleset. Branch protection
+still owns the other branch controls such as signed commits and review policy.
