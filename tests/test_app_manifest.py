@@ -31,6 +31,7 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
         {"source": "sure-aio.xml", "target": "sure-aio.xml"}
     ]
     assert "  xml_paths:\n    - sure-aio.xml\n" in content  # nosec B101
+    assert '    - "Productivity:"\n' in content  # nosec B101
 
 
 def test_load_app_manifest_validates_required_sections(tmp_path: Path) -> None:

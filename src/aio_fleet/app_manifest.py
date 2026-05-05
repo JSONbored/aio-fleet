@@ -116,3 +116,11 @@ def _drop_empty(value: Any) -> Any:
 class _IndentedSafeDumper(yaml.SafeDumper):
     def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:  # type: ignore[override]
         return super().increase_indent(flow, indentless=False)
+
+
+def _represent_string(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    style = '"' if value.endswith(":") else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_IndentedSafeDumper.add_representer(str, _represent_string)

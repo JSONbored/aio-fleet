@@ -861,3 +861,61 @@ def test_upstream_assess_outputs_json(tmp_path: Path, monkeypatch, capsys) -> No
     assert result == 0  # nosec B101
     payload = json.loads(capsys.readouterr().out)
     assert payload["safety_level"] == "warn"  # nosec B101
+
+
+def test_upstream_assess_without_pr_uses_monitor_result(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+
+    class FakeAssessment:
+        safety_level = "manual"
+
+        def to_dict(self):
+            return {
+                "repo": "example-aio",
+                "component": "aio",
+                "safety_level": "manual",
+                "confidence": 0.2,
+                "signals": ["notify-only upstream strategy"],
+                "warnings": [],
+                "failures": [],
+                "next_action": "manual triage required before source PR",
+                "config_delta": "not-assessed",
+                "template_impact": "manual",
+                "runtime_smoke": "not-configured",
+                "changed_files": [],
+            }
+
+    monitor_results = [
+        SimpleNamespace(
+            repo="example-aio",
+            component="aio",
+            updates_available=True,
+            strategy="notify",
+        )
+    ]
+    monkeypatch.setattr(cli, "monitor_repo", lambda *_args, **_kwargs: monitor_results)
+
+    def fake_assess(repo, results, *, changed_files):
+        assert repo.path == repo_path  # nosec B101
+        assert results == monitor_results  # nosec B101
+        assert changed_files == []  # nosec B101
+        return FakeAssessment()
+
+    monkeypatch.setattr(cli, "assess_expected_update", fake_assess)
+
+    result = cmd_upstream_assess(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            pr=None,
+            branch=None,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["safety_level"] == "manual"  # nosec B101
