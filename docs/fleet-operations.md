@@ -69,7 +69,7 @@ The durable operator view is one issue in `JSONbored/aio-fleet`:
 
 ```bash
 python -m aio_fleet fleet-dashboard update --dry-run
-python -m aio_fleet fleet-dashboard update --dry-run --include-activity
+python -m aio_fleet fleet-dashboard update --dry-run --registry --include-activity
 python -m aio_fleet fleet-dashboard update --write
 ```
 
@@ -81,7 +81,8 @@ scheduled jobs can compare transitions later. It tracks:
   infrastructure rather than app packages;
 - rehab repos such as `nanoclaw-aio`, rendered as non-blocking onboarding work
   until they are explicitly promoted into the active fleet;
-- open PR/issue counts, draft PRs, blocked PRs, stale PRs, and clean PRs;
+- open PR/issue counts, draft PRs, blocked PRs, stale PRs, clean PRs,
+  response-needed issues, and the oldest actionable issue links;
 - upstream current/latest versions;
 - PR URL and merge state;
 - `aio-fleet / required` check state;
@@ -89,7 +90,12 @@ scheduled jobs can compare transitions later. It tracks:
 - safety level, config delta, template impact, and runtime smoke state;
 - a `Safety Review` section that summarizes why each update is ok, warn,
   manual, or blocked;
-- registry and release readiness placeholders;
+- real registry verification for Docker Hub and GHCR when `--registry` is used;
+- release readiness, latest formal release, next `aio.N` candidate, publish
+  gaps, and catalog-sync needs;
+- control-plane workflow health and dashboard control availability;
+- cleanup drift from retired shared app-repo files;
+- an overall posture of `green`, `watch`, `action required`, or `blocked`;
 
 The `Controls` section has durable checkbox commands:
 
@@ -103,12 +109,57 @@ They should not create dashboard comments.
 - source-to-catalog sync queue for destination repos;
 - next action for each component.
 
+The same underlying state is available without mutating the dashboard issue:
+
+```bash
+python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report schema
+python -m aio_fleet fleet-report validate --input fleet-report.json
+```
+
+Use `fleet-report generate` for future GitHub Pages, Discord, Raycast, or
+GitHub Action surfaces. Those surfaces should consume the versioned report
+object and avoid scraping the rendered issue body.
+
 `nanoclaw-aio` is dashboard-visible but excluded from `validate --all`,
 publish, registry verification, and upstream monitor `--all` until a rehab PR
 proves the repo is ready for active fleet management.
 
 Missing alert secrets are warnings in the dashboard by default. They only become
 failures when a command is run with an explicit required-alerts mode.
+
+## Release And Publish Planning
+
+The release planner answers whether app repos are current, need a formal
+wrapper release, are missing registry tags, or need catalog sync after source
+validation:
+
+```bash
+python -m aio_fleet release plan --all --format json
+python -m aio_fleet release plan --repo dify-aio --registry --format json
+```
+
+`release-due` means there are commits since the latest formal release tag.
+`publish-missing` means expected Docker Hub or GHCR tags are absent or
+unreachable. `catalog-sync-needed` means a validated source update is ready for
+downstream catalog sync. Normal `main` publishes still happen centrally;
+formal changelog/GitHub Releases remain release-driven.
+
+## Workflow And Drift Trust
+
+Workflow YAML should stay thin. The hosted workflows now delegate checkout
+fanout, summary rendering, registry audit fanout, and dashboard checkout
+preparation to tested `aio-fleet workflow ...` CLI jobs. Use the workflow audit
+before changing Actions:
+
+```bash
+python -m aio_fleet security audit-workflows --format json
+```
+
+The audit checks pinned actions, explicit permissions, checkout credential
+persistence, strict shell mode, predictable heredocs, and broad token exports.
+Dashboard cleanup drift uses the same retired-file policy as
+`cleanup-repo --all --verify`.
 
 ## Alerting
 

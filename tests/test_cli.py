@@ -18,11 +18,17 @@ from aio_fleet.cli import (
     cmd_export_app_manifest,
     cmd_fleet_dashboard_commands,
     cmd_fleet_dashboard_update,
+    cmd_fleet_report_generate,
+    cmd_fleet_report_schema,
+    cmd_fleet_report_validate,
     cmd_infra_doctor,
     cmd_onboard_repo,
     cmd_poll,
+    cmd_promote_rehab,
     cmd_registry_publish,
     cmd_registry_verify,
+    cmd_release_plan,
+    cmd_security_audit_workflows,
     cmd_trunk_audit,
     cmd_upstream_assess,
     cmd_upstream_monitor,
@@ -276,6 +282,197 @@ def test_fleet_dashboard_update_dry_run_outputs_state(
     report = json.loads(capsys.readouterr().out)
     assert report["action"] == "would-create"  # nosec B101
     assert report["state"]["rows"][0]["repo"] == "example-aio"  # nosec B101
+
+
+def test_fleet_report_generate_outputs_stable_state(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "dashboard_report",
+        lambda *_args, **_kwargs: {
+            "body": "# Dashboard\n",
+            "state": {
+                "schema_version": 3,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "issue_repo": "JSONbored/aio-fleet",
+                "warnings": [],
+                "summary": {"posture": "green"},
+                "rows": [{"repo": "example-aio"}],
+                "activity": [],
+                "destination_repos": [],
+                "rehab_repos": [],
+                "registry": [],
+                "releases": [],
+                "cleanup": [],
+                "workflow": {},
+            },
+        },
+    )
+
+    result = cmd_fleet_report_generate(
+        Namespace(
+            manifest=str(manifest),
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=True,
+            stale_days=7,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["schema_version"] == 3  # nosec B101
+    assert report["summary"]["posture"] == "green"  # nosec B101
+    assert report["rows"][0]["repo"] == "example-aio"  # nosec B101
+
+
+def test_fleet_report_schema_and_validate(tmp_path: Path, capsys) -> None:
+    result = cmd_fleet_report_schema(Namespace())
+
+    assert result == 0  # nosec B101
+    schema = json.loads(capsys.readouterr().out)
+    assert schema["properties"]["schema_version"]["const"] == 3  # nosec B101
+    assert "rows" in schema["required"]  # nosec B101
+
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "issue_repo": "JSONbored/aio-fleet",
+                "warnings": [],
+                "summary": {},
+                "rows": [],
+                "activity": [],
+                "destination_repos": [],
+                "rehab_repos": [],
+                "registry": [],
+                "releases": [],
+                "cleanup": [],
+                "workflow": {},
+            }
+        )
+    )
+
+    result = cmd_fleet_report_validate(Namespace(input=str(report), format="json"))
+
+    assert result == 0  # nosec B101
+    assert json.loads(capsys.readouterr().out)["ok"] is True  # nosec B101
+
+
+def test_fleet_report_validate_rejects_schema_drift(tmp_path: Path, capsys) -> None:
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"schema_version": 2, "rows": []}))
+
+    result = cmd_fleet_report_validate(Namespace(input=str(report), format="json"))
+
+    assert result == 1  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False  # nosec B101
+    assert any(
+        "unsupported schema_version" in failure for failure in payload["failures"]
+    )  # nosec B101
+
+
+def test_release_plan_outputs_all_repo_states(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "release_plan_for_manifest",
+        lambda *_args, **_kwargs: [
+            {
+                "repo": "example-aio",
+                "state": "release-due",
+                "next_version": "1.0.0-aio.2",
+                "next_action": "python -m aio_fleet release prepare --repo example-aio --dry-run",
+            }
+        ],
+    )
+
+    result = cmd_release_plan(
+        Namespace(
+            manifest=str(manifest),
+            all=True,
+            repo=None,
+            repo_path=None,
+            registry=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["release_due"] == 1  # nosec B101
+    assert payload["repos"][0]["state"] == "release-due"  # nosec B101
+
+
+def test_security_audit_workflows_reports_findings(tmp_path: Path, capsys) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "ci.yml").write_text("""
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: echo hello
+""")
+
+    result = cmd_security_audit_workflows(Namespace(path=str(tmp_path), format="json"))
+
+    assert result == 1  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    codes = {finding["code"] for finding in payload["findings"]}
+    assert "unpinned-action" in codes  # nosec B101
+    assert "checkout-credentials" in codes  # nosec B101
+
+
+def test_promote_rehab_blocks_legacy_repo(tmp_path: Path, capsys) -> None:
+    rehab_path = tmp_path / "nanoclaw-aio"
+    rehab_path.mkdir()
+    (rehab_path / "cliff.toml").write_text("[changelog]\n")
+    active_path = tmp_path / "example-aio"
+    active_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  rehab_repos:
+    nanoclaw-aio:
+      path: {rehab_path}
+      github_repo: JSONbored/nanoclaw-aio
+repos:
+  example-aio:
+    path: {active_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+
+    result = cmd_promote_rehab(
+        Namespace(
+            manifest=str(manifest),
+            repo="nanoclaw-aio",
+            profile="changelog-version",
+            dry_run=True,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False  # nosec B101
+    assert "retired shared path" in payload["findings"][0]  # nosec B101
 
 
 def test_fleet_dashboard_commands_outputs_github_output(monkeypatch, capsys) -> None:
@@ -572,24 +769,30 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
-    seen: dict[str, object] = {"login_commands": []}
+    seen: dict[str, object] = {"login_commands": [], "buildx_commands": []}
     verify_results = iter([1, 0])
 
-    def fake_login(command: list[str], **kwargs: object):
-        seen["login_commands"].append(command)  # type: ignore[union-attr]
-        login_env = kwargs["env"]
-        assert isinstance(login_env, dict)  # nosec B101
-        assert "DOCKER_CONFIG" in login_env  # nosec B101
-        assert "DOCKERHUB_TOKEN" not in login_env  # nosec B101
-        assert "AIO_FLEET_GHCR_TOKEN" not in login_env  # nosec B101
-        assert kwargs["input"] in {"hub-token\n", "ghcr-token\n"}  # nosec B101
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    def fake_docker(command: list[str], **kwargs: object):
+        docker_env = kwargs["env"]
+        assert isinstance(docker_env, dict)  # nosec B101
+        assert "DOCKER_CONFIG" in docker_env  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in docker_env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in docker_env  # nosec B101
+        if command[:2] == ["docker", "login"]:
+            assert kwargs["input"] in {"hub-token\n", "ghcr-token\n"}  # nosec B101
+            seen["login_commands"].append(command)  # type: ignore[union-attr]
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["docker", "buildx"]:
+            seen["buildx_commands"].append(command)  # type: ignore[union-attr]
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(f"unexpected docker command: {command}")
 
-    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+    def fake_publish(command: list[str], cwd: Path | None = None, env=None):
         seen["publish_command"] = command
         seen["publish_cwd"] = cwd
         seen["publish_env"] = env
         assert isinstance(env, dict)  # nosec B101
+        assert "BUILDX_BUILDER" in env  # nosec B101
         assert "DOCKER_CONFIG" in env  # nosec B101
         assert "DOCKERHUB_TOKEN" not in env  # nosec B101
         assert "AIO_FLEET_GHCR_TOKEN" not in env  # nosec B101
@@ -603,8 +806,8 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     monkeypatch.setenv("AIO_FLEET_GHCR_USERNAME", "JSONbored")
     monkeypatch.setenv("GH_TOKEN", "gh-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
-    monkeypatch.setattr(cli.subprocess, "run", fake_login)
-    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli.subprocess, "run", fake_docker)
+    monkeypatch.setattr(cli, "_run", fake_publish)
     monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: next(verify_results))
 
     result = cmd_registry_publish(
@@ -636,6 +839,12 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
             "JSONbored",
             "--password-stdin",
         ],
+    ]
+    buildx_commands = seen["buildx_commands"]
+    assert [command[:3] for command in buildx_commands] == [  # nosec B101
+        ["docker", "buildx", "create"],
+        ["docker", "buildx", "inspect"],
+        ["docker", "buildx", "rm"],
     ]
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
 
@@ -859,6 +1068,7 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
             format="text",
             dry_run=True,
             mode="existing",
+            shape=None,
         )
     )
 
@@ -882,6 +1092,7 @@ def test_onboard_repo_rehab_mode_outputs_checklist(capsys) -> None:
             format="json",
             dry_run=True,
             mode="rehab",
+            shape=None,
         )
     )
 
@@ -905,6 +1116,7 @@ def test_onboard_repo_new_from_template_outputs_creation_steps(capsys) -> None:
             format="json",
             dry_run=True,
             mode="new-from-template",
+            shape=None,
         )
     )
 
@@ -915,6 +1127,55 @@ def test_onboard_repo_new_from_template_outputs_creation_steps(capsys) -> None:
         "unraid-aio-template" in step for step in payload["creation_steps"]
     )  # nosec B101
     assert payload["first_commands"][0].startswith("gh repo create")  # nosec B101
+
+
+def test_onboard_repo_multi_component_shape_outputs_component_pack(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="signoz-aio",
+            profile="signoz-suite",
+            image_name="jsonbored/signoz-aio",
+            upstream_name="SigNoz",
+            local_path_base="/Users/shadowbook/Documents",
+            format="json",
+            dry_run=True,
+            mode="existing",
+            shape="multi-component",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shape"] == "multi-component"  # nosec B101
+    assert payload["manifest_entry"]["components"][1]["name"] == "agent"  # nosec B101
+    assert any(
+        "multi-component registry verify" in item
+        for item in payload["acceptance_checklist"]
+    )  # nosec B101
+
+
+def test_onboard_repo_destination_shape_stays_dashboard_only(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="awesome-unraid",
+            profile="template",
+            image_name=None,
+            upstream_name="Awesome Unraid",
+            local_path_base="/Users/shadowbook/Documents",
+            format="json",
+            dry_run=True,
+            mode="existing",
+            shape="destination-only",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["manifest_entry"] == {}  # nosec B101
+    assert "awesome-unraid" in payload["dashboard_entry"]  # nosec B101
+    assert all(
+        "export-app-manifest" not in command for command in payload["first_commands"]
+    )  # nosec B101
 
 
 def test_upstream_monitor_dry_run_reports_updates(

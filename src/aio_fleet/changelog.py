@@ -20,6 +20,7 @@ class ReleasePlan:
     changelog_path: Path
     xml_paths: list[Path]
     cliff_config: str
+    component: str = "aio"
 
 
 def render_git_cliff_config(repo: RepoConfig) -> str:
@@ -84,13 +85,16 @@ def write_temp_git_cliff_config(repo: RepoConfig) -> Path:
     return Path(handle.name)
 
 
-def build_release_plan(repo: RepoConfig) -> ReleasePlan:
-    version = _next_version(repo)
+def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePlan:
+    version = _next_version(repo, component=component)
     return ReleasePlan(
         version=version,
         changelog_path=repo.path / "CHANGELOG.md",
-        xml_paths=[repo.path / path for path in _release_xml_sources(repo)],
+        xml_paths=[
+            repo.path / path for path in _release_xml_sources(repo, component=component)
+        ],
         cliff_config=render_git_cliff_config(repo),
+        component=component,
     )
 
 
@@ -178,18 +182,28 @@ def encode_for_template(body: str) -> str:
     return html.escape(body, quote=False).replace("\n", "&#xD;\n")
 
 
-def _next_version(repo: RepoConfig) -> str:
+def _next_version(repo: RepoConfig, *, component: str) -> str:
     if repo.publish_profile == "template":
         return next_semver_release_version(repo.path)
+    config = _component_config(repo, component)
     return next_aio_release_version(
         repo.path,
-        repo.path / "Dockerfile",
-        repo.path / "upstream.toml",
-        version_key=str(repo.get("upstream_version_key", "UPSTREAM_VERSION")),
+        repo.path / str(config.get("dockerfile", "Dockerfile")),
+        repo.path / str(config.get("upstream_config", "upstream.toml")),
+        suffix=str(config.get("release_suffix", "aio")),
+        version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
     )
 
 
-def _release_xml_sources(repo: RepoConfig) -> list[str]:
+def _release_xml_sources(repo: RepoConfig, *, component: str) -> list[str]:
+    config = _component_config(repo, component)
+    xml_paths = config.get("xml_paths", [])
+    if isinstance(xml_paths, str) and xml_paths.endswith(".xml"):
+        return [xml_paths]
+    if isinstance(xml_paths, list):
+        component_xml = [str(path) for path in xml_paths if str(path).endswith(".xml")]
+        if component_xml:
+            return component_xml
     assets = repo.raw.get("catalog_assets", [])
     xml_sources = [
         str(asset.get("source", ""))
@@ -199,3 +213,22 @@ def _release_xml_sources(repo: RepoConfig) -> list[str]:
     if xml_sources:
         return xml_sources
     return [path for path in repo.list_value("xml_paths") if path.endswith(".xml")]
+
+
+def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
+    config: dict[str, object] = {
+        "dockerfile": "Dockerfile",
+        "upstream_config": "upstream.toml",
+        "release_suffix": "aio",
+        "upstream_version_key": repo.get("upstream_version_key", "UPSTREAM_VERSION"),
+    }
+    components = repo.raw.get("components")
+    if isinstance(components, dict):
+        component_config = components.get(component)
+        if isinstance(component_config, dict):
+            config.update(component_config)
+            config.setdefault(
+                "upstream_version_key",
+                repo.get("upstream_version_key", "UPSTREAM_VERSION"),
+            )
+    return config

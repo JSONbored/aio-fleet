@@ -9,6 +9,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -52,6 +53,12 @@ from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_ma
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import find_release_target_commit, latest_changelog_version
+from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
+from aio_fleet.report import (
+    fleet_report_json_schema,
+    stable_report_json,
+    validate_report_shape,
+)
 from aio_fleet.safety import assess_expected_update, assess_upstream_pr
 from aio_fleet.upstream import (
     create_or_update_upstream_pr,
@@ -69,6 +76,15 @@ from aio_fleet.validators import (
     template_metadata_failures,
     tracked_artifact_failures,
 )
+from aio_fleet.workflow_jobs import (
+    checkout_dashboard_repos,
+    poll_outputs,
+    registry_audit_checkouts,
+    render_registry_summary,
+    render_upstream_summary,
+    upstream_monitor_checkouts,
+)
+from aio_fleet.workflow_security import audit_workflows
 
 
 def _run(
@@ -854,6 +870,60 @@ def cmd_fleet_dashboard_commands(args: argparse.Namespace) -> int:
     return 0
 
 
+def _report_state_from_payload(payload: object) -> dict[str, object]:
+    if isinstance(payload, dict) and isinstance(payload.get("state"), dict):
+        return dict(payload["state"])
+    if isinstance(payload, dict):
+        return dict(payload)
+    raise ManifestError("report input must be a JSON object")
+
+
+def cmd_fleet_report_generate(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    report = dashboard_report(
+        manifest,
+        include_registry=args.registry,
+        include_activity=getattr(args, "include_activity", True),
+        stale_days=getattr(args, "stale_days", 7),
+        issue_repo=args.issue_repo,
+    )
+    state = dict(report["state"])
+    if args.format == "json":
+        print(stable_report_json(state))
+    else:
+        summary = state.get("summary", {})
+        posture = (
+            summary.get("posture", "unknown")
+            if isinstance(summary, dict)
+            else "unknown"
+        )
+        print(f"fleet-report: posture={posture} schema={state.get('schema_version')}")
+    return 0
+
+
+def cmd_fleet_report_schema(args: argparse.Namespace) -> int:
+    print(stable_report_json(fleet_report_json_schema()))
+    return 0
+
+
+def cmd_fleet_report_validate(args: argparse.Namespace) -> int:
+    try:
+        payload = json.loads(Path(args.input).read_text())
+        state = _report_state_from_payload(payload)
+    except Exception as exc:
+        print(f"invalid report input: {exc}", file=sys.stderr)
+        return 1
+    failures = validate_report_shape(state)
+    if args.format == "json":
+        print(stable_report_json({"ok": not failures, "failures": failures}))
+    else:
+        if failures:
+            print("\n".join(failures), file=sys.stderr)
+        else:
+            print("fleet report schema ok")
+    return 1 if failures else 0
+
+
 def cmd_control_check(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
@@ -1100,19 +1170,25 @@ def _registry_publish_environment(repo: RepoConfig) -> Iterator[dict[str, str] |
             if not _secret_environment_key(key)
         }
         publish_env["DOCKER_CONFIG"] = docker_config
-        _docker_login(
-            "docker.io",
-            username=dockerhub_username,
-            token=dockerhub_token,
-            env=publish_env,
-        )
-        _docker_login(
-            "ghcr.io",
-            username=ghcr_username,
-            token=ghcr_token,
-            env=publish_env,
-        )
-        yield publish_env
+        builder_name = f"aio-fleet-{repo.name}-{uuid.uuid4().hex[:12]}"
+        try:
+            _docker_login(
+                "docker.io",
+                username=dockerhub_username,
+                token=dockerhub_token,
+                env=publish_env,
+            )
+            _docker_login(
+                "ghcr.io",
+                username=ghcr_username,
+                token=ghcr_token,
+                env=publish_env,
+            )
+            _create_buildx_builder(builder_name, env=publish_env)
+            publish_env["BUILDX_BUILDER"] = builder_name
+            yield publish_env
+        finally:
+            _remove_buildx_builder(builder_name, env=publish_env)
 
 
 def _docker_login(
@@ -1136,6 +1212,48 @@ def _docker_login(
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"docker login failed for {registry}: {detail}")
+
+
+def _create_buildx_builder(name: str, *, env: dict[str, str]) -> None:
+    create = subprocess.run(  # nosec B603 B607
+        [
+            "docker",
+            "buildx",
+            "create",
+            "--name",
+            name,
+            "--driver",
+            "docker-container",
+            "--use",
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if create.returncode != 0:
+        detail = (create.stderr or create.stdout).strip()
+        raise RuntimeError(f"docker buildx builder creation failed: {detail}")
+    inspect = subprocess.run(  # nosec B603 B607
+        ["docker", "buildx", "inspect", "--bootstrap", name],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if inspect.returncode != 0:
+        detail = (inspect.stderr or inspect.stdout).strip()
+        raise RuntimeError(f"docker buildx builder bootstrap failed: {detail}")
+
+
+def _remove_buildx_builder(name: str, *, env: dict[str, str]) -> None:
+    subprocess.run(  # nosec B603 B607
+        ["docker", "buildx", "rm", "--force", name],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
 
 
 def cmd_upstream_monitor(args: argparse.Namespace) -> int:
@@ -1435,10 +1553,13 @@ def cmd_release_status(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
-    plan = build_release_plan(repo)
-    tags = compute_registry_tags(repo, sha=_git_head(repo.path))
+    plan = build_release_plan(repo, component=args.component)
+    tags = compute_registry_tags(
+        repo, sha=_git_head(repo.path), component=args.component
+    )
     report = {
         "repo": repo.name,
+        "component": plan.component,
         "version": plan.version,
         "changelog": str(plan.changelog_path),
         "xml_paths": [str(path) for path in plan.xml_paths],
@@ -1447,11 +1568,55 @@ def cmd_release_status(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print(f"{repo.name}: next_release={plan.version}")
+        label = (
+            repo.name if plan.component == "aio" else f"{repo.name}:{plan.component}"
+        )
+        print(f"{label}: next_release={plan.version}")
         print(f"changelog: {plan.changelog_path}")
         for path in plan.xml_paths:
             print(f"xml: {path}")
     return 0
+
+
+def cmd_release_plan(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    if args.all:
+        plans = release_plan_for_manifest(manifest, include_registry=args.registry)
+    else:
+        repo = _repo_for_identifier(manifest, args.repo)
+        if args.repo_path:
+            repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+        plans = [release_plan_for_repo(repo, include_registry=args.registry)]
+    report = {
+        "repos": plans,
+        "summary": {
+            "repos": len(plans),
+            "release_due": len(
+                [
+                    plan
+                    for plan in plans
+                    if plan.get("state")
+                    in {"release-due", "catalog-sync-needed", "publish-missing"}
+                ]
+            ),
+            "publish_missing": len(
+                [plan for plan in plans if plan.get("state") == "publish-missing"]
+            ),
+        },
+    }
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        for plan in plans:
+            print(
+                "{repo}: release={state} next={next_version} action={next_action}".format(
+                    **plan
+                )
+            )
+    return 1 if report["summary"]["publish_missing"] else 0
 
 
 def cmd_release_prepare(args: argparse.Namespace) -> int:
@@ -1459,7 +1624,7 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
-    plan = build_release_plan(repo)
+    plan = build_release_plan(repo, component=args.component)
     cliff_config = write_temp_git_cliff_config(repo)
     commands = [
         [
@@ -1624,6 +1789,183 @@ def cmd_cleanup_repo(args: argparse.Namespace) -> int:
             for finding in findings:
                 print(f"- {finding['path']}: {finding['reason']}")
     return 1 if failed else 0
+
+
+def cmd_security_audit_workflows(args: argparse.Namespace) -> int:
+    report = audit_workflows(Path(args.path).resolve())
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        if report["findings"]:
+            for finding in report["findings"]:
+                print(
+                    "{path}: {code}: {message}".format(
+                        path=finding["path"],
+                        code=finding["code"],
+                        message=finding["message"],
+                    )
+                )
+        else:
+            print("workflow security audit passed")
+    return 0 if report["ok"] else 1
+
+
+def cmd_promote_rehab(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    dashboard = manifest.raw.get("dashboard", {})
+    rehab = dashboard.get("rehab_repos", {}) if isinstance(dashboard, dict) else {}
+    config = rehab.get(args.repo) if isinstance(rehab, dict) else None
+    if not isinstance(config, dict):
+        print(f"{args.repo}: not configured as a rehab repo", file=sys.stderr)
+        return 1
+    path = Path(str(config.get("path", f"../{args.repo}"))).resolve()
+    github_repo = str(config.get("github_repo", f"{manifest.owner}/{args.repo}"))
+    repo = RepoConfig(
+        name=args.repo,
+        raw={
+            "path": str(path),
+            "app_slug": args.repo,
+            "image_name": f"jsonbored/{args.repo}",
+            "docker_cache_scope": f"{args.repo}-image",
+            "pytest_image_tag": f"{args.repo}:pytest",
+            "github_repo": github_repo,
+            "publish_profile": args.profile,
+        },
+        defaults=manifest.defaults,
+        owner=manifest.owner,
+    )
+    findings: list[str] = []
+    warnings: list[str] = []
+    if not path.exists():
+        findings.append("local checkout is missing")
+    else:
+        status = _run(["git", "status", "--short"], cwd=path)
+        if status.stdout.strip():
+            findings.append("local checkout is dirty")
+        branch = _run(["git", "branch", "--show-current"], cwd=path)
+        if branch.stdout.strip() != "main":
+            warnings.append(
+                f"local checkout is on {branch.stdout.strip() or 'unknown'}"
+            )
+        cleanup = cleanup_findings(repo)
+        if cleanup:
+            findings.append(f"{len(cleanup)} retired shared path(s) remain")
+    manifest_entry = {
+        "path": str(path),
+        "github_repo": github_repo,
+        "app_slug": args.repo,
+        "image_name": f"jsonbored/{args.repo}",
+        "docker_cache_scope": f"{args.repo}-image",
+        "pytest_image_tag": f"{args.repo}:pytest",
+        "publish_profile": args.profile,
+    }
+    checklist = [
+        "rehab repo exists locally and remotely",
+        "worktree is clean on main",
+        "legacy shared files are removed",
+        ".aio-fleet.yml is exported",
+        "central validate-repo passes",
+        "cleanup-repo --verify passes",
+        "control-check dry-run passes",
+        "first aio-fleet / required check appears on a real PR",
+        "registry and upstream policy are declared",
+        "repo is moved from dashboard.rehab_repos into repos",
+    ]
+    report = {
+        "repo": args.repo,
+        "mode": "promote-rehab",
+        "ready": not findings,
+        "manifest_entry": manifest_entry,
+        "findings": findings,
+        "warnings": warnings,
+        "acceptance_checklist": checklist,
+        "next_commands": [
+            f"python -m aio_fleet cleanup-repo --repo {args.repo} --repo-path {path} --verify",
+            f"python -m aio_fleet export-app-manifest --repo {args.repo} --write",
+            f"python -m aio_fleet control-check --repo {args.repo} --repo-path {path} --sha <sha> --event pull_request --dry-run",
+        ],
+    }
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        state = "ready" if report["ready"] else "blocked"
+        print(f"{args.repo}: promote-rehab={state}")
+        for finding in findings:
+            print(f"- {finding}")
+        for warning in warnings:
+            print(f"- warning: {warning}")
+    return 1 if findings else 0
+
+
+def cmd_workflow_poll_outputs(args: argparse.Namespace) -> int:
+    report = poll_outputs(
+        report_path=Path(args.input),
+        run_checks=args.run_checks,
+        github_output=Path(args.github_output) if args.github_output else None,
+    )
+    print(stable_report_json(report))
+    return 0
+
+
+def cmd_workflow_upstream_summary(args: argparse.Namespace) -> int:
+    text = render_upstream_summary(
+        report_path=Path(args.input),
+        output_path=Path(args.output) if args.output else None,
+    )
+    print(text, end="")
+    return 0
+
+
+def cmd_workflow_registry_summary(args: argparse.Namespace) -> int:
+    text = render_registry_summary(
+        report_path=Path(args.input),
+        status=args.status,
+        output_path=Path(args.output) if args.output else None,
+    )
+    print(text, end="")
+    return 0
+
+
+def cmd_workflow_checkout_dashboard(args: argparse.Namespace) -> int:
+    report = checkout_dashboard_repos(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        output_manifest=Path(args.output_manifest),
+        token=args.token or _workflow_token(),
+    )
+    print(stable_report_json(report))
+    return 0
+
+
+def cmd_workflow_upstream_monitor(args: argparse.Namespace) -> int:
+    report = upstream_monitor_checkouts(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        output_path=Path(args.output),
+        token=args.token or _workflow_token(),
+        mutate=args.mutate,
+        dry_run=args.dry_run,
+    )
+    print(stable_report_json(report))
+    return int(report.get("status", 0))
+
+
+def cmd_workflow_registry_audit(args: argparse.Namespace) -> int:
+    report = registry_audit_checkouts(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        output_path=Path(args.output),
+        token=args.token or _workflow_token(),
+        github_output=Path(args.github_output) if args.github_output else None,
+    )
+    print(stable_report_json(report))
+    return 0
+
+
+def _workflow_token() -> str:
+    return os.environ.get("AIO_FLEET_WORKFLOW_TOKEN", "") or os.environ.get(
+        "APP_TOKEN", ""
+    )
 
 
 def cmd_trunk_audit(args: argparse.Namespace) -> int:
@@ -1815,6 +2157,9 @@ def _git_check_ignore(repo_path: Path, relative_path: str) -> bool:
 
 def cmd_onboard_repo(args: argparse.Namespace) -> int:
     mode = getattr(args, "mode", "existing")
+    shape = getattr(args, "shape", None) or (
+        "rehab-only" if mode == "rehab" else "single-image"
+    )
     image_name = args.image_name or f"jsonbored/{args.repo}"
     upstream_name = args.upstream_name or args.repo.removesuffix("-aio").title()
     local_path_base = args.local_path_base.rstrip("/")
@@ -1835,6 +2180,47 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
             {"source": f"{args.repo}.xml", "target": f"{args.repo}.xml"}
         ],
     }
+    dashboard_entry: dict[str, object] | None = None
+    if shape == "multi-component":
+        component_prefix = args.repo.removesuffix("-aio")
+        manifest_entry["components"] = [
+            {
+                "name": "aio",
+                "image_name": image_name,
+                "xml_path": f"{args.repo}.xml",
+            },
+            {
+                "name": "agent",
+                "image_name": f"jsonbored/{component_prefix}-agent",
+                "xml_path": f"{component_prefix}-agent.xml",
+            },
+        ]
+    elif shape == "submodule-backed":
+        manifest_entry["submodules"] = [
+            {
+                "path": "upstream",
+                "tracking": "manifest-declared upstream provider",
+            }
+        ]
+    elif shape == "destination-only":
+        manifest_entry = {}
+        dashboard_entry = {
+            args.repo: {
+                "path": f"{local_path_base}/{args.repo}",
+                "github_repo": f"JSONbored/{args.repo}",
+                "kind": "destination",
+                "catalog_path": f"{local_path_base}/{args.repo}",
+            }
+        }
+    elif shape == "rehab-only":
+        dashboard_entry = {
+            args.repo: {
+                "path": f"{local_path_base}/{args.repo}",
+                "github_repo": f"JSONbored/{args.repo}",
+                "status": "rehab",
+                "next_action": "run rehab onboarding",
+            }
+        }
     acceptance_checklist = [
         "repo exists or is created from unraid-aio-template",
         "fleet.yml entry added with Docker Hub image name",
@@ -1848,8 +2234,9 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
         "support-thread render produces a CA-ready draft",
         "aio-fleet / required appears on a real app PR",
     ]
-    creation_steps = _onboarding_creation_steps(args.repo, mode)
-    first_commands = _onboarding_first_commands(args.repo, mode)
+    acceptance_checklist.extend(_onboarding_shape_checklist(shape))
+    creation_steps = _onboarding_creation_steps(args.repo, mode, shape)
+    first_commands = _onboarding_first_commands(args.repo, mode, shape)
     if mode == "rehab":
         acceptance_checklist = [
             "local repo synced to main",
@@ -1861,6 +2248,7 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
             "central validation and cleanup verification pass",
             "aio-fleet / required appears on a real rehab PR",
             "repo promoted to active fleet only after validation passes",
+            *_onboarding_shape_checklist(shape),
         ]
     if args.format == "json":
         print(
@@ -1868,7 +2256,9 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
                 {
                     "repo": args.repo,
                     "mode": mode,
+                    "shape": shape,
                     "manifest_entry": manifest_entry,
+                    "dashboard_entry": dashboard_entry,
                     "creation_steps": creation_steps,
                     "first_commands": first_commands,
                     "acceptance_checklist": acceptance_checklist,
@@ -1881,6 +2271,7 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print(f"# Onboard {args.repo}")
     print()
     print(f"Mode: `{mode}`")
+    print(f"Shape: `{shape}`")
     print()
     if creation_steps:
         print("## Creation / Intake Steps")
@@ -1891,9 +2282,17 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print("## Manifest entry")
     print()
     print("```yaml")
-    print(f"  {args.repo}:")
-    for key, value in manifest_entry.items():
-        print(_yaml_line(key, value, indent=4))
+    if manifest_entry:
+        print(f"  {args.repo}:")
+        for key, value in manifest_entry.items():
+            print(_yaml_line(key, value, indent=4))
+    else:
+        print(
+            "  # no active repos entry; add this under dashboard.destination_repos or dashboard.rehab_repos"
+        )
+        if dashboard_entry:
+            for key, value in dashboard_entry.items():
+                print(_yaml_line(key, value, indent=2))
     print("```")
     print()
     print("## First commands")
@@ -1908,14 +2307,41 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     return 0
 
 
-def _onboarding_creation_steps(repo: str, mode: str) -> list[str]:
-    if mode == "new-from-template":
+def _onboarding_shape_checklist(shape: str) -> list[str]:
+    if shape == "multi-component":
         return [
+            "each component has a declared image, XML path, registry tags, and publish policy",
+            "multi-component registry verify passes for every component",
+        ]
+    if shape == "submodule-backed":
+        return [
+            "submodule paths are declared and initialized in central checkouts",
+            "upstream monitor updates gitlinks without local unsigned commits",
+        ]
+    if shape == "destination-only":
+        return [
+            "repo is dashboard-visible but excluded from app validation and publish automation",
+            "catalog/destination health is collected without app release state",
+        ]
+    if shape == "rehab-only":
+        return [
+            "repo stays non-blocking until promote-rehab reports ready",
+            "retired shared files are removed before active fleet promotion",
+        ]
+    return []
+
+
+def _onboarding_creation_steps(repo: str, mode: str, shape: str) -> list[str]:
+    if mode == "new-from-template":
+        steps = [
             f"create JSONbored/{repo} from JSONbored/unraid-aio-template",
             f"clone JSONbored/{repo} locally",
             "keep only app-specific runtime/source/template/docs/tests in the repo",
             "add the repo to fleet.yml before exporting .aio-fleet.yml",
         ]
+        if shape == "submodule-backed":
+            steps.append("add and commit required submodule declarations before export")
+        return steps
     if mode == "rehab":
         return [
             f"treat existing JSONbored/{repo} as a non-blocking rehab repo",
@@ -1926,7 +2352,7 @@ def _onboarding_creation_steps(repo: str, mode: str) -> list[str]:
     return []
 
 
-def _onboarding_first_commands(repo: str, mode: str) -> list[str]:
+def _onboarding_first_commands(repo: str, mode: str, shape: str) -> list[str]:
     commands = []
     if mode == "rehab":
         commands.extend(
@@ -1936,6 +2362,13 @@ def _onboarding_first_commands(repo: str, mode: str) -> list[str]:
                 "# after adding the repo to fleet.yml:",
             ]
         )
+    if shape == "submodule-backed":
+        commands.append(f"git -C ../{repo} submodule update --init --recursive")
+    if shape in {"destination-only", "rehab-only"} and mode != "rehab":
+        return [
+            "python -m aio_fleet fleet-dashboard update --dry-run --include-activity",
+            "python -m aio_fleet fleet-report generate --include-activity --format json",
+        ]
     commands.extend(
         [
             f"python -m aio_fleet export-app-manifest --repo {repo} --write",
@@ -2388,6 +2821,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard_commands.set_defaults(func=cmd_fleet_dashboard_commands)
 
+    report = sub.add_parser("fleet-report")
+    report_sub = report.add_subparsers(dest="fleet_report_command", required=True)
+    report_generate = report_sub.add_parser("generate")
+    report_generate.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    report_generate.add_argument("--registry", action="store_true")
+    report_generate.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    report_generate.add_argument("--stale-days", type=int, default=7)
+    report_generate.add_argument("--format", choices=["text", "json"], default="json")
+    report_generate.set_defaults(func=cmd_fleet_report_generate)
+    report_schema = report_sub.add_parser("schema")
+    report_schema.set_defaults(func=cmd_fleet_report_schema)
+    report_validate = report_sub.add_parser("validate")
+    report_validate.add_argument("--input", required=True)
+    report_validate.add_argument("--format", choices=["text", "json"], default="text")
+    report_validate.set_defaults(func=cmd_fleet_report_validate)
+
     poll = sub.add_parser("poll")
     poll.add_argument("--no-prs", action="store_true")
     poll.add_argument("--no-main", action="store_true")
@@ -2459,16 +2912,26 @@ def build_parser() -> argparse.ArgumentParser:
     release_sub = release.add_subparsers(dest="release_command", required=True)
     release_status = release_sub.add_parser("status")
     release_status.add_argument("--repo", required=True)
+    release_status.add_argument("--component", default="aio")
     release_status.add_argument("--repo-path")
     release_status.add_argument("--format", choices=["text", "json"], default="text")
     release_status.set_defaults(func=cmd_release_status)
+    release_plan = release_sub.add_parser("plan")
+    release_plan.add_argument("--repo")
+    release_plan.add_argument("--repo-path")
+    release_plan.add_argument("--all", action="store_true")
+    release_plan.add_argument("--registry", action="store_true")
+    release_plan.add_argument("--format", choices=["text", "json"], default="text")
+    release_plan.set_defaults(func=cmd_release_plan)
     release_prepare = release_sub.add_parser("prepare")
     release_prepare.add_argument("--repo", required=True)
+    release_prepare.add_argument("--component", default="aio")
     release_prepare.add_argument("--repo-path")
     release_prepare.add_argument("--dry-run", action="store_true")
     release_prepare.set_defaults(func=cmd_release_prepare)
     release_publish = release_sub.add_parser("publish")
     release_publish.add_argument("--repo", required=True)
+    release_publish.add_argument("--component", default="aio")
     release_publish.add_argument("--repo-path")
     release_publish.add_argument("--dry-run", action="store_true")
     release_publish.set_defaults(func=cmd_release_publish)
@@ -2498,12 +2961,38 @@ def build_parser() -> argparse.ArgumentParser:
             "signoz-suite",
         ],
     )
+    onboard.add_argument(
+        "--shape",
+        choices=[
+            "single-image",
+            "multi-component",
+            "submodule-backed",
+            "destination-only",
+            "rehab-only",
+        ],
+    )
     onboard.add_argument("--upstream-name")
     onboard.add_argument("--image-name")
     onboard.add_argument("--local-path-base", default="<local-checkout-path>")
     onboard.add_argument("--dry-run", action="store_true")
     onboard.add_argument("--format", choices=["text", "json"], default="text")
     onboard.set_defaults(func=cmd_onboard_repo)
+
+    promote = sub.add_parser("promote-rehab")
+    promote.add_argument("--repo", required=True)
+    promote.add_argument(
+        "--profile",
+        default="changelog-version",
+        choices=[
+            "upstream-aio-track",
+            "changelog-version",
+            "dify",
+            "signoz-suite",
+        ],
+    )
+    promote.add_argument("--dry-run", action="store_true")
+    promote.add_argument("--format", choices=["text", "json"], default="text")
+    promote.set_defaults(func=cmd_promote_rehab)
 
     export_app_manifest = sub.add_parser("export-app-manifest")
     export_app_manifest.add_argument("--repo", required=True)
@@ -2548,6 +3037,52 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--dry-run", action="store_true")
     cleanup.add_argument("--format", choices=["text", "json"], default="text")
     cleanup.set_defaults(func=cmd_cleanup_repo)
+
+    security = sub.add_parser("security")
+    security_sub = security.add_subparsers(dest="security_command", required=True)
+    security_audit = security_sub.add_parser("audit-workflows")
+    security_audit.add_argument("--path", default=".")
+    security_audit.add_argument("--format", choices=["text", "json"], default="text")
+    security_audit.set_defaults(func=cmd_security_audit_workflows)
+
+    workflow = sub.add_parser("workflow")
+    workflow_sub = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_poll = workflow_sub.add_parser("poll-outputs")
+    workflow_poll.add_argument("--input", default="poll-targets.json")
+    workflow_poll.add_argument("--run-checks", action="store_true")
+    workflow_poll.add_argument("--github-output")
+    workflow_poll.set_defaults(func=cmd_workflow_poll_outputs)
+    workflow_upstream_summary = workflow_sub.add_parser("upstream-summary")
+    workflow_upstream_summary.add_argument("--input", default="upstream-report.json")
+    workflow_upstream_summary.add_argument("--output")
+    workflow_upstream_summary.set_defaults(func=cmd_workflow_upstream_summary)
+    workflow_registry_summary = workflow_sub.add_parser("registry-summary")
+    workflow_registry_summary.add_argument("--input", default="registry-report.json")
+    workflow_registry_summary.add_argument("--status", default="")
+    workflow_registry_summary.add_argument("--output")
+    workflow_registry_summary.set_defaults(func=cmd_workflow_registry_summary)
+    workflow_dashboard_checkout = workflow_sub.add_parser("checkout-dashboard")
+    workflow_dashboard_checkout.add_argument(
+        "--checkout-root", default="dashboard-checkouts"
+    )
+    workflow_dashboard_checkout.add_argument(
+        "--output-manifest", default="fleet-dashboard.manifest.yml"
+    )
+    workflow_dashboard_checkout.add_argument("--token")
+    workflow_dashboard_checkout.set_defaults(func=cmd_workflow_checkout_dashboard)
+    workflow_upstream = workflow_sub.add_parser("upstream-monitor")
+    workflow_upstream.add_argument("--checkout-root", default="upstream-checkouts")
+    workflow_upstream.add_argument("--output", default="upstream-report.json")
+    workflow_upstream.add_argument("--token")
+    workflow_upstream.add_argument("--mutate", action="store_true")
+    workflow_upstream.add_argument("--dry-run", action="store_true")
+    workflow_upstream.set_defaults(func=cmd_workflow_upstream_monitor)
+    workflow_registry = workflow_sub.add_parser("registry-audit")
+    workflow_registry.add_argument("--checkout-root", default="registry-checkouts")
+    workflow_registry.add_argument("--output", default="registry-report.json")
+    workflow_registry.add_argument("--token")
+    workflow_registry.add_argument("--github-output")
+    workflow_registry.set_defaults(func=cmd_workflow_registry_audit)
 
     trunk = sub.add_parser("trunk")
     trunk_sub = trunk.add_subparsers(dest="trunk_command", required=True)

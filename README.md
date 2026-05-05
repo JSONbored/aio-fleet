@@ -23,8 +23,9 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   and can open or update app repo PRs with the GitHub App identity. Generated
   commits are verified before the PR is considered actionable.
 - `fleet-dashboard update` maintains one central issue in `aio-fleet` for
-  upstream updates, PR state, signed commit state, required checks, registry
-  placeholders, and next actions.
+  upstream updates, PR/issue activity, signed commit state, required checks,
+  real registry verification, release readiness, cleanup drift, control-plane
+  health, posture, and next actions.
 - App test dependencies are installed from `aio-fleet[app-tests]`; app repos no
   longer carry shared `requirements-dev.txt` files.
 - `registry verify/publish` computes and verifies Docker Hub plus GHCR tags from
@@ -63,23 +64,30 @@ python -m aio_fleet poll --format json
 python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet upstream monitor --all --dry-run
 python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
-python -m aio_fleet fleet-dashboard update --dry-run
+python -m aio_fleet fleet-dashboard update --dry-run --registry --include-activity
+python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report schema
+python -m aio_fleet fleet-report validate --input fleet-report.json
 python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
 python -m aio_fleet alert doctor
 python -m aio_fleet alert test --dry-run
 python -m aio_fleet alert send --event registry-audit --report-json registry-report.json --dry-run
 python -m aio_fleet release status --repo sure-aio
+python -m aio_fleet release plan --all --format json
 python -m aio_fleet release prepare --repo sure-aio --dry-run
 python -m aio_fleet release publish --repo sure-aio --dry-run
 python -m aio_fleet registry verify --all --format json
 python -m aio_fleet cleanup-repo --repo sure-aio --verify
 python -m aio_fleet cleanup-repo --repo sure-aio --fix --verify
+python -m aio_fleet security audit-workflows --format json
+python -m aio_fleet promote-rehab --repo nanoclaw-aio --dry-run --format json
 python -m aio_fleet trunk run --repo sure-aio --no-fix
 python -m aio_fleet export-app-manifest --repo sure-aio
 python -m aio_fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml
 python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet infra doctor --skip-tofu
 python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
+python -m aio_fleet onboard-repo --repo signoz-aio --shape multi-component --format json
 python -m aio_fleet support-thread render --repo sure-aio
 python -m aio_fleet validate --all
 python -m aio_fleet validate-derived --repo-path ../sure-aio

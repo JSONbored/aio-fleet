@@ -47,12 +47,11 @@ def test_upstream_monitor_scopes_git_auth_without_standard_tokens() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     monitor = _step(workflow["jobs"]["control-plane"], "Monitor upstream releases")
 
-    assert "APP_TOKEN" in monitor["env"]  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" in monitor["env"]  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" in monitor["env"]  # nosec B101
     assert "GH_TOKEN" not in monitor["env"]  # nosec B101
     assert "GITHUB_TOKEN" not in monitor["env"]  # nosec B101
-    assert "GIT_CONFIG_KEY_0" in monitor["run"]  # nosec B101
-    assert "GIT_CONFIG_VALUE_0" in monitor["run"]  # nosec B101
+    assert "workflow upstream-monitor" in monitor["run"]  # nosec B101
     assert "extraheader=AUTHORIZATION" not in monitor["run"]  # nosec B101
     assert '"config",' not in monitor["run"]  # nosec B101
 
@@ -61,8 +60,7 @@ def test_dashboard_checkout_does_not_put_auth_header_in_git_argv() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     dashboard = _step(workflow["jobs"]["control-plane"], "Checkout dashboard repos")
 
-    assert "GIT_CONFIG_KEY_0" in dashboard["run"]  # nosec B101
-    assert "GIT_CONFIG_VALUE_0" in dashboard["run"]  # nosec B101
+    assert "workflow checkout-dashboard" in dashboard["run"]  # nosec B101
     assert "extraheader=AUTHORIZATION" not in dashboard["run"]  # nosec B101
     assert '"config",' not in dashboard["run"]  # nosec B101
 
@@ -150,7 +148,7 @@ def test_workflow_installs_central_dependencies_before_app_checks() -> None:
         install = _step(job, "Install aio-fleet")
         run_check = _step(job, "Run central control check")
 
-        assert install["run"] == 'python -m pip install -e ".[dev]"'  # nosec B101
+        assert 'python -m pip install -e ".[dev]"' in install["run"]  # nosec B101
         assert "python -m aio_fleet" in run_check["run"]  # nosec B101
         assert "control-check" in run_check["run"]  # nosec B101
 

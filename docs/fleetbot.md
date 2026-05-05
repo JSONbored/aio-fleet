@@ -14,10 +14,25 @@ The reusable engine should expose:
 - `fleetbot registry verify`: verify image/package tags.
 - `fleetbot release readiness`: summarize release blockers.
 
-The first stable report format is the dashboard JSON state already emitted by
-`aio-fleet fleet-dashboard update --format json`. Discord, Raycast, GitHub
-Actions, the GitHub App, and a future web dashboard should all consume the same
-shape instead of each inventing its own model.
+The first stable report format is the versioned `FleetReport` state emitted by
+`aio-fleet fleet-report generate --format json`. The dashboard issue consumes
+that same state before rendering Markdown. Discord, Raycast, GitHub Actions,
+the GitHub App, and a future web dashboard should all consume the report shape
+instead of scraping the rendered issue body or inventing separate models.
+
+Contract helpers:
+
+```bash
+python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report schema
+python -m aio_fleet fleet-report validate --input fleet-report.json
+```
+
+The report includes active repo/component rows, upstream status, safety,
+required checks, signed commit state, registry verification, release readiness,
+GitHub activity, cleanup drift, control-plane workflow health, alert warnings,
+and next actions. New surfaces should add presentation only; they should not
+recompute fleet truth independently.
 
 ## Product Surfaces
 
@@ -68,3 +83,7 @@ Do not split Fleetbot out until `aio-fleet` proves:
 - notify-only updates are visible without PR spam;
 - alert delivery works through Kuma and webhook;
 - current AIO upstream PRs are repaired or intentionally held.
+- dashboard registry and release readiness come from real control-plane checks,
+  not placeholders;
+- workflow fanout and summaries are CLI-backed instead of large untested YAML
+  scripts.

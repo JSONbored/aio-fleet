@@ -5,6 +5,8 @@ import json
 import subprocess  # nosec B404
 from pathlib import Path
 
+import pytest
+
 from aio_fleet import fleet_dashboard
 from aio_fleet.manifest import load_manifest
 from aio_fleet.upstream import UpstreamMonitorResult
@@ -26,6 +28,41 @@ class _FakeAssessment:
             "failures": self.values.get("failures", []),
             "next_action": self.values.get("next_action", "human review and merge"),
         }
+
+
+@pytest.fixture(autouse=True)
+def _stable_dashboard_dependencies(monkeypatch):
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "control_plane_health",
+        lambda **_kwargs: {
+            "state": "success",
+            "workflow": "AIO Fleet Control Plane",
+            "repo": "JSONbored/aio-fleet",
+            "controls_enabled": True,
+            "latest": {"status": "completed", "conclusion": "success"},
+            "last_success": {"status": "completed", "conclusion": "success"},
+            "last_failure": {},
+            "runs": [],
+        },
+    )
+
+    def fake_release_plan(manifest, **_kwargs):
+        return [
+            {
+                "repo": repo.name,
+                "state": "current",
+                "latest_release_tag": "",
+                "latest_github_release": {"state": "unknown"},
+                "next_version": "",
+                "next_action": "none",
+                "release_due": False,
+                "registry_failures": [],
+            }
+            for repo in manifest.repos.values()
+        ]
+
+    monkeypatch.setattr(fleet_dashboard, "release_plan_for_manifest", fake_release_plan)
 
 
 def test_dashboard_renders_notify_only_update_and_webhook_warning(
@@ -235,8 +272,13 @@ repos:
             "clean_prs": 1 if name == "awesome-unraid" else 0,
             "stale_prs": 0,
             "oldest_pr_age_days": 0,
+            "oldest_issue_age_days": 0,
             "newest_issue_age_days": 0,
+            "oldest_pr": {},
+            "oldest_issue": {},
             "prs": [],
+            "issues": [],
+            "needs_response_issues": 0,
         },
     )
     monkeypatch.setattr(fleet_dashboard, "catalog_repo_failures", lambda *_args: [])
@@ -489,8 +531,13 @@ repos:
             "clean_prs": 0,
             "stale_prs": 0,
             "oldest_pr_age_days": 0,
+            "oldest_issue_age_days": 0,
             "newest_issue_age_days": 0,
+            "oldest_pr": {},
+            "oldest_issue": {},
             "prs": [],
+            "issues": [],
+            "needs_response_issues": 0,
         },
     )
 
@@ -502,6 +549,75 @@ repos:
     assert "| awesome-unraid | catalog destination | ok | 1 |" in str(
         report["body"]
     )  # nosec B101
+
+
+def test_dashboard_registry_flag_renders_verified_tags(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app_path = tmp_path / "example-aio"
+    app_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {app_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="example-aio",
+                component="aio",
+                name="Example",
+                strategy="pr",
+                source="github-tags",
+                current_version="1.0.0",
+                latest_version="1.0.0",
+                current_digest="",
+                latest_digest="",
+                version_update=False,
+                digest_update=False,
+                dockerfile=app_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+                release_notes_url="https://example.invalid/releases",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_repo_registry_states",
+        lambda _repo: {
+            "aio": {
+                "repo": "example-aio",
+                "component": "aio",
+                "sha": "a" * 40,
+                "dockerhub": ["jsonbored/example-aio:latest"],
+                "ghcr": ["ghcr.io/jsonbored/example-aio:latest"],
+                "failures": [],
+                "state": "ok",
+                "verified_at": "2026-05-05T00:00:00+00:00",
+            }
+        },
+    )
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_activity=False,
+        include_registry=True,
+        env={"AIO_FLEET_ALERT_WEBHOOK_URL": "https://hook"},
+    )
+
+    row = report["state"]["rows"][0]
+    assert row["registry"] == "ok:1+1 tags"  # nosec B101
+    assert report["state"]["summary"]["registry_verified"] == 1  # nosec B101
+    assert "Registry Verification" in str(report["body"])  # nosec B101
 
 
 def test_dashboard_routes_safety_warning_to_triage(tmp_path: Path, monkeypatch) -> None:
@@ -658,8 +774,20 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
             ]
         if args[:2] == ["issue", "list"]:
             return [
-                {"number": 9, "title": "one", "createdAt": "2026-05-03T00:00:00Z"},
-                {"number": 10, "title": "two", "createdAt": "2026-05-04T00:00:00Z"},
+                {
+                    "number": 9,
+                    "title": "one",
+                    "url": "https://github.com/JSONbored/example/issues/9",
+                    "createdAt": "2026-05-03T00:00:00Z",
+                    "labels": [{"name": "needs-response"}],
+                },
+                {
+                    "number": 10,
+                    "title": "two",
+                    "url": "https://github.com/JSONbored/example/issues/10",
+                    "createdAt": "2026-04-20T00:00:00Z",
+                    "labels": [],
+                },
             ]
         raise AssertionError(args)
 
@@ -675,6 +803,9 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
     assert activity["blocked_prs"] == 1  # nosec B101
     assert activity["stale_prs"] == 1  # nosec B101
     assert activity["open_issues"] == 2  # nosec B101
+    assert activity["needs_response_issues"] == 1  # nosec B101
+    assert activity["oldest_issue"]["number"] == 10  # nosec B101
+    assert activity["issues"][0]["number"] == 9  # nosec B101
 
 
 def test_repo_activity_failure_is_non_blocking(monkeypatch) -> None:
