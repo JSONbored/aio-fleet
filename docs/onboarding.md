@@ -27,6 +27,10 @@ Optional fields:
 - `upstream_components`: matrix values for component-aware upstream checks.
 - `upstream_commit_paths`: files committed by an upstream monitor PR.
 - `upstream_monitor`: version/digest sources used by central upstream PR automation.
+- `upstream_monitor[].submodule_path`: tracked gitlink to update with the
+  upstream PR, used by repos that vendor upstream sources as a submodule.
+- `upstream_monitor[].submodule_ref_template`: ref or branch template used for
+  the submodule checkout, for example `codex/openmemory-{version}-aio`.
 - `previous_tag_command`: release-script command used as the changelog base tag.
 
 ## Playbook
@@ -97,3 +101,12 @@ Dockerfile/context, upstream version key, release suffix, and integration test
 args, then add matching `upstream_monitor` entries. `aio-fleet` will publish and
 verify each component separately while keeping one app repo and one required
 fleet check.
+
+## Submodule-Backed Repos
+
+Use `mem0-aio` as the reference when a repo must build from upstream source kept
+as a git submodule. Keep `checkout_submodules: true`, include the gitlink in
+`upstream_commit_paths`, and declare the submodule path/ref in the matching
+monitor entry. If the AIO wrapper carries fork-only patches, keep those patches
+on a version-specific branch in the configured fork, then let `aio-fleet`
+advance the app repo gitlink in a verified upstream PR.

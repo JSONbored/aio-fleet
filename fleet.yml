@@ -511,15 +511,22 @@ repos:
     upstream_monitor:
       - component: aio
         name: Mem0
-        source: github-tags
+        source: github-releases
         repo: mem0ai/mem0
         dockerfile: Dockerfile
         version_key: UPSTREAM_VERSION
         stable_only: true
-        strategy: notify
+        strategy: pr
         release_notes_url: https://github.com/mem0ai/mem0/releases
+        submodule_path: openmemory
+        submodule_remote: fork
+        submodule_ref_template: codex/openmemory-{version}-aio
     image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
     checkout_submodules: true
+    upstream_commit_paths:
+      - .aio-fleet.yml
+      - Dockerfile
+      - openmemory
     extra_publish_paths:
       - openmemory
       - openmemory/**

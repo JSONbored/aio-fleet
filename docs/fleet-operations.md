@@ -38,6 +38,14 @@ Notify-only updates can be assessed without a PR:
 python -m aio_fleet upstream assess --repo mem0-aio --format json
 ```
 
+Submodule-backed repos can still use `strategy: pr` when the monitor declares
+the submodule path and ref template. `mem0-aio` is the reference case: the
+Dockerfile tracks the upstream Mem0 Python SDK release, while the `openmemory`
+gitlink tracks an AIO patch branch in the configured fork. The patch branch
+must already exist for the target upstream version before the monitor writes
+the source PR; the generated app PR then commits both `Dockerfile` and the
+submodule gitlink through the verified GitHub API writer.
+
 Safety levels are deliberately pragmatic:
 
 - `ok`: expected files changed, no obvious template/runtime risk signals, and
@@ -47,8 +55,8 @@ Safety levels are deliberately pragmatic:
 - `blocked`: clear failures such as unexpected files, missing manifest-required
   template targets, failed required checks, failed runtime checks, or unverified
   generated commits.
-- `manual`: notify-only updates such as `mem0-aio`, where the packaged app path
-  must be assessed before creating a source PR.
+- `manual`: notify-only updates where the packaged app path must be assessed
+  before creating a source PR.
 
 `runtime_smoke: deferred-to-main` is intentional for normal PR checks. Heavy
 integration tests are configured centrally but run on `main`, release, or manual
@@ -135,6 +143,9 @@ the heartbeat without sending a separate webhook digest.
   closed as superseded when a newer generated branch is created.
 - Notify-only update: review the upstream release manually, decide whether the
   packaged app path is affected, then create a source repo PR only if needed.
+- Missing submodule ref: create or update the configured patch branch, rerun
+  upstream monitor, and confirm the app PR includes the gitlink under the
+  expected changed paths.
 - Missing alert delivery: run `alert doctor`, add the missing secret, then run
   `alert test`.
 - Catalog drift: fix the source app repo first, validate it, then run
