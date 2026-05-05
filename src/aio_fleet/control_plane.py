@@ -20,6 +20,7 @@ class Step:
     cwd: Path
     env: dict[str, str] | None = None
     stream_output: bool = False
+    timeout_seconds: int | None = None
 
 
 def central_check_steps(
@@ -89,6 +90,9 @@ def central_check_steps(
                     if prebuilt_integration_image
                     else None
                 ),
+                timeout_seconds=_repo_timeout_seconds(
+                    repo, "integration_timeout_seconds", default=1800
+                ),
             )
         )
     if include_trunk:
@@ -137,6 +141,10 @@ def central_check_steps(
                         component,
                     ],
                     repo.path,
+                    stream_output=True,
+                    timeout_seconds=_repo_timeout_seconds(
+                        repo, "registry_publish_timeout_seconds", default=3600
+                    ),
                 )
             )
     return steps
@@ -163,25 +171,41 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             env = dict(os.environ)
             env.update(step.env)
         if step.stream_output:
+            try:
+                result = subprocess.run(  # nosec B603
+                    step.command,
+                    cwd=step.cwd,
+                    check=False,
+                    text=True,
+                    env=env,
+                    timeout=step.timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                timeout = step.timeout_seconds or 0
+                failures.append(f"{step.name}: timed out after {timeout}s")
+                break
+            if result.returncode != 0:
+                failures.append(f"{step.name}: exit {result.returncode}")
+                break
+            continue
+        try:
             result = subprocess.run(  # nosec B603
                 step.command,
                 cwd=step.cwd,
                 check=False,
                 text=True,
+                capture_output=True,
                 env=env,
+                timeout=step.timeout_seconds,
             )
-            if result.returncode != 0:
-                failures.append(f"{step.name}: exit {result.returncode}")
-                break
-            continue
-        result = subprocess.run(  # nosec B603
-            step.command,
-            cwd=step.cwd,
-            check=False,
-            text=True,
-            capture_output=True,
-            env=env,
-        )
+        except subprocess.TimeoutExpired as exc:
+            if exc.stdout:
+                print(exc.stdout, end="")
+            if exc.stderr:
+                print(exc.stderr, file=sys.stderr, end="")
+            timeout = step.timeout_seconds or 0
+            failures.append(f"{step.name}: timed out after {timeout}s")
+            break
         if result.stdout:
             print(result.stdout, end="")
         if result.stderr:
@@ -211,7 +235,24 @@ def _pytest_image_build_step(repo: RepoConfig) -> Step:
     if dockerfile != "Dockerfile":
         command.extend(["-f", dockerfile])
     command.append(context)
-    return Step("build-pytest-image", command, repo.path, stream_output=True)
+    return Step(
+        "build-pytest-image",
+        command,
+        repo.path,
+        stream_output=True,
+        timeout_seconds=_repo_timeout_seconds(
+            repo, "pytest_image_build_timeout_seconds", default=1800
+        ),
+    )
+
+
+def _repo_timeout_seconds(repo: RepoConfig, key: str, *, default: int) -> int:
+    value = repo.get(key, default)
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError):
+        timeout = default
+    return max(timeout, 1)
 
 
 def publish_components(repo: RepoConfig) -> list[str]:
