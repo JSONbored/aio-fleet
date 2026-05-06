@@ -534,10 +534,11 @@ jobs:
             --repo-path app-repo
             --sha "${TARGET_SHA}"
             --event "${TARGET_EVENT}"
-            --no-integration
           )
           if [[ "${TARGET_PUBLISH}" == "true" ]]; then
             args+=(--publish)
+          else
+            args+=(--no-integration)
           fi
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 

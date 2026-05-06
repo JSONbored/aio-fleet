@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess  # nosec B404
 from dataclasses import dataclass
+from fnmatch import fnmatch
 
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
@@ -16,6 +17,7 @@ class PollTarget:
     event: str
     source: str
     checkout_submodules: bool = False
+    publish: bool = False
 
 
 def poll_targets(
@@ -40,6 +42,7 @@ def poll_targets(
                             event="pull_request",
                             source=f"pr:{number}",
                             checkout_submodules=False,
+                            publish=False,
                         )
                     )
         if include_main:
@@ -52,9 +55,64 @@ def poll_targets(
                         event="push",
                         source="main",
                         checkout_submodules=bool(repo.raw.get("checkout_submodules")),
+                        publish=publish_required(repo, sha=sha, event="push"),
                     )
                 )
     return targets
+
+
+def publish_required(repo: RepoConfig, *, sha: str, event: str) -> bool:
+    if event != "push" or repo.publish_profile == "template":
+        return False
+    changed_paths = _commit_changed_paths(repo, sha)
+    if changed_paths is None:
+        return True
+    return any(_is_publish_related_path(repo, path) for path in changed_paths)
+
+
+def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
+    result = _gh(
+        [
+            "api",
+            f"repos/{repo.github_repo}/commits/{sha}",
+            "--jq",
+            ".files[].filename",
+        ]
+    )
+    if result.returncode != 0:
+        return None
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return paths or None
+
+
+def _is_publish_related_path(repo: RepoConfig, path: str) -> bool:
+    return any(fnmatch(path, pattern) for pattern in _publish_related_patterns(repo))
+
+
+def _publish_related_patterns(repo: RepoConfig) -> set[str]:
+    patterns = {
+        ".aio-fleet.yml",
+        "CHANGELOG.md",
+        "Containerfile",
+        "Dockerfile",
+        "rootfs/**",
+        "upstream.toml",
+    }
+    for key in ("extra_publish_paths", "upstream_commit_paths", "xml_paths"):
+        patterns.update(repo.list_value(key))
+    for monitor in repo.raw.get("upstream_monitor", []):
+        if isinstance(monitor, dict) and monitor.get("dockerfile"):
+            patterns.add(str(monitor["dockerfile"]))
+    components = repo.raw.get("components")
+    if isinstance(components, dict):
+        for config in components.values():
+            if not isinstance(config, dict):
+                continue
+            if config.get("dockerfile"):
+                patterns.add(str(config["dockerfile"]))
+            for xml_path in config.get("xml_paths", []):
+                patterns.add(str(xml_path))
+    return {pattern for pattern in patterns if pattern}
 
 
 def _open_pull_requests(repo: RepoConfig) -> list[dict[str, object]]:

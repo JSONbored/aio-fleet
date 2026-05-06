@@ -98,6 +98,62 @@ def test_poll_targets_emit_checkout_submodules_only_for_main(
     assert targets[1].checkout_submodules is True  # nosec B101
 
 
+def test_publish_required_ignores_docs_only_main_commits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["docs/a.md"]
+    )
+
+    assert (
+        poll.publish_required(repo, sha="a" * 40, event="push") is False
+    )  # nosec B101
+
+
+def test_publish_required_accepts_runtime_and_release_commits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    for path in ("Dockerfile", "rootfs/etc/services.d/web/run", "CHANGELOG.md"):
+        monkeypatch.setattr(poll, "_commit_changed_paths", lambda _repo, _sha: [path])
+
+        assert (
+            poll.publish_required(repo, sha="a" * 40, event="push") is True
+        )  # nosec B101
+
+
+def test_poll_targets_publish_only_for_publish_related_main_commits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(poll, "_open_pull_requests", lambda _repo: [])
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["README.md"]
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].publish is False  # nosec B101
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].publish is True  # nosec B101
+
+
 def test_poll_gh_maps_app_token_to_gh_token(monkeypatch) -> None:
     captured_env: dict[str, str] = {}
 

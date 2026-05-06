@@ -688,10 +688,11 @@ repos:
     assert "publish=publish=" not in output  # nosec B101
 
 
-def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -> None:
+def test_registry_publish_verifies_with_repo_path(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
     seen: dict[str, object] = {}
-    verify_results = iter([1, 0])
     monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
     monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
     monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
@@ -706,9 +707,10 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
 
     def fake_registry_verify(args: Namespace) -> int:
         seen.setdefault("verify_calls", []).append(args)
-        return next(verify_results)
+        return 0
 
     monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
     monkeypatch.setattr(cli, "cmd_registry_verify", fake_registry_verify)
 
     result = cmd_registry_publish(
@@ -726,9 +728,12 @@ def test_registry_publish_verifies_with_repo_path(tmp_path: Path, monkeypatch) -
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
     assert seen["publish_env"] is None  # nosec B101
     verify_calls = seen["verify_calls"]
-    assert len(verify_calls) == 2  # nosec B101
+    assert len(verify_calls) == 1  # nosec B101
     assert verify_calls[0].repo_path == str(repo_path)  # nosec B101
-    assert verify_calls[1].sha == "a" * 40  # nosec B101
+    assert verify_calls[0].sha == "a" * 40  # nosec B101
+    captured = capsys.readouterr()
+    assert "example-aio:aio: registry=preflight-missing" in captured.out  # nosec B101
+    assert "example-aio:aio: preflight: tag missing" in captured.err  # nosec B101
 
 
 def test_registry_publish_skips_build_when_tags_are_current(
@@ -746,7 +751,7 @@ def test_registry_publish_skips_build_when_tags_are_current(
         raise AssertionError("current registry tags should skip docker build")
 
     monkeypatch.setattr(cli, "_run", fail_run)
-    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: [])
 
     result = cmd_registry_publish(
         Namespace(
@@ -770,7 +775,6 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
     seen: dict[str, object] = {"login_commands": [], "buildx_commands": []}
-    verify_results = iter([1, 0])
 
     def fake_docker(command: list[str], **kwargs: object):
         docker_env = kwargs["env"]
@@ -808,7 +812,8 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
     monkeypatch.setattr(cli.subprocess, "run", fake_docker)
     monkeypatch.setattr(cli, "_run", fake_publish)
-    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: next(verify_results))
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
+    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
 
     result = cmd_registry_publish(
         Namespace(

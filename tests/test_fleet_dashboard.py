@@ -455,6 +455,45 @@ repos:
     assert "private blocker" not in hidden  # nosec B101
 
 
+def test_catalog_sync_map_uses_source_catalog_asset_diff(tmp_path: Path) -> None:
+    source_path = tmp_path / "sure-aio"
+    catalog_path = tmp_path / "awesome-unraid"
+    source_path.mkdir()
+    catalog_path.mkdir()
+    (source_path / "sure-aio.xml").write_text("<Container>new</Container>\n")
+    (catalog_path / "sure-aio.xml").write_text("<Container>old</Container>\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  destination_repos:
+    awesome-unraid:
+      path: {catalog_path}
+      catalog_path: {catalog_path}
+repos:
+  sure-aio:
+    path: {source_path}
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    catalog_assets:
+      - source: sure-aio.xml
+        target: sure-aio.xml
+""")
+
+    assert fleet_dashboard._catalog_sync_map(load_manifest(manifest)) == {  # nosec B101
+        "sure-aio": True
+    }
+
+    (catalog_path / "sure-aio.xml").write_text("<Container>new</Container>\n")
+
+    assert (
+        fleet_dashboard._catalog_sync_map(load_manifest(manifest)) == {}
+    )  # nosec B101
+
+
 def test_dashboard_collects_public_active_repo_activity(
     tmp_path: Path, monkeypatch
 ) -> None:

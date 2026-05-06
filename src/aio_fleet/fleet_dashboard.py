@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from aio_fleet.catalog import sync_catalog_assets
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
 from aio_fleet.manifest import FleetManifest, RepoConfig
@@ -129,7 +130,7 @@ def dashboard_report(
     release_rows = release_plan_for_manifest(
         manifest,
         include_registry=False,
-        catalog_sync=_catalog_sync_map(active_rows),
+        catalog_sync=_catalog_sync_map(manifest),
         redact_private=True,
     )
     _apply_release_states(active_rows, release_rows, registry_rows)
@@ -994,8 +995,41 @@ def _cleanup_rows(manifest: FleetManifest) -> list[dict[str, Any]]:
     return rows
 
 
-def _catalog_sync_map(active_rows: list[dict[str, Any]]) -> dict[str, bool]:
-    return {str(row.get("repo")): True for row in active_rows if _is_ready_update(row)}
+def _catalog_sync_map(manifest: FleetManifest) -> dict[str, bool]:
+    catalog_path = _awesome_unraid_catalog_path(manifest)
+    if catalog_path is None or not catalog_path.exists():
+        return {}
+    result: dict[str, bool] = {}
+    for repo in manifest.repos.values():
+        if repo.raw.get("public") is not True or not repo.raw.get("catalog_assets"):
+            continue
+        try:
+            changes = sync_catalog_assets(
+                manifest,
+                catalog_path=catalog_path,
+                repos=[repo],
+                icon_only=False,
+                dry_run=True,
+            )
+        except (FileNotFoundError, ValueError):
+            result[repo.name] = True
+            continue
+        if changes:
+            result[repo.name] = True
+    return result
+
+
+def _awesome_unraid_catalog_path(manifest: FleetManifest) -> Path | None:
+    dashboard = manifest.raw.get("dashboard")
+    if isinstance(dashboard, dict):
+        destinations = dashboard.get("destination_repos")
+        if isinstance(destinations, dict):
+            awesome = destinations.get("awesome-unraid")
+            if isinstance(awesome, dict):
+                raw_path = awesome.get("catalog_path") or awesome.get("path")
+                if raw_path:
+                    return Path(str(raw_path))
+    return None
 
 
 def _apply_release_states(
