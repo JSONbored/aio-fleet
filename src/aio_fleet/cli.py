@@ -677,8 +677,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
             "event": target.event,
             "source": target.source,
             "checkout_submodules": target.checkout_submodules,
-            "publish": target.event == "push"
-            and target.repo.publish_profile != "template",
+            "publish": target.publish,
         }
         emitted.append(row)
         if args.create_checks:
@@ -1091,23 +1090,14 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
-    preflight = cmd_registry_verify(
-        argparse.Namespace(
-            manifest=args.manifest,
-            all=False,
-            repo=args.repo,
-            repo_path=args.repo_path,
-            sha=sha,
-            component=args.component,
-            include_manual=True,
-            dry_run=False,
-            format="text",
-            verbose=False,
-        )
-    )
-    if preflight == 0:
-        print(f"{repo.name}:{args.component}: registry=already-current")
+    tags = compute_registry_tags(repo, sha=sha, component=args.component)
+    preflight_failures = verify_registry_tags(tags.all_tags)
+    if not preflight_failures:
+        print(f"{repo.name}:{args.component}: registry=already-current", flush=True)
         return 0
+    print(f"{repo.name}:{args.component}: registry=preflight-missing", flush=True)
+    for failure in preflight_failures:
+        print(f"{repo.name}:{args.component}: preflight: {failure}", file=sys.stderr)
     try:
         with _registry_publish_environment(repo) as publish_env:
             result = _run(command, cwd=repo.path, env=publish_env)

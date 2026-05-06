@@ -113,7 +113,8 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     assert "args+=(--publish)" in manual["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
     assert "args+=(--publish)" in poll["run"]  # nosec B101
-    assert "--no-integration" in poll["run"]  # nosec B101
+    assert "else" in poll["run"]  # nosec B101
+    assert "args+=(--no-integration)" in poll["run"]  # nosec B101
 
 
 def test_registry_credentials_are_not_logged_in_before_app_checks() -> None:
