@@ -24,12 +24,17 @@ def release_plan_for_manifest(
     *,
     include_registry: bool = False,
     catalog_sync: dict[str, bool] | None = None,
+    redact_private: bool = False,
 ) -> list[dict[str, Any]]:
     return [
-        release_plan_for_repo(
-            repo,
-            include_registry=include_registry,
-            catalog_sync_needed=bool((catalog_sync or {}).get(repo.name)),
+        (
+            _private_release_plan(repo)
+            if redact_private and repo.raw.get("public") is not True
+            else release_plan_for_repo(
+                repo,
+                include_registry=include_registry,
+                catalog_sync_needed=bool((catalog_sync or {}).get(repo.name)),
+            )
         )
         for repo in manifest.repos.values()
     ]
@@ -109,6 +114,27 @@ def release_plan_for_repo(
         "blockers": blockers,
         "warnings": warnings,
         "next_action": _next_release_action(repo, state, next_version),
+    }
+
+
+def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
+    return {
+        "repo": repo.name,
+        "profile": "private-skipped",
+        "sha": "",
+        "latest_release_tag": "private-skipped",
+        "latest_changelog_version": "private-skipped",
+        "latest_github_release": {"state": "private-skipped"},
+        "next_version": "",
+        "release_due": False,
+        "catalog_sync_needed": False,
+        "registry_state": "private-skipped",
+        "registry_tags": {"dockerhub": [], "ghcr": []},
+        "registry_failures": [],
+        "state": "private-skipped",
+        "blockers": [],
+        "warnings": ["private-skipped"],
+        "next_action": "private-skipped",
     }
 
 

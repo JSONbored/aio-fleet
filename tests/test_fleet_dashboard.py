@@ -47,18 +47,33 @@ def _stable_dashboard_dependencies(monkeypatch):
         },
     )
 
-    def fake_release_plan(manifest, **_kwargs):
+    def fake_release_plan(manifest, **kwargs):
         return [
-            {
-                "repo": repo.name,
-                "state": "current",
-                "latest_release_tag": "",
-                "latest_github_release": {"state": "unknown"},
-                "next_version": "",
-                "next_action": "none",
-                "release_due": False,
-                "registry_failures": [],
-            }
+            (
+                {
+                    "repo": repo.name,
+                    "profile": "private-skipped",
+                    "sha": "",
+                    "latest_release_tag": "private-skipped",
+                    "latest_github_release": {"state": "private-skipped"},
+                    "next_version": "",
+                    "next_action": "private-skipped",
+                    "release_due": False,
+                    "registry_failures": [],
+                    "state": "private-skipped",
+                }
+                if kwargs.get("redact_private") and repo.raw.get("public") is not True
+                else {
+                    "repo": repo.name,
+                    "state": "current",
+                    "latest_release_tag": "",
+                    "latest_github_release": {"state": "unknown"},
+                    "next_version": "",
+                    "next_action": "none",
+                    "release_due": False,
+                    "registry_failures": [],
+                }
+            )
             for repo in manifest.repos.values()
         ]
 
@@ -76,6 +91,7 @@ owner: JSONbored
 repos:
   mem0-aio:
     path: {repo_path}
+    public: true
     app_slug: mem0-aio
     image_name: jsonbored/mem0-aio
     docker_cache_scope: mem0-aio-image
@@ -141,6 +157,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -247,6 +264,7 @@ dashboard:
 repos:
   example-aio:
     path: {active_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -343,6 +361,98 @@ repos:
     assert activity["prs"] == []  # nosec B101
     assert "PrivateOrg/private-service-aio" not in hidden  # nosec B101
     assert "rotate production signing key" not in hidden  # nosec B101
+
+
+def test_dashboard_redacts_private_registry_release_and_cleanup_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "private-service-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  private-service-aio:
+    path: {repo_path}
+    github_repo: PrivateOrg/private-service-aio
+    public: false
+    app_slug: private-service-aio
+    image_name: jsonbored/private-service-aio
+    docker_cache_scope: private-service-aio-image
+    pytest_image_tag: private-service-aio:pytest
+""")
+
+    def unexpected_private_collection(*_args: object, **_kwargs: object):
+        raise AssertionError("private repo details should not be collected")
+
+    monkeypatch.setattr(fleet_dashboard, "monitor_repo", unexpected_private_collection)
+    monkeypatch.setattr(
+        fleet_dashboard, "_repo_registry_states", unexpected_private_collection
+    )
+    monkeypatch.setattr(
+        fleet_dashboard, "cleanup_findings", unexpected_private_collection
+    )
+
+    def malicious_release_plan(*_args: object, **_kwargs: object):
+        return [
+            {
+                "repo": "private-service-aio",
+                "profile": "upstream-aio-track",
+                "sha": "d" * 40,
+                "latest_release_tag": "99.0.0-private.1",
+                "latest_changelog_version": "99.0.0-private.1",
+                "latest_github_release": {
+                    "state": "unknown",
+                    "detail": "permission denied for PrivateOrg/private-service-aio",
+                },
+                "next_version": "99.0.0-private.2",
+                "release_due": True,
+                "catalog_sync_needed": True,
+                "registry_state": "failed",
+                "registry_tags": {
+                    "dockerhub": ["jsonbored/private-service-aio:secret"],
+                    "ghcr": ["ghcr.io/jsonbored/private-service-aio:secret"],
+                },
+                "registry_failures": [
+                    "ghcr.io/jsonbored/private-service-aio:secret: denied"
+                ],
+                "state": "publish-missing",
+                "blockers": ["private blocker"],
+                "warnings": ["private warning"],
+                "next_action": (
+                    "gh release view --repo PrivateOrg/private-service-aio"
+                ),
+            }
+        ]
+
+    monkeypatch.setattr(
+        fleet_dashboard, "release_plan_for_manifest", malicious_release_plan
+    )
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_registry=True,
+        env={"AIO_FLEET_ALERT_WEBHOOK_URL": "https://hook"},
+    )
+
+    state = report["state"]
+    hidden = _hidden_dashboard_state(str(report["body"]))
+    row = state["rows"][0]
+    release = state["releases"][0]
+    assert row["registry"] == "private-skipped"  # nosec B101
+    assert "registry_detail" not in row  # nosec B101
+    assert "release_detail" not in row  # nosec B101
+    assert state["registry"] == []  # nosec B101
+    assert release["state"] == "private-skipped"  # nosec B101
+    assert state["cleanup"][0]["state"] == "private-skipped"  # nosec B101
+    assert state["summary"]["publish_missing"] == 0  # nosec B101
+    assert state["summary"]["release_due"] == 0  # nosec B101
+    assert "PrivateOrg/private-service-aio" not in hidden  # nosec B101
+    assert "jsonbored/private-service-aio" not in hidden  # nosec B101
+    assert "ghcr.io/jsonbored/private-service-aio" not in hidden  # nosec B101
+    assert "99.0.0-private" not in hidden  # nosec B101
+    assert "dddddddddddd" not in hidden  # nosec B101
+    assert "private blocker" not in hidden  # nosec B101
 
 
 def test_dashboard_collects_public_active_repo_activity(
@@ -465,6 +575,7 @@ dashboard:
 repos:
   example-aio:
     path: {app_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -562,6 +673,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {app_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -629,6 +741,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {app_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
