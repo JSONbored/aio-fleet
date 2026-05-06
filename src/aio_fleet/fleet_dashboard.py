@@ -77,6 +77,7 @@ def dashboard_report(
     registry_rows: list[dict[str, Any]] = []
 
     for repo in manifest.repos.values():
+        repo_is_public = _is_public_config(repo.raw)
         if include_activity:
             activity_rows.append(
                 _repo_activity_for_config(
@@ -85,6 +86,11 @@ def dashboard_report(
             )
         if repo.publish_profile == "template":
             active_rows.append(_template_row(repo, include_registry=include_registry))
+            continue
+        if not repo_is_public:
+            active_rows.append(
+                _private_active_row(repo.name, include_registry=include_registry)
+            )
             continue
         repo_registry: dict[str, dict[str, Any]] = {}
         if include_registry:
@@ -124,6 +130,7 @@ def dashboard_report(
         manifest,
         include_registry=False,
         catalog_sync=_catalog_sync_map(active_rows),
+        redact_private=True,
     )
     _apply_release_states(active_rows, release_rows, registry_rows)
     workflow = control_plane_health(repo=issue_repo)
@@ -152,6 +159,8 @@ def dashboard_report(
         cleanup=cleanup_rows,
         workflow=workflow,
     ).to_state()
+    state = _redact_private_dashboard_state(manifest, state)
+    state = _with_refreshed_dashboard_summary(state)
     return {"state": state, "body": render_dashboard(state)}
 
 
@@ -305,6 +314,97 @@ def alert_warnings(env: dict[str, str]) -> list[str]:
             "AIO_FLEET_ALERT_WEBHOOK_URL is not configured; rich digest alerts are disabled."
         )
     return warnings
+
+
+def _is_public_config(raw: dict[str, Any]) -> bool:
+    return raw.get("public") is True
+
+
+def _private_repo_names(manifest: FleetManifest) -> set[str]:
+    return {
+        repo.name for repo in manifest.repos.values() if not _is_public_config(repo.raw)
+    }
+
+
+def _redact_private_dashboard_state(
+    manifest: FleetManifest, state: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep public dashboard state safe even if a new collector forgets privacy."""
+    private_repos = _private_repo_names(manifest)
+    if not private_repos:
+        return state
+    redacted = dict(state)
+    redacted["rows"] = [
+        (
+            _redacted_active_row(row)
+            if str(row.get("repo", "")) in private_repos
+            else row
+        )
+        for row in list(state.get("rows", []))
+        if isinstance(row, dict)
+    ]
+    redacted["registry"] = [
+        row
+        for row in list(state.get("registry", []))
+        if isinstance(row, dict) and str(row.get("repo", "")) not in private_repos
+    ]
+    redacted["releases"] = [
+        (
+            _redacted_release_row(row)
+            if str(row.get("repo", "")) in private_repos
+            else row
+        )
+        for row in list(state.get("releases", []))
+        if isinstance(row, dict)
+    ]
+    redacted["cleanup"] = [
+        (
+            _redacted_cleanup_row(str(row.get("repo", "")))
+            if str(row.get("repo", "")) in private_repos
+            else row
+        )
+        for row in list(state.get("cleanup", []))
+        if isinstance(row, dict)
+    ]
+    return redacted
+
+
+def _with_refreshed_dashboard_summary(state: dict[str, Any]) -> dict[str, Any]:
+    refreshed = dict(state)
+    refreshed["summary"] = dashboard_summary(
+        active_rows=[
+            row for row in list(refreshed.get("rows", [])) if isinstance(row, dict)
+        ],
+        activity_rows=[
+            row for row in list(refreshed.get("activity", [])) if isinstance(row, dict)
+        ],
+        destination_rows=[
+            row
+            for row in list(refreshed.get("destination_repos", []))
+            if isinstance(row, dict)
+        ],
+        rehab_rows=[
+            row
+            for row in list(refreshed.get("rehab_repos", []))
+            if isinstance(row, dict)
+        ],
+        registry_rows=[
+            row for row in list(refreshed.get("registry", [])) if isinstance(row, dict)
+        ],
+        release_rows=[
+            row for row in list(refreshed.get("releases", [])) if isinstance(row, dict)
+        ],
+        cleanup_rows=[
+            row for row in list(refreshed.get("cleanup", [])) if isinstance(row, dict)
+        ],
+        workflow=(
+            dict(refreshed.get("workflow", {}))
+            if isinstance(refreshed.get("workflow"), dict)
+            else {}
+        ),
+        warnings=list(refreshed.get("warnings", [])),
+    )
+    return refreshed
 
 
 def upsert_dashboard_issue(
@@ -546,6 +646,71 @@ def _template_row(repo: RepoConfig, *, include_registry: bool) -> dict[str, Any]
     }
 
 
+def _private_active_row(repo: str, *, include_registry: bool) -> dict[str, Any]:
+    return {
+        "repo": repo,
+        "component": "private",
+        "current": "private",
+        "latest": "private",
+        "strategy": "private",
+        "update": False,
+        "pr": "",
+        "check": "private-skipped",
+        "signed": "private-skipped",
+        "registry": "private-skipped" if include_registry else "not-run",
+        "release": "private-skipped",
+        "safety": "private-skipped",
+        "safety_confidence": "",
+        "config_delta": "private",
+        "template_impact": "private",
+        "runtime_smoke": "private",
+        "safety_signals": [],
+        "safety_warnings": [],
+        "safety_failures": [],
+        "next_action": "private repo details redacted",
+    }
+
+
+def _redacted_active_row(row: dict[str, Any]) -> dict[str, Any]:
+    repo = str(row.get("repo", ""))
+    registry = str(row.get("registry", "not-run"))
+    redacted = _private_active_row(
+        repo, include_registry=registry not in {"", "not-run"}
+    )
+    redacted["registry"] = "not-run" if registry == "not-run" else "private-skipped"
+    return redacted
+
+
+def _redacted_release_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "repo": str(row.get("repo", "")),
+        "profile": "private-skipped",
+        "sha": "",
+        "latest_release_tag": "private-skipped",
+        "latest_changelog_version": "private-skipped",
+        "latest_github_release": {"state": "private-skipped"},
+        "next_version": "",
+        "release_due": False,
+        "catalog_sync_needed": False,
+        "registry_state": "private-skipped",
+        "registry_tags": {"dockerhub": [], "ghcr": []},
+        "registry_failures": [],
+        "state": "private-skipped",
+        "blockers": [],
+        "warnings": ["private-skipped"],
+        "next_action": "private-skipped",
+    }
+
+
+def _redacted_cleanup_row(repo: str) -> dict[str, Any]:
+    return {
+        "repo": repo,
+        "state": "private-skipped",
+        "findings_count": 0,
+        "findings": [],
+    }
+
+
 def _monitor_failure_row(repo: RepoConfig, exc: Exception) -> dict[str, Any]:
     return {
         "repo": repo.name,
@@ -646,6 +811,18 @@ def _destination_row(
         if include_activity
         else _empty_activity_for_config(ref.name, ref.github_repo, ref.raw)
     )
+    if not _is_public_config(ref.raw):
+        return {
+            **activity,
+            "kind": "destination",
+            "role": str(ref.raw.get("role", "destination")),
+            "description": "",
+            "catalog_state": "private-skipped",
+            "catalog_findings": [],
+            "sync_queue": [],
+            "sync_queue_count": 0,
+            "next_action": "private repo details redacted",
+        }
     catalog_path = Path(str(ref.raw.get("catalog_path") or ref.path))
     failures = catalog_repo_failures(manifest, catalog_path)
     sync_queue = [
@@ -682,6 +859,20 @@ def _rehab_row(
         if include_activity
         else _empty_activity_for_config(ref.name, ref.github_repo, ref.raw)
     )
+    if not _is_public_config(ref.raw):
+        return {
+            **activity,
+            "kind": "rehab",
+            "status": str(ref.raw.get("status", "rehab")),
+            "description": "",
+            "branch": "private",
+            "dirty": "private",
+            "path_exists": "private",
+            "cleanup_findings": 0,
+            "cleanup_paths": [],
+            "next_action": "private repo details redacted",
+            "checklist": [],
+        }
     repo_config = RepoConfig(
         name=ref.name,
         raw={
@@ -782,6 +973,9 @@ def _publish_components(repo: RepoConfig) -> list[str]:
 def _cleanup_rows(manifest: FleetManifest) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for repo in manifest.repos.values():
+        if not _is_public_config(repo.raw):
+            rows.append(_redacted_cleanup_row(repo.name))
+            continue
         findings = cleanup_findings(repo)
         rows.append(
             {
@@ -819,11 +1013,17 @@ def _apply_release_states(
         release = release_by_repo.get(repo)
         if release:
             row["release"] = release.get("state", row.get("release", "unknown"))
-            row["release_detail"] = release
+            if release.get("state") == "private-skipped":
+                row.pop("release_detail", None)
+            else:
+                row["release_detail"] = release
         registry = registry_by_key.get((repo, str(row.get("component", "aio"))))
         if registry:
             row["registry"] = _registry_label(registry)
-            row["registry_detail"] = registry
+            if registry.get("state") == "private-skipped":
+                row.pop("registry_detail", None)
+            else:
+                row["registry_detail"] = registry
 
 
 def _next_action(
@@ -1308,7 +1508,7 @@ def _gh_json(args: list[str], *, cli_scope: str = "activity") -> Any:
 def _repo_activity_for_config(
     name: str, github_repo: str, raw: dict[str, Any], stale_days: int
 ) -> dict[str, Any]:
-    if raw.get("public") is not True:
+    if not _is_public_config(raw):
         return _private_activity(name)
     return repo_activity(name, github_repo, stale_days)
 
@@ -1316,7 +1516,7 @@ def _repo_activity_for_config(
 def _empty_activity_for_config(
     name: str, github_repo: str, raw: dict[str, Any]
 ) -> dict[str, Any]:
-    if raw.get("public") is not True:
+    if not _is_public_config(raw):
         return _private_activity(name)
     return _empty_activity(name, github_repo)
 
