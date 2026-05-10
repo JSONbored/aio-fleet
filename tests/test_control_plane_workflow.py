@@ -81,9 +81,11 @@ def test_alert_test_mode_uses_alert_webhook_secret_only() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     on_config = workflow.get("on", workflow.get(True))
     mode = on_config["workflow_dispatch"]["inputs"]["mode"]
+    app_token = _step(workflow["jobs"]["control-plane"], "Resolve GitHub App token")
     alert_test = _step(workflow["jobs"]["control-plane"], "Test alert webhook")
 
     assert "alert-test" in mode["options"]  # nosec B101
+    assert "inputs.mode != 'alert-test'" in app_token["if"]  # nosec B101
     assert (  # nosec B101
         alert_test["if"]
         == "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}"
