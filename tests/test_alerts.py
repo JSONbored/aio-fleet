@@ -73,6 +73,7 @@ def test_webhook_sends_failure_with_dedupe_key(monkeypatch) -> None:
     body = json.loads(seen[0].data.decode())  # type: ignore[union-attr]
     assert body["dedupe_key"] == "registry-audit:fleet"  # nosec B101
     assert body["status"] == "failure"  # nosec B101
+    assert seen[0].headers["User-agent"] == "aio-fleet-alerts/1.0"  # nosec B101
 
 
 def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:
@@ -107,6 +108,7 @@ def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:
     body = json.loads(seen[0].data.decode())  # type: ignore[union-attr]
     assert body["allowed_mentions"]["parse"] == []  # nosec B101
     assert body["content"].startswith("aio-fleet: upstream updates")  # nosec B101
+    assert seen[0].headers["User-agent"] == "aio-fleet-alerts/1.0"  # nosec B101
     assert body["embeds"][0]["fields"][2]["value"] == (  # nosec B101
         "upstream-monitor:fleet:all"
     )
