@@ -705,13 +705,12 @@ def test_registry_publish_verifies_with_repo_path(
         seen["publish_env"] = env
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    def fake_registry_verify(args: Namespace) -> int:
-        seen.setdefault("verify_calls", []).append(args)
-        return 0
+    def fake_verify(tags: list[str], *, env=None) -> list[str]:
+        seen.setdefault("verify_calls", []).append({"tags": tags, "env": env})
+        return []
 
     monkeypatch.setattr(cli, "_run_streaming", fake_run)
-    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
-    monkeypatch.setattr(cli, "cmd_registry_verify", fake_registry_verify)
+    monkeypatch.setattr(cli, "verify_registry_tags", fake_verify)
 
     result = cmd_registry_publish(
         Namespace(
@@ -729,8 +728,10 @@ def test_registry_publish_verifies_with_repo_path(
     assert seen["publish_env"] is None  # nosec B101
     verify_calls = seen["verify_calls"]
     assert len(verify_calls) == 1  # nosec B101
-    assert verify_calls[0].repo_path == str(repo_path)  # nosec B101
-    assert verify_calls[0].sha == "a" * 40  # nosec B101
+    assert verify_calls[0]["env"] is None  # nosec B101
+    assert any(
+        "sha-" + "a" * 40 in tag for tag in verify_calls[0]["tags"]
+    )  # nosec B101
     captured = capsys.readouterr()
     assert "example-aio:aio: registry=publishing" in captured.out  # nosec B101
     assert "preflight" not in captured.err  # nosec B101
@@ -755,8 +756,7 @@ def test_registry_publish_rebuilds_when_tags_are_current(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(cli, "_run_streaming", fake_run)
-    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: [])
-    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, **_kwargs: [])
 
     result = cmd_registry_publish(
         Namespace(
@@ -818,8 +818,19 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
     monkeypatch.setattr(cli.subprocess, "run", fake_docker)
     monkeypatch.setattr(cli, "_run_streaming", fake_publish)
-    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
-    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
+
+    def fake_verify(_tags: list[str], *, env=None) -> list[str]:
+        seen["verify_env"] = env
+        assert isinstance(env, dict)  # nosec B101
+        assert "BUILDX_BUILDER" in env  # nosec B101
+        assert "DOCKER_CONFIG" in env  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in env  # nosec B101
+        assert "GH_TOKEN" not in env  # nosec B101
+        assert "GITHUB_TOKEN" not in env  # nosec B101
+        return []
+
+    monkeypatch.setattr(cli, "verify_registry_tags", fake_verify)
 
     result = cmd_registry_publish(
         Namespace(
@@ -858,6 +869,7 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
         ["docker", "buildx", "rm"],
     ]
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
+    assert seen["verify_env"] == seen["publish_env"]  # nosec B101
 
 
 def test_registry_verify_all_skips_manual_template_publish(
@@ -889,7 +901,7 @@ repos:
 
     monkeypatch.setattr(cli, "_git_head", lambda _path: "a" * 40)
 
-    def fake_verify(tags: list[str]) -> list[str]:
+    def fake_verify(tags: list[str], **_kwargs) -> list[str]:
         verified.extend(tags)
         return []
 

@@ -120,7 +120,11 @@ def test_publish_required_accepts_runtime_and_release_commits(
     repo = load_manifest(manifest_path).repo("example-aio")
 
     for path in ("Dockerfile", "rootfs/etc/services.d/web/run", "CHANGELOG.md"):
-        monkeypatch.setattr(poll, "_commit_changed_paths", lambda _repo, _sha: [path])
+        monkeypatch.setattr(
+            poll,
+            "_commit_changed_paths",
+            lambda _repo, _sha, changed_path=path: [changed_path],
+        )
 
         assert (
             poll.publish_required(repo, sha="a" * 40, event="push") is True

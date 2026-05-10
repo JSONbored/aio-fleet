@@ -1117,29 +1117,32 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
+    tags = compute_registry_tags(repo, sha=sha, component=args.component)
     print(f"{repo.name}:{args.component}: registry=publishing", flush=True)
     try:
         with _registry_publish_environment(repo) as publish_env:
             result = _run_streaming(command, cwd=repo.path, env=publish_env)
+            if result.returncode != 0:
+                return result.returncode
+            verification_failures = verify_registry_tags(tags.all_tags, env=publish_env)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if result.returncode != 0:
-        return result.returncode
-    return cmd_registry_verify(
-        argparse.Namespace(
-            manifest=args.manifest,
-            all=False,
-            repo=args.repo,
-            repo_path=args.repo_path,
-            sha=sha,
-            component=args.component,
-            include_manual=True,
-            dry_run=False,
-            format="text",
-            verbose=True,
+    label = repo.name if args.component == "aio" else f"{repo.name}:{args.component}"
+    state = "failed" if verification_failures else "ok"
+    print(f"{label}: registry={state}")
+    for tag in [*tags.dockerhub, *tags.ghcr]:
+        print(f"- {tag}")
+    if verification_failures:
+        print(
+            "\n".join(
+                f"{repo.name}:{args.component}: {failure}"
+                for failure in verification_failures
+            ),
+            file=sys.stderr,
         )
-    )
+        return 1
+    return 0
 
 
 @contextmanager
