@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess  # nosec B404
 from pathlib import Path
@@ -203,13 +204,24 @@ def _gh_json(args: list[str]) -> Any:
     gh = shutil.which("gh")
     if gh is None:
         raise RuntimeError("gh CLI is required for GitHub policy validation")
+    env = _gh_env()
     result = subprocess.run(  # nosec B603
-        [gh, *args], check=False, text=True, capture_output=True
+        [gh, *args], check=False, text=True, capture_output=True, env=env
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"gh {' '.join(args)} failed")
     text = result.stdout.strip()
     return json.loads(text) if text else None
+
+
+def _gh_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if not env.get("GH_TOKEN"):
+        for key in ("AIO_FLEET_WORKFLOW_TOKEN", "AIO_FLEET_CHECK_TOKEN", "APP_TOKEN"):
+            if env.get(key):
+                env["GH_TOKEN"] = env[key]
+                break
+    return env
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

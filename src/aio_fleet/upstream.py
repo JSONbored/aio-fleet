@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -78,17 +78,139 @@ def monitor_repo(
     *,
     write: bool = False,
 ) -> list[UpstreamMonitorResult]:
-    results: list[UpstreamMonitorResult] = []
-    for config in monitor_configs(repo):
-        result = evaluate_monitor(repo, config)
-        results.append(result)
-        if write and result.updates_available and result.strategy == "pr":
+    configs = monitor_configs(repo)
+    results = [evaluate_monitor(repo, config) for config in configs]
+    results = _align_shared_release_digest_groups(configs, results)
+    if write:
+        _write_monitor_results(repo, configs, results)
+    return results
+
+
+def _write_monitor_results(
+    repo: RepoConfig,
+    configs: list[dict[str, Any]],
+    results: list[UpstreamMonitorResult],
+) -> None:
+    for config, result in zip(configs, results, strict=True):
+        if result.updates_available and result.strategy == "pr":
             write_arg(result.dockerfile, result.version_key, result.latest_version)
             if result.digest_key and result.latest_digest:
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
             if result.version_update:
                 update_submodule(repo, config, result)
-    return results
+
+
+def _align_shared_release_digest_groups(
+    configs: list[dict[str, Any]],
+    results: list[UpstreamMonitorResult],
+) -> list[UpstreamMonitorResult]:
+    grouped: dict[tuple[Path, str, str, bool, str], list[int]] = {}
+    for index, (config, result) in enumerate(zip(configs, results, strict=True)):
+        if (
+            config.get("source") != "github-releases"
+            or not result.digest_key
+            or not str(config.get("image", "")).strip()
+            or not str(config.get("digest_source", "")).strip()
+            or not result.version_key
+        ):
+            continue
+        key = (
+            result.dockerfile.resolve(),
+            result.version_key,
+            str(config.get("repo", "")),
+            bool(config.get("stable_only", True)),
+            str(config.get("version_strip_prefix", "")),
+        )
+        grouped.setdefault(key, []).append(index)
+
+    aligned = list(results)
+    for (
+        _dockerfile,
+        _version_key,
+        upstream_repo,
+        stable_only,
+        strip_prefix,
+    ), indexes in grouped.items():
+        if len(indexes) < 2:
+            continue
+        candidates, skipped = github_release_candidates_result(
+            upstream_repo,
+            stable_only=stable_only,
+            strip_prefix=strip_prefix,
+        )
+        current_version = aligned[indexes[0]].current_version
+        current_key = (
+            version_sort_key(current_version)
+            if SEMVER_RE.match(current_version)
+            else None
+        )
+        missing: list[dict[str, str]] = []
+        selected_version = current_version
+        selected_digests = {index: aligned[index].current_digest for index in indexes}
+        selected_tag = candidates[0].tag
+
+        for candidate in candidates:
+            selected_tag = candidate.tag
+            if (
+                current_key is not None
+                and version_sort_key(candidate.version) <= current_key
+            ):
+                if candidate.version != current_version:
+                    missing.append(
+                        {
+                            "version": candidate.version,
+                            "reason": "not-newer-than-current",
+                        }
+                    )
+                break
+            candidate_digests: dict[int, str] = {}
+            candidate_missing = False
+            for index in indexes:
+                config = configs[index]
+                image = str(config.get("image", "")).strip()
+                registry = str(config.get("digest_source", "")).strip()
+                try:
+                    candidate_digests[index] = registry_digest_for_version(
+                        image,
+                        candidate.version,
+                        registry=registry,
+                        prefix=str(config.get("digest_tag_prefix", "")),
+                    )
+                except RegistryDigestNotFoundError:
+                    missing.append(
+                        {
+                            "version": candidate.version,
+                            "reason": f"missing-{registry}-digest",
+                        }
+                    )
+                    candidate_missing = True
+            if candidate_missing:
+                continue
+            selected_version = candidate.version
+            selected_digests = candidate_digests
+            break
+
+        skipped_versions = tuple(missing) + skipped_github_release_report(
+            skipped, latest_tag=selected_tag
+        )
+        for index in indexes:
+            result = aligned[index]
+            latest_digest = selected_digests[index]
+            aligned[index] = replace(
+                result,
+                latest_version=selected_version,
+                latest_digest=latest_digest,
+                version_update=selected_version != result.current_version,
+                digest_update=bool(result.digest_key)
+                and latest_digest != result.current_digest,
+                submodule_ref=submodule_ref_for_version(
+                    configs[index],
+                    latest_version=selected_version,
+                    current_version=result.current_version,
+                ),
+                skipped_versions=skipped_versions,
+            )
+    return aligned
 
 
 def monitor_configs(repo: RepoConfig) -> list[dict[str, Any]]:
