@@ -82,6 +82,58 @@ def test_upstream_aio_track_release_tag_matches_changelog(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.1" in tags.ghcr  # nosec B101
 
 
+def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.7.0"
+    )
+    monkeypatch.setattr(
+        registry, "latest_changelog_version", lambda *_args, **_kwargs: "0.7.0-aio.2"
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+    monkeypatch.setattr(
+        registry,
+        "git",
+        lambda *_args: "chore(release): format sure changelog",
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=publish_sha)
+
+    assert tags.release_package_tag == "0.7.0-aio.2"  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.2" in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" in tags.ghcr  # nosec B101
+
+
+def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.7.0"
+    )
+    monkeypatch.setattr(
+        registry, "latest_changelog_version", lambda *_args, **_kwargs: "0.7.0-aio.2"
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+    monkeypatch.setattr(registry, "git", lambda *_args: "fix(runtime): later change")
+
+    tags = registry.compute_registry_tags(repo, sha=publish_sha)
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.2" not in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" not in tags.ghcr  # nosec B101
+
+
 def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
 
@@ -203,6 +255,7 @@ def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
 
 def test_dockerhub_verification_reports_missing_tag(monkeypatch) -> None:
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(registry.time, "sleep", lambda _seconds: None)
 
     def fake_urlopen(url: str, timeout: int):
         raise HTTPError(url, 404, "Not Found", {}, None)
@@ -214,6 +267,40 @@ def test_dockerhub_verification_reports_missing_tag(monkeypatch) -> None:
     ) == [  # nosec B101
         "jsonbored/sure-aio:missing: tag not found on Docker Hub"
     ]
+
+
+def test_dockerhub_verification_retries_new_tag_404(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def fake_urlopen(url: str, timeout: int):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise HTTPError(url, 404, "Not Found", {}, None)
+        return Response()
+
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(registry.time, "sleep", sleeps.append)
+
+    assert (
+        registry.verify_registry_tags(["jsonbored/sure-aio:sha-new"]) == []
+    )  # nosec B101
+    assert attempts == 3  # nosec B101
+    assert sleeps == [2, 4]  # nosec B101
 
 
 def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
