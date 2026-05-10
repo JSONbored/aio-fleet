@@ -69,7 +69,7 @@ def test_poll_targets_require_same_repository_pr_identity(
     ]
 
 
-def test_poll_targets_emit_checkout_submodules_only_for_main(
+def test_poll_targets_emit_checkout_submodules_for_same_repo_pr_and_main(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest_path = _write_manifest(tmp_path, checkout_submodules=True)
@@ -94,7 +94,7 @@ def test_poll_targets_emit_checkout_submodules_only_for_main(
         "pull_request",
         "push",
     ]
-    assert targets[0].checkout_submodules is False  # nosec B101
+    assert targets[0].checkout_submodules is True  # nosec B101
     assert targets[1].checkout_submodules is True  # nosec B101
 
 
