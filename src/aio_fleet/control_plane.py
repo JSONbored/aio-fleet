@@ -69,6 +69,7 @@ def central_check_steps(
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
     trusted_cwd = _trusted_aio_root()
+    registry_publish_enabled = publish and repo.publish_profile != "template"
     steps = [
         Step(
             "validate-repo",
@@ -133,7 +134,7 @@ def central_check_steps(
         and event in {"pull_request", "push", "release", "workflow_dispatch"}
         and integration_args
     ):
-        if publish:
+        if registry_publish_enabled:
             steps.append(_pytest_image_build_step(repo))
             prebuilt_integration_image = True
         steps.append(
@@ -178,7 +179,7 @@ def central_check_steps(
                 inherit_secrets=False,
             )
         )
-    if publish:
+    if registry_publish_enabled:
         components = publish_components(repo)
         for component in components:
             step_name = (

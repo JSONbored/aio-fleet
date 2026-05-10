@@ -83,6 +83,17 @@ def test_central_check_steps_use_mem0_publish_timeout() -> None:
     assert publish.timeout_seconds == 7200  # nosec B101
 
 
+def test_central_check_steps_skip_template_registry_publish() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("unraid-aio-template")
+
+    steps = central_check_steps(repo, event="push", publish=True)
+
+    names = [step.name for step in steps]
+    assert "build-pytest-image" not in names  # nosec B101
+    assert not any(name.startswith("registry-publish") for name in names)  # nosec B101
+    assert "integration-tests" in names  # nosec B101
+
+
 def test_registry_publish_command_uses_plain_progress() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
 

@@ -776,6 +776,40 @@ def test_registry_publish_rebuilds_when_tags_are_current(
     )  # nosec B101
 
 
+def test_registry_publish_refuses_template_profile(tmp_path: Path, capsys) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  unraid-aio-template:
+    path: {repo_path}
+    app_slug: unraid-aio-template
+    image_name: jsonbored/unraid-aio-template
+    docker_cache_scope: unraid-aio-template-image
+    pytest_image_tag: unraid-aio-template:pytest
+    publish_profile: template
+""")
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="unraid-aio-template",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            component="aio",
+            dry_run=False,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert (
+        "unraid-aio-template: registry publish is disabled for template-profile repos"
+        in capsys.readouterr().err
+    )  # nosec B101
+
+
 def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     tmp_path: Path, monkeypatch
 ) -> None:

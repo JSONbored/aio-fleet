@@ -1112,6 +1112,12 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    if repo.publish_profile == "template":
+        print(
+            f"{repo.name}: registry publish is disabled for template-profile repos",
+            file=sys.stderr,
+        )
+        return 1
     sha = args.sha or _git_head(repo.path)
     command = registry_publish_command(repo, sha=sha, component=args.component)
     if args.dry_run:
