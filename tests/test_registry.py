@@ -186,43 +186,40 @@ repos:
     assert "jsonbored/example-aio:latest" not in command  # nosec B101
 
 
-def test_dockerhub_verification_uses_tag_api(monkeypatch) -> None:
-    seen_urls: list[str] = []
-
-    class Response:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b"{}"
-
+def test_dockerhub_verification_uses_docker_imagetools_first(monkeypatch) -> None:
+    seen_commands: list[list[str]] = []
+    inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
+    seen_envs: list[dict[str, str] | None] = []
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+
+    def fake_run(command: list[str], **kwargs):
+        seen_commands.append(command)
+        seen_envs.append(kwargs.get("env"))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        registry.subprocess,
-        "run",
+        registry.urllib.request,
+        "urlopen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("Docker Hub tags should not use docker inspect")
+            AssertionError("Docker Hub tags should use docker inspect before API")
         ),
     )
 
-    def fake_urlopen(url: str, timeout: int):
-        seen_urls.append(url)
-        assert timeout == 20  # nosec B101
-        return Response()
-
-    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
-
     assert (
-        registry.verify_registry_tags(["jsonbored/sure-aio:latest"]) == []
+        registry.verify_registry_tags(["jsonbored/sure-aio:latest"], env=inspect_env)
+        == []
     )  # nosec B101
-    assert seen_urls == [  # nosec B101
-        "https://hub.docker.com/v2/repositories/jsonbored/sure-aio/tags/latest"
+    assert seen_commands == [  # nosec B101
+        [
+            "docker",
+            "buildx",
+            "imagetools",
+            "inspect",
+            "jsonbored/sure-aio:latest",
+        ]
     ]
+    assert seen_envs == [inspect_env]  # nosec B101
 
 
 def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
@@ -240,6 +237,13 @@ def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
 
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
     monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="not indexed yet"
+        ),
+    )
+    monkeypatch.setattr(
         registry.urllib.request, "urlopen", lambda *_args, **_kwargs: Response()
     )
     monkeypatch.setattr(registry.time, "sleep", lambda _seconds: None)
@@ -255,6 +259,13 @@ def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
 
 def test_dockerhub_verification_reports_missing_tag(monkeypatch) -> None:
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="not found"
+        ),
+    )
     monkeypatch.setattr(registry.time, "sleep", lambda _seconds: None)
 
     def fake_urlopen(url: str, timeout: int):
@@ -293,6 +304,13 @@ def test_dockerhub_verification_retries_new_tag_404(monkeypatch) -> None:
         return Response()
 
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="not indexed yet"
+        ),
+    )
     monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(registry.time, "sleep", sleeps.append)
 

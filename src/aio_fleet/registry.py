@@ -73,7 +73,7 @@ def verify_registry_tags(
     failures: list[str] = []
     for tag in tags:
         failure = (
-            _verify_dockerhub_tag(tag)
+            _verify_dockerhub_tag(docker, tag, env=env)
             if _is_dockerhub_tag(tag)
             else _verify_with_docker_imagetools(docker, tag, env=env)
         )
@@ -104,7 +104,17 @@ def _is_dockerhub_tag(tag: str) -> bool:
     return first in {"docker.io", "index.docker.io"} or "." not in first
 
 
-def _verify_dockerhub_tag(tag: str, *, attempts: int = 8) -> str | None:
+def _verify_dockerhub_tag(
+    docker: str,
+    tag: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    attempts: int = 8,
+) -> str | None:
+    docker_failure = _verify_with_docker_imagetools(docker, tag, env=env)
+    if docker_failure is None:
+        return None
+
     parsed = _dockerhub_tag_parts(tag)
     if parsed is None:
         return f"{tag}: unsupported Docker Hub tag format"
