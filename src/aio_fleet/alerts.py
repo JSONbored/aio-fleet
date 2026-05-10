@@ -16,6 +16,7 @@ WEBHOOK_EVENT_ALLOWLIST = {
     "upstream-monitor",
     "upstream-update",
 }
+HTTP_USER_AGENT = "aio-fleet-alerts/1.0"
 
 
 @dataclass(frozen=True)
@@ -222,7 +223,7 @@ def send_webhook(
     request = urllib.request.Request(
         webhook_url,
         data=body,
-        headers=headers,
+        headers={**headers, "User-Agent": HTTP_USER_AGENT},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
