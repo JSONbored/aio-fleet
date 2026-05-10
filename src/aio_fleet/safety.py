@@ -31,6 +31,16 @@ RISK_KEYWORDS = {
     "redis",
     "volume",
 }
+GITHUB_CLI_TOKEN_KEYS = (
+    "AIO_FLEET_DASHBOARD_TOKEN",
+    "AIO_FLEET_UPSTREAM_TOKEN",
+    "AIO_FLEET_ISSUE_TOKEN",
+    "AIO_FLEET_WORKFLOW_TOKEN",
+    "AIO_FLEET_CHECK_TOKEN",
+    "APP_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+)
 
 
 @dataclass(frozen=True)
@@ -646,9 +656,13 @@ def _gh_json(args: list[str], *, check: bool = True) -> Any:
 
 def _gh_env() -> dict[str, str]:
     env = dict(os.environ)
-    if not env.get("GH_TOKEN"):
-        for key in ("AIO_FLEET_WORKFLOW_TOKEN", "AIO_FLEET_CHECK_TOKEN", "APP_TOKEN"):
-            if env.get(key):
-                env["GH_TOKEN"] = env[key]
-                break
+    token = ""
+    for key in GITHUB_CLI_TOKEN_KEYS:
+        token = env.get(key, "").strip()
+        if token:
+            break
+    if token:
+        for key in GITHUB_CLI_TOKEN_KEYS:
+            env.pop(key, None)
+        env["GH_TOKEN"] = token
     return env

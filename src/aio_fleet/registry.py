@@ -234,10 +234,20 @@ def _release_tag_sha_allowed(
         subjects = git(
             repo.path, "log", "--format=%s", f"{release_target_commit}..{sha}"
         )
+        changed_files = git(
+            repo.path, "diff", "--name-only", f"{release_target_commit}..{sha}"
+        )
     except (Exception, SystemExit):
         return False
-    return bool(subjects.strip()) and all(
-        _RELEASE_FORMAT_SUBJECT.match(subject.strip())
-        for subject in subjects.splitlines()
-        if subject.strip()
+
+    subject_lines = [
+        subject.strip() for subject in subjects.splitlines() if subject.strip()
+    ]
+    changed_paths = [
+        path.strip() for path in changed_files.splitlines() if path.strip()
+    ]
+    return (
+        bool(subject_lines)
+        and all(_RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines)
+        and changed_paths == ["CHANGELOG.md"]
     )

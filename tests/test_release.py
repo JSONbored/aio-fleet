@@ -121,6 +121,28 @@ def test_release_publish_target_rejects_arbitrary_post_release_commit(
     )
 
 
+def test_release_publish_target_rejects_changelog_subject_with_runtime_changes(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n- initial\n")
+    _commit(tmp_path, "feat(test): initial")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## v1.0.0-aio.1 - 2026-05-10\n\n- initial\n"
+    )
+    _commit(tmp_path, "chore(release): v1.0.0-aio.1")
+    release_commit = _git_output(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## v1.0.0-aio.1 - 2026-05-10\n\n- initial\n\n"
+    )
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n")
+    _commit(tmp_path, "chore(release): format test changelog")
+
+    assert (  # nosec B101
+        find_release_publish_target_commit(tmp_path, "v1.0.0-aio.1") == release_commit
+    )
+
+
 def test_release_cli_supports_component_suffix(tmp_path: Path, capsys) -> None:
     _init_repo(tmp_path)
     (tmp_path / "components").mkdir()

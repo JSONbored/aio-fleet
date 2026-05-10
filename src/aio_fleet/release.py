@@ -350,10 +350,17 @@ def find_release_publish_target_commit(repo_path: Path, version: str) -> str:
     if not git_is_ancestor(repo_path, release_target, head):
         return release_target
     subjects = git(repo_path, "log", "--format=%s", f"{release_target}..{head}")
-    if subjects.strip() and all(
-        RELEASE_FORMAT_SUBJECT.match(subject.strip())
-        for subject in subjects.splitlines()
-        if subject.strip()
+    changed_files = git(repo_path, "diff", "--name-only", f"{release_target}..{head}")
+    subject_lines = [
+        subject.strip() for subject in subjects.splitlines() if subject.strip()
+    ]
+    changed_paths = [
+        path.strip() for path in changed_files.splitlines() if path.strip()
+    ]
+    if (
+        subject_lines
+        and all(RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines)
+        and changed_paths == ["CHANGELOG.md"]
     ):
         return head
     return release_target
