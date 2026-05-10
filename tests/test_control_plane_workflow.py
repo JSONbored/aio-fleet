@@ -77,6 +77,29 @@ def test_dashboard_update_scopes_dashboard_tokens() -> None:
     assert "GITHUB_TOKEN" not in dashboard["env"]  # nosec B101
 
 
+def test_alert_test_mode_uses_alert_webhook_secret_only() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    on_config = workflow.get("on", workflow.get(True))
+    mode = on_config["workflow_dispatch"]["inputs"]["mode"]
+    alert_test = _step(workflow["jobs"]["control-plane"], "Test alert webhook")
+
+    assert "alert-test" in mode["options"]  # nosec B101
+    assert (  # nosec B101
+        alert_test["if"]
+        == "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}"
+    )
+    assert alert_test["env"] == {  # nosec B101
+        "AIO_FLEET_ALERT_WEBHOOK_URL": "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}",
+        "DETAILS_URL": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+    }
+    assert (
+        "alert doctor --require-alerts --format json" in alert_test["run"]
+    )  # nosec B101
+    assert "alert test" in alert_test["run"]  # nosec B101
+    assert "aio-fleet Discord alert test" in alert_test["run"]  # nosec B101
+    assert "--dry-run" not in alert_test["run"]  # nosec B101
+
+
 def test_app_code_checkouts_do_not_persist_credentials() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 

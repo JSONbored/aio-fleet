@@ -21,6 +21,7 @@ on:
           - control-check
           - upstream-monitor
           - fleet-dashboard
+          - alert-test
       repo:
         description: App repo name for control-check mode
         required: false
@@ -149,6 +150,21 @@ jobs:
             echo "AIO_FLEET_GHCR_TOKEN is required for central GHCR publish." >&2
             exit 1
           fi
+
+      - name: Test alert webhook
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}
+        env:
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet alert doctor --require-alerts --format json
+          python -m aio_fleet alert test \
+            --event upstream-update \
+            --status warning \
+            --summary "aio-fleet Discord alert test" \
+            --details-url "${DETAILS_URL}" \
+            --format json
 
       - name: Poll active repos
         id: poll
