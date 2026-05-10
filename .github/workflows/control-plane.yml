@@ -98,7 +98,7 @@ jobs:
 
       - name: Resolve GitHub App token
         id: app-token
-        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'issues' }}
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'alert-test') || github.event_name == 'issues' }}
         env:
           AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
           AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
