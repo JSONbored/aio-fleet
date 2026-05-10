@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.release import (
     find_release_target_commit,
+    git,
+    git_is_ancestor,
     latest_changelog_version,
     read_upstream_version,
 )
@@ -102,7 +104,7 @@ def _is_dockerhub_tag(tag: str) -> bool:
     return first in {"docker.io", "index.docker.io"} or "." not in first
 
 
-def _verify_dockerhub_tag(tag: str, *, attempts: int = 3) -> str | None:
+def _verify_dockerhub_tag(tag: str, *, attempts: int = 8) -> str | None:
     parsed = _dockerhub_tag_parts(tag)
     if parsed is None:
         return f"{tag}: unsupported Docker Hub tag format"
@@ -124,12 +126,15 @@ def _verify_dockerhub_tag(tag: str, *, attempts: int = 3) -> str | None:
             last_error = f"invalid Docker Hub JSON response: {error}"
         except urllib.error.HTTPError as error:
             if error.code == 404:
-                return f"{tag}: tag not found on Docker Hub"
-            last_error = f"HTTP {error.code}: {error.reason}"
+                last_error = "tag not found on Docker Hub"
+            else:
+                last_error = f"HTTP {error.code}: {error.reason}"
         except urllib.error.URLError as error:
             last_error = str(error.reason)
         if attempt < attempts:
             time.sleep(2 * attempt)
+    if last_error == "tag not found on Docker Hub":
+        return f"{tag}: {last_error}"
     return f"{tag}: Docker Hub tag lookup failed: {last_error or 'unknown error'}"
 
 
@@ -189,7 +194,7 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
         release_target_commit = find_release_target_commit(repo.path, changelog_version)
     except (Exception, SystemExit):
         release_target_commit = ""
-    if release_target_commit != sha:
+    if not _release_tag_sha_allowed(repo, release_target_commit, sha):
         return ""
 
     upstream_version = _read_component_upstream_version(repo, component)
@@ -201,3 +206,28 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     if repo.publish_profile == "upstream-aio-track":
         return f"{upstream_version}-aio.{revision}"
     return changelog_version
+
+
+_RELEASE_FORMAT_SUBJECT = re.compile(
+    r"^chore\(release\): format .+ changelog(?: \(#\d+\))?$"
+)
+
+
+def _release_tag_sha_allowed(
+    repo: RepoConfig, release_target_commit: str, sha: str
+) -> bool:
+    if release_target_commit == sha:
+        return True
+    try:
+        if not git_is_ancestor(repo.path, release_target_commit, sha):
+            return False
+        subjects = git(
+            repo.path, "log", "--format=%s", f"{release_target_commit}..{sha}"
+        )
+    except (Exception, SystemExit):
+        return False
+    return bool(subjects.strip()) and all(
+        _RELEASE_FORMAT_SUBJECT.match(subject.strip())
+        for subject in subjects.splitlines()
+        if subject.strip()
+    )
