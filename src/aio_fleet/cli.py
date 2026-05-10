@@ -52,7 +52,10 @@ from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
-from aio_fleet.release import find_release_target_commit, latest_changelog_version
+from aio_fleet.release import (
+    find_release_publish_target_commit,
+    latest_changelog_version,
+)
 from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
 from aio_fleet.report import (
     fleet_report_json_schema,
@@ -1686,7 +1689,7 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     latest_version = latest_changelog_version(
         repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
     )
-    release_target = find_release_target_commit(repo.path, latest_version)
+    release_target = find_release_publish_target_commit(repo.path, latest_version)
     notes = _run(
         [
             sys.executable,

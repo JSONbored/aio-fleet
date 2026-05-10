@@ -13,6 +13,9 @@ SEMVER_TAG = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 AIO_CHANGELOG_HEADING = re.compile(
     r"^##\s+(?:\[(?P<linked>[^\]]+)\]\([^)]+\)|(?P<plain>[^\s]+))"
 )
+RELEASE_FORMAT_SUBJECT = re.compile(
+    r"^chore\(release\): format .+ changelog(?: \(#\d+\))?$"
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -337,6 +340,23 @@ def find_release_target_commit(repo_path: Path, version: str) -> str:
         if git_is_ancestor(repo_path, release_commit, candidate):
             return candidate
     return release_commit
+
+
+def find_release_publish_target_commit(repo_path: Path, version: str) -> str:
+    release_target = find_release_target_commit(repo_path, version)
+    head = git(repo_path, "rev-parse", "HEAD").strip()
+    if release_target == head:
+        return release_target
+    if not git_is_ancestor(repo_path, release_target, head):
+        return release_target
+    subjects = git(repo_path, "log", "--format=%s", f"{release_target}..{head}")
+    if subjects.strip() and all(
+        RELEASE_FORMAT_SUBJECT.match(subject.strip())
+        for subject in subjects.splitlines()
+        if subject.strip()
+    ):
+        return head
+    return release_target
 
 
 def git_tags(repo_path: Path) -> list[str]:
