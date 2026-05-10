@@ -218,16 +218,22 @@ def test_dockerhub_verification_reports_missing_tag(monkeypatch) -> None:
 
 def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     seen_commands: list[list[str]] = []
+    inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
+    seen_envs: list[dict[str, str] | None] = []
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
 
-    def fake_run(command: list[str], **_kwargs):
+    def fake_run(command: list[str], **kwargs):
         seen_commands.append(command)
+        seen_envs.append(kwargs.get("env"))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(registry.subprocess, "run", fake_run)
 
     assert (
-        registry.verify_registry_tags(["ghcr.io/jsonbored/sure-aio:latest"]) == []
+        registry.verify_registry_tags(
+            ["ghcr.io/jsonbored/sure-aio:latest"], env=inspect_env
+        )
+        == []
     )  # nosec B101
     assert seen_commands == [  # nosec B101
         [
@@ -238,3 +244,4 @@ def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
             "ghcr.io/jsonbored/sure-aio:latest",
         ]
     ]
+    assert seen_envs == [inspect_env]  # nosec B101

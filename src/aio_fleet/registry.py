@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from aio_fleet.manifest import RepoConfig
@@ -61,7 +62,9 @@ def compute_registry_tags(
     )
 
 
-def verify_registry_tags(tags: list[str]) -> list[str]:
+def verify_registry_tags(
+    tags: list[str], *, env: Mapping[str, str] | None = None
+) -> list[str]:
     docker = shutil.which("docker")
     if docker is None:
         return ["docker CLI is required to verify registry tags"]
@@ -70,19 +73,22 @@ def verify_registry_tags(tags: list[str]) -> list[str]:
         failure = (
             _verify_dockerhub_tag(tag)
             if _is_dockerhub_tag(tag)
-            else _verify_with_docker_imagetools(docker, tag)
+            else _verify_with_docker_imagetools(docker, tag, env=env)
         )
         if failure:
             failures.append(failure)
     return failures
 
 
-def _verify_with_docker_imagetools(docker: str, tag: str) -> str | None:
+def _verify_with_docker_imagetools(
+    docker: str, tag: str, *, env: Mapping[str, str] | None = None
+) -> str | None:
     result = subprocess.run(  # nosec B603
         [docker, "buildx", "imagetools", "inspect", tag],
         check=False,
         text=True,
         capture_output=True,
+        env=env,
     )
     if result.returncode == 0:
         return None
