@@ -72,6 +72,7 @@ from aio_fleet.validators import (
     catalog_repo_failures,
     derived_repo_failures,
     pinned_action_failures,
+    repo_local_workflow_failures,
     repo_policy_failures,
     template_metadata_failures,
     tracked_artifact_failures,
@@ -533,6 +534,18 @@ def cmd_validate_actions(args: argparse.Namespace) -> int:
         print("\n".join(failures), file=sys.stderr)
         return 1
     print("All workflow actions are pinned to full commit SHAs.")
+    return 0
+
+
+def cmd_verify_caller(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    repo_at_path = _repo_with_path(repo, Path(args.repo_path).resolve())
+    failures = repo_local_workflow_failures(repo_at_path)
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print(f"{repo.name} caller policy checks passed")
     return 0
 
 
@@ -1090,14 +1103,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
-    tags = compute_registry_tags(repo, sha=sha, component=args.component)
-    preflight_failures = verify_registry_tags(tags.all_tags)
-    if not preflight_failures:
-        print(f"{repo.name}:{args.component}: registry=already-current", flush=True)
-        return 0
-    print(f"{repo.name}:{args.component}: registry=preflight-missing", flush=True)
-    for failure in preflight_failures:
-        print(f"{repo.name}:{args.component}: preflight: {failure}", file=sys.stderr)
+    print(f"{repo.name}:{args.component}: registry=publishing", flush=True)
     try:
         with _registry_publish_environment(repo) as publish_env:
             result = _run(command, cwd=repo.path, env=publish_env)
@@ -2659,6 +2665,11 @@ def build_parser() -> argparse.ArgumentParser:
     actions = sub.add_parser("validate-actions")
     actions.add_argument("--repo-path", default=".")
     actions.set_defaults(func=cmd_validate_actions)
+
+    caller = sub.add_parser("verify-caller")
+    caller.add_argument("--repo", required=True)
+    caller.add_argument("--repo-path", required=True)
+    caller.set_defaults(func=cmd_verify_caller)
 
     derived = sub.add_parser("validate-derived")
     derived.add_argument("--repo-path", default=".")

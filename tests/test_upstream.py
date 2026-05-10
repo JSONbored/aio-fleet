@@ -114,6 +114,76 @@ repos:
     }
 
 
+def test_shared_version_digest_group_uses_one_resolvable_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text(
+        "ARG UPSTREAM_DIFY_VERSION=1.9.0\n"
+        "ARG UPSTREAM_DIFY_API_DIGEST=sha256:api-old\n"
+        "ARG UPSTREAM_DIFY_WEB_DIGEST=sha256:web-old\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  dify-aio:
+    path: {repo_path}
+    app_slug: dify-aio
+    image_name: jsonbored/dify-aio
+    docker_cache_scope: dify-aio-image
+    pytest_image_tag: dify-aio:pytest
+    upstream_monitor:
+      - component: dify-api
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-api
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_API_DIGEST
+        strategy: pr
+      - component: dify-web
+        source: github-releases
+        repo: langgenius/dify
+        image: langgenius/dify-web
+        digest_source: dockerhub
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_DIFY_VERSION
+        digest_key: UPSTREAM_DIFY_WEB_DIGEST
+        strategy: pr
+""")
+    candidates = (
+        upstream.GitHubReleaseCandidate(tag="2.0.0", version="2.0.0"),
+        upstream.GitHubReleaseCandidate(tag="1.9.1", version="1.9.1"),
+    )
+
+    monkeypatch.setattr(
+        upstream,
+        "github_release_candidates_result",
+        lambda *_args, **_kwargs: (candidates, ()),
+    )
+
+    def fake_digest(image: str, version: str, **_kwargs) -> str:
+        if image == "langgenius/dify-web" and version == "2.0.0":
+            raise upstream.RegistryDigestNotFoundError("missing")
+        return f"sha256:{image.rsplit('-', 1)[-1]}-{version}"
+
+    monkeypatch.setattr(upstream, "registry_digest_for_version", fake_digest)
+
+    results = upstream.monitor_repo(
+        load_manifest(manifest).repo("dify-aio"), write=True
+    )
+
+    assert {result.latest_version for result in results} == {"1.9.1"}  # nosec B101
+    text = dockerfile.read_text()
+    assert "ARG UPSTREAM_DIFY_VERSION=1.9.1" in text  # nosec B101
+    assert "ARG UPSTREAM_DIFY_API_DIGEST=sha256:api-1.9.1" in text  # nosec B101
+    assert "ARG UPSTREAM_DIFY_WEB_DIGEST=sha256:web-1.9.1" in text  # nosec B101
+
+
 def test_upstream_monitor_write_updates_dockerfile(tmp_path: Path, monkeypatch) -> None:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()

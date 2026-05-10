@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from xml.etree.ElementTree import Element, ParseError, tostring  # nosec B405
 
 import defusedxml.ElementTree as DefusedET
+from defusedxml.common import DefusedXmlException
 
 from aio_fleet.catalog import validate_catalog_asset_path
 from aio_fleet.manifest import FleetManifest, RepoConfig
@@ -276,7 +277,9 @@ def publish_platform_failures(repo: RepoConfig) -> list[str]:
 def pinned_action_failures(repo_path: Path) -> list[str]:
     workflow_paths = [
         *repo_path.joinpath(".github", "workflows").glob("*.yml"),
+        *repo_path.joinpath(".github", "workflows").glob("*.yaml"),
         *repo_path.joinpath(".github", "actions").glob("*/action.yml"),
+        *repo_path.joinpath(".github", "actions").glob("*/action.yaml"),
     ]
     failures: list[str] = []
 
@@ -293,12 +296,24 @@ def pinned_action_failures(repo_path: Path) -> list[str]:
     return failures
 
 
+def repo_local_workflow_failures(repo: RepoConfig) -> list[str]:
+    if repo.publish_profile == "template":
+        return []
+    workflow_dir = repo.path / ".github" / "workflows"
+    if workflow_dir.exists():
+        return [
+            f"{repo.name}: .github/workflows is disabled; app repos are checked by aio-fleet / required"
+        ]
+    return []
+
+
 def repo_policy_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]:
     return [
         *catalog_asset_failures(repo),
         *template_metadata_failures(repo, manifest),
         *runtime_contract_failures(repo),
         *publish_platform_failures(repo),
+        *repo_local_workflow_failures(repo),
         *pinned_action_failures(repo.path),
         *tracked_artifact_failures(repo.path),
     ]
@@ -723,17 +738,37 @@ def _icon_quality_findings(
 
 
 def _require_file(repo_path: Path, relative_path: str, failures: list[str]) -> bool:
-    if not (repo_path / relative_path).is_file():
+    path = _repo_relative_path(repo_path, relative_path, failures)
+    if path is None:
+        return False
+    if not path.is_file():
         failures.append(f"missing required file: {relative_path}")
         return False
     return True
 
 
 def _require_absent(repo_path: Path, relative_path: str, failures: list[str]) -> None:
-    if (repo_path / relative_path).exists():
+    path = _repo_relative_path(repo_path, relative_path, failures)
+    if path is not None and path.exists():
         failures.append(
             f"remove template placeholder path in derived repo: {relative_path}"
         )
+
+
+def _repo_relative_path(
+    repo_path: Path, relative_path: str, failures: list[str]
+) -> Path | None:
+    requested = Path(relative_path)
+    if requested.is_absolute():
+        failures.append(f"repo path must be relative: {relative_path}")
+        return None
+    resolved = (repo_path / requested).resolve()
+    try:
+        resolved.relative_to(repo_path)
+    except ValueError:
+        failures.append(f"repo path escapes checkout: {relative_path}")
+        return None
+    return resolved
 
 
 def _effective_template_xml(repo_path: Path) -> str:
@@ -851,7 +886,11 @@ def _xml_runtime_contract_failures(
         target = (config.attrib.get("Target") or "").strip()
         if not target:
             continue
-        if config.attrib.get("Type") == "Port" and target not in exposed_ports:
+        if (
+            config.attrib.get("Type") == "Port"
+            and target not in exposed_ports
+            and _port_config_requires_exposed_container_port(config)
+        ):
             failures.append(
                 f"{repo.name}: {source} port target {target} is not exposed by {relative_dockerfile}"
             )
@@ -893,6 +932,14 @@ def _xml_runtime_contract_failures(
             )
 
     return failures
+
+
+def _port_config_requires_exposed_container_port(config: Element) -> bool:
+    if config.attrib.get("Required") == "true":
+        return True
+    default = (config.attrib.get("Default") or "").strip()
+    selected = (config.text or "").strip()
+    return bool(default or selected)
 
 
 def _dockerfile_arg_defaults(text: str) -> dict[str, str]:
@@ -939,7 +986,10 @@ def _check_no_placeholder(
     failures: list[str],
 ) -> None:
     existing_paths = [
-        repo_path / path for path in relative_paths if (repo_path / path).exists()
+        resolved
+        for path in relative_paths
+        if (resolved := _repo_relative_path(repo_path, path, failures)) is not None
+        and resolved.exists()
     ]
     for path in existing_paths:
         if placeholder in path.read_text(errors="ignore"):
@@ -964,9 +1014,12 @@ def _parse_xml(repo: RepoConfig, source: str, failures: list[str]) -> Element | 
     xml_path = repo.path / source
     if not xml_path.exists():
         return None
+    if not xml_path.is_file():
+        failures.append(f"{repo.name}: catalog XML {source} must be a file")
+        return None
     try:
         return DefusedET.parse(xml_path).getroot()
-    except ParseError as exc:
+    except (DefusedXmlException, OSError, ParseError) as exc:
         failures.append(f"{repo.name}: unable to parse catalog XML {source}: {exc}")
         return None
 
@@ -977,9 +1030,12 @@ def _parse_catalog_xml(
     xml_path: Path,
     failures: list[str],
 ) -> Element | None:
+    if not xml_path.is_file():
+        failures.append(f"{repo_name}: catalog XML {target} must be a file")
+        return None
     try:
         return DefusedET.parse(xml_path).getroot()
-    except ParseError as exc:
+    except (DefusedXmlException, OSError, ParseError) as exc:
         failures.append(f"{repo_name}: unable to parse catalog XML {target}: {exc}")
         return None
 
@@ -1218,14 +1274,43 @@ def _repository_registry_failures(
         )
 
     image_name = _repository_image_name(repository)
-    if image_name.startswith("jsonbored/"):
-        expected_registry = f"https://hub.docker.com/r/{image_name}"
-        if registry and registry != expected_registry:
+    if repo.publish_profile != "template":
+        expected_images = _expected_image_names(repo, source.removeprefix("catalog "))
+        if image_name not in expected_images:
             failures.append(
-                f"{repo.name}: {source} <Registry> must be {expected_registry}, got {registry}"
+                f"{repo.name}: {source} <Repository> must use one of {sorted(expected_images)}, got {repository}"
             )
+            return failures
+
+    expected_registry = f"https://hub.docker.com/r/{image_name}"
+    if registry and registry != expected_registry:
+        failures.append(
+            f"{repo.name}: {source} <Registry> must be {expected_registry}, got {registry}"
+        )
 
     return failures
+
+
+def _expected_image_names(repo: RepoConfig, source: str) -> set[str]:
+    expected = {repo.image_name.lower()}
+    components = repo.raw.get("components", {})
+    if isinstance(components, dict):
+        for component in components.values():
+            if not isinstance(component, dict):
+                continue
+            image_name = str(component.get("image_name", "")).strip().lower()
+            if not image_name:
+                continue
+            xml_paths = component.get("xml_paths", [])
+            if isinstance(xml_paths, str):
+                component_xml_paths = {xml_paths}
+            elif isinstance(xml_paths, list):
+                component_xml_paths = {str(item) for item in xml_paths}
+            else:
+                component_xml_paths = set()
+            if source in component_xml_paths:
+                expected.add(image_name)
+    return expected
 
 
 def _repository_registry_host(repository: str) -> str:
@@ -1240,7 +1325,7 @@ def _repository_image_name(repository: str) -> str:
     tail = image.rsplit("/", 1)[-1]
     if ":" in tail:
         image = image.rsplit(":", 1)[0]
-    return image
+    return image.lower()
 
 
 def _common_template_quality_failures(

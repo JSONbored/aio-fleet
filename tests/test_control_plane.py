@@ -14,21 +14,29 @@ from aio_fleet.manifest import RepoConfig, load_manifest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_central_check_steps_for_pr_skip_publish_and_integration(
+def test_central_check_steps_for_pr_include_policy_and_integration(
     tmp_path: Path,
 ) -> None:
     repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("sure-aio"), tmp_path)
     (tmp_path / "tests").mkdir()
+    (tmp_path / "aio_fleet").mkdir()
+    (tmp_path / "aio_fleet" / "__init__.py").write_text("")
+    (tmp_path / "aio_fleet" / "cli.py").write_text("raise SystemExit(0)\n")
 
     steps = central_check_steps(repo, event="pull_request", include_trunk=False)
 
     names = [step.name for step in steps]
     assert names == [
-        "validate-template-common",
+        "validate-repo",
+        "verify-caller",
         "install-test-deps",
+        "integration-tests",
     ]  # nosec B101
-    assert str(ROOT) in steps[1].command[-1]  # nosec B101
-    assert steps[1].command[-1].endswith("[app-tests]")  # nosec B101
+    assert steps[0].cwd == ROOT  # nosec B101
+    assert steps[1].cwd == ROOT  # nosec B101
+    assert steps[2].cwd == tmp_path  # nosec B101
+    assert str(ROOT) in steps[2].command[-1]  # nosec B101
+    assert steps[2].command[-1].endswith("[app-tests]")  # nosec B101
 
 
 def test_central_check_steps_for_push_include_integration_trunk_and_publish() -> None:
@@ -96,6 +104,7 @@ def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
     assert "integration-tests" not in names  # nosec B101
     assert "unit-tests" in names  # nosec B101
     assert "trunk" in names  # nosec B101
+    assert names[:2] == ["validate-repo", "verify-caller"]  # nosec B101
 
 
 def test_run_steps_reports_timeout(monkeypatch, tmp_path: Path) -> None:

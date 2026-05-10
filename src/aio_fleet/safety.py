@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import subprocess  # nosec B404
 import urllib.error
@@ -627,11 +628,13 @@ def _confidence(level: str, signals: list[str], warnings: list[str]) -> float:
 
 
 def _gh_json(args: list[str], *, check: bool = True) -> Any:
+    env = _gh_env()
     result = subprocess.run(  # nosec
         ["gh", *args],
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         if check:
@@ -639,3 +642,13 @@ def _gh_json(args: list[str], *, check: bool = True) -> Any:
         return None
     text = result.stdout.strip()
     return json.loads(text) if text else None
+
+
+def _gh_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if not env.get("GH_TOKEN"):
+        for key in ("AIO_FLEET_WORKFLOW_TOKEN", "AIO_FLEET_CHECK_TOKEN", "APP_TOKEN"):
+            if env.get(key):
+                env["GH_TOKEN"] = env[key]
+                break
+    return env

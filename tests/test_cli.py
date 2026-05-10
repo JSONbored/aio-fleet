@@ -732,11 +732,11 @@ def test_registry_publish_verifies_with_repo_path(
     assert verify_calls[0].repo_path == str(repo_path)  # nosec B101
     assert verify_calls[0].sha == "a" * 40  # nosec B101
     captured = capsys.readouterr()
-    assert "example-aio:aio: registry=preflight-missing" in captured.out  # nosec B101
-    assert "example-aio:aio: preflight: tag missing" in captured.err  # nosec B101
+    assert "example-aio:aio: registry=publishing" in captured.out  # nosec B101
+    assert "preflight" not in captured.err  # nosec B101
 
 
-def test_registry_publish_skips_build_when_tags_are_current(
+def test_registry_publish_rebuilds_when_tags_are_current(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
@@ -744,14 +744,19 @@ def test_registry_publish_skips_build_when_tags_are_current(
     monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
     monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
 
-    def fail_run(
+    seen: dict[str, object] = {}
+
+    def fake_run(
         command: list[str], cwd: Path | None = None, env=None
     ) -> SimpleNamespace:
-        del command, cwd, env
-        raise AssertionError("current registry tags should skip docker build")
+        seen["publish_command"] = command
+        seen["publish_cwd"] = cwd
+        seen["publish_env"] = env
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(cli, "_run", fail_run)
+    monkeypatch.setattr(cli, "_run", fake_run)
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: [])
+    monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
 
     result = cmd_registry_publish(
         Namespace(
@@ -765,8 +770,9 @@ def test_registry_publish_skips_build_when_tags_are_current(
     )
 
     assert result == 0  # nosec B101
+    assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
     assert (
-        "example-aio:aio: registry=already-current" in capsys.readouterr().out
+        "example-aio:aio: registry=publishing" in capsys.readouterr().out
     )  # nosec B101
 
 

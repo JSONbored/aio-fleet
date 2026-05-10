@@ -68,23 +68,40 @@ def central_check_steps(
     include_integration: bool = True,
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
+    trusted_cwd = _trusted_aio_root()
     steps = [
         Step(
-            "validate-template-common",
+            "validate-repo",
             [
                 sys.executable,
                 "-m",
                 "aio_fleet.cli",
                 *manifest_args,
-                "validate-template-common",
+                "validate-repo",
                 "--repo",
                 repo.name,
                 "--repo-path",
                 str(repo.path),
             ],
-            repo.path,
+            trusted_cwd,
             inherit_secrets=False,
-        )
+        ),
+        Step(
+            "verify-caller",
+            [
+                sys.executable,
+                "-m",
+                "aio_fleet.cli",
+                *manifest_args,
+                "verify-caller",
+                "--repo",
+                repo.name,
+                "--repo-path",
+                str(repo.path),
+            ],
+            trusted_cwd,
+            inherit_secrets=False,
+        ),
     ]
     install = _install_test_dependencies_step(repo.path)
     if install is not None:
@@ -113,7 +130,7 @@ def central_check_steps(
     prebuilt_integration_image = False
     if (
         include_integration
-        and event in {"push", "release", "workflow_dispatch"}
+        and event in {"pull_request", "push", "release", "workflow_dispatch"}
         and integration_args
     ):
         if publish:
@@ -157,7 +174,7 @@ def central_check_steps(
                     str(repo.path),
                     "--no-fix",
                 ],
-                repo.path,
+                trusted_cwd,
                 inherit_secrets=False,
             )
         )
@@ -186,7 +203,7 @@ def central_check_steps(
                         "--component",
                         component,
                     ],
-                    repo.path,
+                    trusted_cwd,
                     stream_output=True,
                     timeout_seconds=_repo_timeout_seconds(
                         repo, "registry_publish_timeout_seconds", default=3600
@@ -194,6 +211,10 @@ def central_check_steps(
                 )
             )
     return steps
+
+
+def _trusted_aio_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
@@ -443,7 +464,7 @@ def _repo_python(repo_path: Path) -> str:
 
 def _install_test_dependencies_step(repo_path: Path) -> Step | None:
     if (repo_path / "tests").exists():
-        aio_root = Path(__file__).resolve().parents[2]
+        aio_root = _trusted_aio_root()
         return Step(
             "install-test-deps",
             [
