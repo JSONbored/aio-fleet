@@ -4,6 +4,7 @@ import subprocess  # nosec B404
 from pathlib import Path
 
 from aio_fleet.release import (
+    find_release_publish_target_commit,
     latest_changelog_version,
     main,
     next_aio_release_version,
@@ -14,6 +15,12 @@ from aio_fleet.release import (
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)  # nosec
+
+
+def _git_output(repo: Path, *args: str) -> str:
+    return subprocess.check_output(  # nosec B603 B607
+        ["git", *args], cwd=repo, text=True
+    ).strip()
 
 
 def _commit(repo: Path, message: str) -> None:
@@ -70,6 +77,48 @@ def test_latest_changelog_version_supports_linked_headings(tmp_path: Path) -> No
     changelog.write_text("## [v1.2.3-aio.1](https://example.invalid)\n\n- test\n")
 
     assert latest_changelog_version(changelog) == "v1.2.3-aio.1"  # nosec B101
+
+
+def test_release_publish_target_allows_changelog_format_followup(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n- initial\n")
+    _commit(tmp_path, "feat(test): initial")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## v1.0.0-aio.1 - 2026-05-10\n\n- initial\n"
+    )
+    _commit(tmp_path, "chore(release): v1.0.0-aio.1")
+    release_commit = _git_output(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## v1.0.0-aio.1 - 2026-05-10\n\n- initial\n\n"
+    )
+    _commit(tmp_path, "chore(release): format test changelog")
+    publish_commit = _git_output(tmp_path, "rev-parse", "HEAD")
+
+    assert release_commit != publish_commit  # nosec B101
+    assert (  # nosec B101
+        find_release_publish_target_commit(tmp_path, "v1.0.0-aio.1") == publish_commit
+    )
+
+
+def test_release_publish_target_rejects_arbitrary_post_release_commit(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n- initial\n")
+    _commit(tmp_path, "feat(test): initial")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## v1.0.0-aio.1 - 2026-05-10\n\n- initial\n"
+    )
+    _commit(tmp_path, "chore(release): v1.0.0-aio.1")
+    release_commit = _git_output(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "README.md").write_text("later\n")
+    _commit(tmp_path, "fix(runtime): later change")
+
+    assert (  # nosec B101
+        find_release_publish_target_commit(tmp_path, "v1.0.0-aio.1") == release_commit
+    )
 
 
 def test_release_cli_supports_component_suffix(tmp_path: Path, capsys) -> None:
