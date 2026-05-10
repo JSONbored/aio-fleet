@@ -507,6 +507,7 @@ repos:
     docker_cache_scope: mem0-aio-image
     pytest_image_tag: mem0-aio:pytest
     unit_pytest_args: tests/template
+    registry_publish_timeout_seconds: 7200
     publish_profile: changelog-version
     release_name: Mem0-AIO
     upstream_name: Mem0

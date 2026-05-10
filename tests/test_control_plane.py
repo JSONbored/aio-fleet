@@ -6,6 +6,7 @@ from pathlib import Path
 from aio_fleet.control_plane import (
     Step,
     central_check_steps,
+    registry_publish_command,
     run_central_trunk,
     run_steps,
 )
@@ -69,6 +70,30 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     assert publish.inherit_secrets is True  # nosec B101
     trunk = steps[names.index("trunk")]
     assert trunk.inherit_secrets is False  # nosec B101
+
+
+def test_central_check_steps_use_mem0_publish_timeout() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+
+    steps = central_check_steps(
+        repo, event="push", publish=True, include_integration=False
+    )
+
+    publish = [step for step in steps if step.name == "registry-publish"][0]
+    assert publish.timeout_seconds == 7200  # nosec B101
+
+
+def test_registry_publish_command_uses_plain_progress() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
+
+    command = registry_publish_command(repo, sha="a" * 40)
+
+    assert command[:4] == [  # nosec B101
+        "docker",
+        "buildx",
+        "build",
+        "--progress=plain",
+    ]
 
 
 def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:

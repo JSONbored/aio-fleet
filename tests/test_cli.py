@@ -709,7 +709,7 @@ def test_registry_publish_verifies_with_repo_path(
         seen.setdefault("verify_calls", []).append(args)
         return 0
 
-    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "_run_streaming", fake_run)
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
     monkeypatch.setattr(cli, "cmd_registry_verify", fake_registry_verify)
 
@@ -754,7 +754,7 @@ def test_registry_publish_rebuilds_when_tags_are_current(
         seen["publish_env"] = env
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "_run_streaming", fake_run)
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: [])
     monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
 
@@ -817,7 +817,7 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     monkeypatch.setenv("GH_TOKEN", "gh-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
     monkeypatch.setattr(cli.subprocess, "run", fake_docker)
-    monkeypatch.setattr(cli, "_run", fake_publish)
+    monkeypatch.setattr(cli, "_run_streaming", fake_publish)
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags: ["tag missing"])
     monkeypatch.setattr(cli, "cmd_registry_verify", lambda _args: 0)
 
