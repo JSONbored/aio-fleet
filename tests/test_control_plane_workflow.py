@@ -95,11 +95,11 @@ def test_app_code_checkouts_gate_submodule_checkout() -> None:
 
     assert "checkout_submodules" in manual["with"]["submodules"]  # nosec B101
     assert (
-        "inputs.event != 'pull_request'" not in manual["with"]["submodules"]
+        "inputs.event != 'pull_request'" in manual["with"]["submodules"]
     )  # nosec B101
     assert "checkout_submodules" in poll["with"]["submodules"]  # nosec B101
     assert (
-        "matrix.target.event != 'pull_request'" not in poll["with"]["submodules"]
+        "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
     )  # nosec B101
 
 

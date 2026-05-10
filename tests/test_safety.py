@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from aio_fleet import safety
@@ -77,6 +78,33 @@ def test_runtime_smoke_failure_blocks(tmp_path: Path, monkeypatch) -> None:
     assert any(  # nosec B101
         "runtime/integration check failed" in item for item in assessment.failures
     )
+
+
+def test_safety_gh_reads_use_dashboard_token(monkeypatch) -> None:
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal captured_env
+        captured_env = dict(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="[]",
+            stderr="",
+        )
+
+    monkeypatch.setenv("AIO_FLEET_DASHBOARD_TOKEN", "dashboard-token")
+    monkeypatch.setenv("AIO_FLEET_UPSTREAM_TOKEN", "upstream-token")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setenv("GH_TOKEN", "lower-priority-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
+    monkeypatch.setattr(safety.subprocess, "run", fake_run)
+
+    assert safety._gh_json(["api", "repos/JSONbored/private"]) == []  # nosec B101
+    assert captured_env["GH_TOKEN"] == "dashboard-token"  # nosec B101
+    assert "AIO_FLEET_DASHBOARD_TOKEN" not in captured_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in captured_env  # nosec B101
+    assert "GITHUB_TOKEN" not in captured_env  # nosec B101
 
 
 def test_missing_required_check_blocks(tmp_path: Path, monkeypatch) -> None:

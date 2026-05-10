@@ -307,7 +307,7 @@ jobs:
           ref: ${{ inputs.sha }}
           path: app-repo
           fetch-depth: 0
-          submodules: ${{ steps.control-check-policy.outputs.checkout_submodules == 'true' && 'recursive' || 'false' }}
+          submodules: ${{ steps.control-check-policy.outputs.checkout_submodules == 'true' && inputs.event != 'pull_request' && 'recursive' || 'false' }}
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
@@ -494,7 +494,7 @@ jobs:
           ref: ${{ matrix.target.sha }}
           path: app-repo
           fetch-depth: 0
-          submodules: ${{ matrix.target.checkout_submodules == true && 'recursive' || 'false' }}
+          submodules: ${{ matrix.target.checkout_submodules == true && matrix.target.event != 'pull_request' && 'recursive' || 'false' }}
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 

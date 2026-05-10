@@ -97,11 +97,23 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
         registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
     )
     monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
-    monkeypatch.setattr(
-        registry,
-        "git",
-        lambda *_args: "chore(release): format sure changelog",
-    )
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "log",
+            "--format=%s",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "chore(release): format sure changelog"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "CHANGELOG.md"
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
 
     tags = registry.compute_registry_tags(repo, sha=publish_sha)
 
@@ -126,6 +138,48 @@ def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
     )
     monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
     monkeypatch.setattr(registry, "git", lambda *_args: "fix(runtime): later change")
+
+    tags = registry.compute_registry_tags(repo, sha=publish_sha)
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.2" not in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" not in tags.ghcr  # nosec B101
+
+
+def test_release_tag_rejects_changelog_format_subject_with_runtime_changes(
+    monkeypatch,
+) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.7.0"
+    )
+    monkeypatch.setattr(
+        registry, "latest_changelog_version", lambda *_args, **_kwargs: "0.7.0-aio.2"
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "log",
+            "--format=%s",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "chore(release): format sure changelog"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "CHANGELOG.md\nDockerfile"
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
 
     tags = registry.compute_registry_tags(repo, sha=publish_sha)
 
