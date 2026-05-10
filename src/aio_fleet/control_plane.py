@@ -381,6 +381,7 @@ def registry_publish_command(
         "docker",
         "buildx",
         "build",
+        "--progress=plain",
         "--push",
         "--platform",
         str(platforms),

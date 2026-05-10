@@ -98,6 +98,20 @@ def _run(
     )
 
 
+def _run_streaming(
+    cmd: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # nosec B603
+        cmd,
+        cwd=cwd,
+        env=env,
+        check=False,
+        text=True,
+    )
+
+
 def _repo_python(repo_path: Path) -> str:
     for candidate in (
         repo_path / ".venv" / "bin" / "python",
@@ -1106,14 +1120,10 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     print(f"{repo.name}:{args.component}: registry=publishing", flush=True)
     try:
         with _registry_publish_environment(repo) as publish_env:
-            result = _run(command, cwd=repo.path, env=publish_env)
+            result = _run_streaming(command, cwd=repo.path, env=publish_env)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
     if result.returncode != 0:
         return result.returncode
     return cmd_registry_verify(
