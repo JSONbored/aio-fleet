@@ -180,6 +180,53 @@ def test_upstream_report_alert_detects_updates_and_actions() -> None:
     assert payload.details["actions"][0]["action"] == "upserted-pr"  # nosec B101
 
 
+def test_upstream_report_alert_classifies_missing_submodule_ref_as_warning() -> None:
+    payload = alerts.payload_from_report(
+        event="upstream-monitor",
+        status="auto",
+        report={
+            "repos": [
+                {
+                    "repo": "mem0-aio",
+                    "results": [
+                        {
+                            "component": "openmemory",
+                            "current_version": "v2.0.1",
+                            "latest_version": "v2.0.2",
+                            "updates_available": True,
+                            "state": "blocked",
+                            "blocked": True,
+                            "blocked_reason": (
+                                "missing configured submodule ref "
+                                "codex/openmemory-v2.0.2-aio on remote origin"
+                            ),
+                            "submodule_ref": "codex/openmemory-v2.0.2-aio",
+                            "next_action": (
+                                "create and push codex/openmemory-v2.0.2-aio"
+                            ),
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "action": "skipped",
+                            "reason": "blocked-upstream-update",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert payload.status == "warning"  # nosec B101
+    assert (
+        payload.summary == "Upstream monitor blocked for 1 component(s)"
+    )  # nosec B101
+    assert "mem0-aio:openmemory" in payload.annotations[0]  # nosec B101
+    assert payload.details["blocked"][0]["submodule_ref"] == (  # nosec B101
+        "codex/openmemory-v2.0.2-aio"
+    )
+
+
 def test_registry_report_alert_detects_missing_tags() -> None:
     payload = alerts.payload_from_report(
         event="registry-audit",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from aio_fleet import upstream
@@ -366,6 +367,60 @@ repos:
     ]
 
 
+def test_upstream_monitor_blocks_missing_configured_submodule_ref(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", remote], check=True)
+    submodule = repo_path / "openmemory"
+    subprocess.run(["git", "init", submodule], check=True)
+    subprocess.run(
+        ["git", "-C", submodule, "remote", "add", "origin", remote], check=True
+    )
+    dockerfile = repo_path / "Dockerfile"
+    dockerfile.write_text("ARG UPSTREAM_VERSION=v2.0.1\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  mem0-aio:
+    path: {repo_path}
+    app_slug: mem0-aio
+    image_name: jsonbored/mem0-aio
+    docker_cache_scope: mem0-aio-image
+    pytest_image_tag: mem0-aio:pytest
+    upstream_monitor:
+      - component: openmemory
+        source: github-releases
+        repo: mem0ai/mem0
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        strategy: pr
+        submodule_path: openmemory
+        submodule_remote: origin
+        submodule_ref_template: codex/openmemory-{{version}}-aio
+""")
+
+    monkeypatch.setattr(
+        upstream,
+        "latest_github_release_result",
+        lambda *_args, **_kwargs: ("v2.0.2", ()),
+    )
+
+    result = upstream.monitor_repo(
+        load_manifest(manifest).repo("mem0-aio"), write=True
+    )[0]
+    data = upstream.result_dict(result)
+
+    assert result.blocked is True  # nosec B101
+    assert data["state"] == "blocked"  # nosec B101
+    assert data["submodule_ref"] == "codex/openmemory-v2.0.2-aio"  # nosec B101
+    assert "missing configured submodule ref" in result.blocked_reason  # nosec B101
+    assert "ARG UPSTREAM_VERSION=v2.0.1" in dockerfile.read_text()  # nosec B101
+
+
 def test_upstream_monitor_does_not_write_notify_strategy(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -640,6 +695,41 @@ def test_create_upstream_pr_skips_notify_only_updates(tmp_path: Path) -> None:
         "action": "skipped",
         "reason": "no-pr-strategy-updates",
     }
+
+
+def test_create_upstream_pr_skips_blocked_updates(tmp_path: Path) -> None:
+    result = upstream.UpstreamMonitorResult(
+        repo="example-aio",
+        component="openmemory",
+        name="OpenMemory",
+        strategy="pr",
+        source="github-releases",
+        current_version="v2.0.1",
+        latest_version="v2.0.2",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        dockerfile=Path("Dockerfile"),
+        version_key="UPSTREAM_VERSION",
+        digest_key="",
+        release_notes_url="https://github.com/mem0ai/mem0/releases",
+        submodule_path="openmemory",
+        submodule_ref="codex/openmemory-v2.0.2-aio",
+        blocked_reason="missing configured submodule ref",
+        next_action="create and push codex/openmemory-v2.0.2-aio",
+    )
+
+    action = upstream.create_or_update_upstream_pr(
+        load_manifest(_minimal_manifest(tmp_path)).repo("example-aio"),
+        [result],
+        dry_run=True,
+        post_check=True,
+    )
+
+    assert action["action"] == "skipped"  # nosec B101
+    assert action["reason"] == "blocked-upstream-update"  # nosec B101
+    assert action["blockers"][0]["state"] == "blocked"  # nosec B101
 
 
 def test_create_upstream_pr_uses_verified_commit_writer(

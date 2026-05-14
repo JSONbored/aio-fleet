@@ -1283,6 +1283,70 @@ def test_upstream_monitor_dry_run_reports_updates(
     assert "example-aio: upstream=updates" in capsys.readouterr().out  # nosec B101
 
 
+def test_upstream_monitor_reports_blocked_submodule_ref_without_pr(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=v2.0.1\n")
+    blocked = SimpleNamespace(
+        repo="example-aio",
+        component="openmemory",
+        name="OpenMemory",
+        strategy="pr",
+        source="github-releases",
+        current_version="v2.0.1",
+        latest_version="v2.0.2",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        updates_available=True,
+        blocked=True,
+        blocked_reason="missing configured submodule ref",
+        next_action="create and push codex/openmemory-v2.0.2-aio",
+        dockerfile=repo_path / "Dockerfile",
+        release_notes_url="https://github.com/mem0ai/mem0/releases",
+        submodule_path="openmemory",
+        submodule_ref="codex/openmemory-v2.0.2-aio",
+    )
+
+    monkeypatch.setattr(cli, "monitor_repo", lambda *_args, **_kwargs: [blocked])
+    monkeypatch.setattr(
+        cli,
+        "create_or_update_upstream_pr",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("blocked updates should not open a PR")
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_generator_for_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("blocked updates should not regenerate manifests")
+        ),
+    )
+
+    result = cmd_upstream_monitor(
+        Namespace(
+            manifest=str(manifest),
+            all=True,
+            repo=None,
+            repo_path=None,
+            include_manual=False,
+            write=True,
+            create_pr=True,
+            post_check=True,
+            dry_run=False,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "example-aio: upstream=blocked" in output  # nosec B101
+    assert "missing configured submodule ref" in output  # nosec B101
+
+
 def test_upstream_write_exports_app_manifest_when_expected(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()

@@ -4,6 +4,8 @@ import json
 import subprocess  # nosec B404
 from typing import Any
 
+from aio_fleet.github_cli import github_cli_env
+
 CONTROL_PLANE_WORKFLOW = "AIO Fleet Control Plane"
 
 
@@ -27,6 +29,16 @@ def control_plane_health(
         check=False,
         text=True,
         capture_output=True,
+        env=github_cli_env(
+            (
+                "AIO_FLEET_DASHBOARD_TOKEN",
+                "AIO_FLEET_UPSTREAM_TOKEN",
+                "AIO_FLEET_CHECK_TOKEN",
+                "APP_TOKEN",
+                "GH_TOKEN",
+                "GITHUB_TOKEN",
+            )
+        ),
     )
     if result.returncode != 0:
         return {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess  # nosec B404
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -146,6 +147,67 @@ repos:
     assert "AIO_FLEET_ALERT_WEBHOOK_URL is not configured" in body  # nosec B101
     assert report["state"]["rows"][0]["strategy"] == "notify"  # nosec B101
     assert report["state"]["summary"]["triage_updates"] == 1  # nosec B101
+
+
+def test_dashboard_renders_blocked_submodule_ref_without_private_leak(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  mem0-aio:
+    path: {repo_path}
+    public: true
+    app_slug: mem0-aio
+    image_name: jsonbored/mem0-aio
+    docker_cache_scope: mem0-aio-image
+    pytest_image_tag: mem0-aio:pytest
+""")
+
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="mem0-aio",
+                component="openmemory",
+                name="OpenMemory",
+                strategy="pr",
+                source="github-releases",
+                current_version="v2.0.1",
+                latest_version="v2.0.2",
+                current_digest="",
+                latest_digest="",
+                version_update=True,
+                digest_update=False,
+                dockerfile=repo_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+                release_notes_url="https://github.com/mem0ai/mem0/releases",
+                submodule_path="openmemory",
+                submodule_ref="codex/openmemory-v2.0.2-aio",
+                blocked_reason="missing configured submodule ref",
+                next_action="create and push codex/openmemory-v2.0.2-aio",
+            )
+        ],
+    )
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_activity=False,
+        env={},
+    )
+
+    row = report["state"]["rows"][0]
+    assert row["check"] == "blocked"  # nosec B101
+    assert row["safety"] == "blocked"  # nosec B101
+    assert row["next_action"] == (  # nosec B101
+        "create and push codex/openmemory-v2.0.2-aio"
+    )
+    assert report["state"]["summary"]["blocked_updates"] == 1  # nosec B101
 
 
 def test_dashboard_marks_unsigned_pr_next_action(tmp_path: Path, monkeypatch) -> None:
@@ -893,6 +955,10 @@ def test_dashboard_state_comment_is_safe_for_pr_titles() -> None:
 
 
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
+    def days_ago(days: int) -> str:
+        value = datetime.now(UTC).replace(microsecond=0) - timedelta(days=days)
+        return value.isoformat().replace("+00:00", "Z")
+
     def fake_gh_json(args: list[str]):
         if args[:2] == ["pr", "list"]:
             return [
@@ -903,7 +969,7 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
                     "isDraft": False,
                     "mergeStateStatus": "CLEAN",
                     "statusCheckRollup": [],
-                    "createdAt": "2026-04-24T00:00:00Z",
+                    "createdAt": days_ago(9),
                 },
                 {
                     "number": 2,
@@ -912,7 +978,7 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
                     "isDraft": True,
                     "mergeStateStatus": "CLEAN",
                     "statusCheckRollup": [],
-                    "createdAt": "2026-05-04T00:00:00Z",
+                    "createdAt": days_ago(2),
                 },
                 {
                     "number": 3,
@@ -921,7 +987,7 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
                     "isDraft": False,
                     "mergeStateStatus": "DIRTY",
                     "statusCheckRollup": [],
-                    "createdAt": "2026-05-04T00:00:00Z",
+                    "createdAt": days_ago(2),
                 },
             ]
         if args[:2] == ["issue", "list"]:
@@ -930,14 +996,14 @@ def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
                     "number": 9,
                     "title": "one",
                     "url": "https://github.com/JSONbored/example/issues/9",
-                    "createdAt": "2026-05-03T00:00:00Z",
+                    "createdAt": days_ago(3),
                     "labels": [{"name": "needs-response"}],
                 },
                 {
                     "number": 10,
                     "title": "two",
                     "url": "https://github.com/JSONbored/example/issues/10",
-                    "createdAt": "2026-04-20T00:00:00Z",
+                    "createdAt": days_ago(12),
                     "labels": [],
                 },
             ]

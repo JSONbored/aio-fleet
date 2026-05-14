@@ -1300,14 +1300,29 @@ def cmd_upstream_monitor(args: argparse.Namespace) -> int:
             continue
         try:
             results = monitor_repo(repo, write=args.write and not args.dry_run)
-            if (
-                args.write
-                and not args.dry_run
-                and any(result.updates_available for result in results)
-            ):
+            writeable_updates = [
+                result
+                for result in results
+                if result.updates_available
+                and result.strategy == "pr"
+                and not getattr(result, "blocked", False)
+            ]
+            if args.write and not args.dry_run and writeable_updates:
                 _run_generator_for_write(repo)
             actions: list[dict[str, object]] = []
-            if args.create_pr and any(result.updates_available for result in results):
+            blocked = [
+                result for result in results if getattr(result, "blocked", False)
+            ]
+            if args.create_pr and blocked:
+                actions.append(
+                    {
+                        "repo": repo.name,
+                        "action": "skipped",
+                        "reason": "blocked-upstream-update",
+                        "blockers": [result_dict(result) for result in blocked],
+                    }
+                )
+            if args.create_pr and writeable_updates:
                 actions.append(
                     create_or_update_upstream_pr(
                         repo,
@@ -1345,7 +1360,12 @@ def cmd_upstream_monitor(args: argparse.Namespace) -> int:
                 for result in results
                 if result["updates_available"]  # type: ignore[index]
             ]
-            state = "updates" if updates else "ok"
+            blocked = [
+                result
+                for result in results
+                if result.get("state") == "blocked"  # type: ignore[union-attr]
+            ]
+            state = "blocked" if blocked else "updates" if updates else "ok"
             print(f"{item['repo']}: upstream={state}")  # type: ignore[index]
             for result in results:
                 print(
@@ -1354,6 +1374,12 @@ def cmd_upstream_monitor(args: argparse.Namespace) -> int:
                         **result
                     )
                 )
+                if result.get("state") == "blocked":  # type: ignore[union-attr]
+                    print(
+                        "  blocked: {blocked_reason}; next={next_action}".format(
+                            **result
+                        )
+                    )
     return 1 if failed else 0
 
 

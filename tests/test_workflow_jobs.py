@@ -55,6 +55,40 @@ def test_upstream_summary_renders_updates(tmp_path: Path) -> None:
     assert "0.7.0 -> 0.7.1" in text  # nosec B101
 
 
+def test_upstream_summary_renders_blocked_submodule_ref(tmp_path: Path) -> None:
+    report = tmp_path / "upstream-report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "mem0-aio",
+                        "results": [
+                            {
+                                "component": "openmemory",
+                                "current_version": "v2.0.1",
+                                "latest_version": "v2.0.2",
+                                "updates_available": True,
+                                "state": "blocked",
+                                "blocked": True,
+                                "blocked_reason": "missing configured submodule ref",
+                                "next_action": (
+                                    "create and push codex/openmemory-v2.0.2-aio"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    text = render_upstream_summary(report_path=report, output_path=None)
+
+    assert "`mem0-aio`: blocked" in text  # nosec B101
+    assert "missing configured submodule ref" in text  # nosec B101
+
+
 def test_registry_summary_renders_missing_tags(tmp_path: Path) -> None:
     report = tmp_path / "registry-report.json"
     report.write_text(

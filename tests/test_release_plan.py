@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+from aio_fleet import release_plan as release_plan_module
 from aio_fleet.manifest import RepoConfig, load_manifest
 from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
 
@@ -167,3 +170,52 @@ repos:
         "state": "private-skipped"
     }
     assert public_row["sha"] == "e" * 40  # nosec B101
+
+
+def test_latest_github_release_uses_dashboard_token(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "github_repo": "JSONbored/sure-aio",
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args: object, **kwargs: object):
+        nonlocal captured_env
+        captured_env = dict(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "tagName": "1.0.0-aio.1",
+                    "publishedAt": "2026-05-13T00:00:00Z",
+                    "targetCommitish": "a" * 40,
+                    "url": "https://github.com/JSONbored/sure-aio/releases/tag/1.0.0-aio.1",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setenv("AIO_FLEET_DASHBOARD_TOKEN", "dashboard-token")
+    monkeypatch.setenv("AIO_FLEET_UPSTREAM_TOKEN", "upstream-token")
+    monkeypatch.setenv("GH_TOKEN", "lower-priority-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "repo-token")
+    monkeypatch.setattr(release_plan_module.subprocess, "run", fake_run)
+
+    result = release_plan_module._latest_github_release(repo)
+
+    assert result["state"] == "ok"  # nosec B101
+    assert captured_env["GH_TOKEN"] == "dashboard-token"  # nosec B101
+    assert "AIO_FLEET_DASHBOARD_TOKEN" not in captured_env  # nosec B101
+    assert "GITHUB_TOKEN" not in captured_env  # nosec B101

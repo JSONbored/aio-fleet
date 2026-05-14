@@ -56,8 +56,22 @@ def render_upstream_summary(*, report_path: Path, output_path: Path | None) -> s
             for result in item.get("results", [])
             if isinstance(result, dict) and result.get("updates_available")
         ]
-        lines.append(f"- `{repo}`: {'updates available' if updates else 'current'}")
+        blocked = [
+            result
+            for result in item.get("results", [])
+            if isinstance(result, dict)
+            and (result.get("blocked") or result.get("state") == "blocked")
+        ]
+        state = "blocked" if blocked else "updates available" if updates else "current"
+        lines.append(f"- `{repo}`: {state}")
+        for result in blocked:
+            lines.append(
+                "  - `{component}`: {current_version} -> {latest_version} "
+                "blocked: {blocked_reason}; next: {next_action}".format(**result)
+            )
         for result in updates:
+            if result in blocked:
+                continue
             lines.append(
                 f"  - `{result['component']}`: {result['current_version']} -> {result['latest_version']}"
             )
