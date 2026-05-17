@@ -67,10 +67,16 @@ class UpstreamMonitorResult:
     submodule_path: str = ""
     submodule_ref: str = ""
     skipped_versions: tuple[dict[str, str], ...] = ()
+    blocked_reason: str = ""
+    next_action: str = ""
 
     @property
     def updates_available(self) -> bool:
         return self.version_update or self.digest_update
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.blocked_reason)
 
 
 def monitor_repo(
@@ -81,6 +87,7 @@ def monitor_repo(
     configs = monitor_configs(repo)
     results = [evaluate_monitor(repo, config) for config in configs]
     results = _align_shared_release_digest_groups(configs, results)
+    results = _with_submodule_ref_blockers(repo, configs, results)
     if write:
         _write_monitor_results(repo, configs, results)
     return results
@@ -92,12 +99,80 @@ def _write_monitor_results(
     results: list[UpstreamMonitorResult],
 ) -> None:
     for config, result in zip(configs, results, strict=True):
-        if result.updates_available and result.strategy == "pr":
+        if result.updates_available and result.strategy == "pr" and not result.blocked:
             write_arg(result.dockerfile, result.version_key, result.latest_version)
             if result.digest_key and result.latest_digest:
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
             if result.version_update:
                 update_submodule(repo, config, result)
+
+
+def _with_submodule_ref_blockers(
+    repo: RepoConfig,
+    configs: list[dict[str, Any]],
+    results: list[UpstreamMonitorResult],
+) -> list[UpstreamMonitorResult]:
+    checked = list(results)
+    for index, (config, result) in enumerate(zip(configs, results, strict=True)):
+        reason = _missing_submodule_ref_blocker(repo, config, result)
+        if reason:
+            checked[index] = replace(
+                result,
+                blocked_reason=reason,
+                next_action=_missing_submodule_next_action(result),
+            )
+    return checked
+
+
+def _missing_submodule_ref_blocker(
+    repo: RepoConfig,
+    config: dict[str, Any],
+    result: UpstreamMonitorResult,
+) -> str:
+    if (
+        not result.updates_available
+        or result.strategy != "pr"
+        or not result.version_update
+        or not result.submodule_path
+        or not result.submodule_ref
+    ):
+        return ""
+    remote = str(config.get("submodule_remote", "")).strip()
+    if not remote:
+        return ""
+    submodule_dir = repo.path / result.submodule_path
+    if not submodule_dir.exists():
+        return ""
+    git = required_executable("git")
+    probe = subprocess.run(  # nosec B603
+        [git, "rev-parse", "--is-inside-work-tree"],
+        cwd=submodule_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return ""
+    ref_check = subprocess.run(  # nosec B603
+        [git, "ls-remote", "--exit-code", remote, result.submodule_ref],
+        cwd=submodule_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if ref_check.returncode == 2:
+        return (
+            f"missing configured submodule ref {result.submodule_ref} "
+            f"on remote {remote}"
+        )
+    return ""
+
+
+def _missing_submodule_next_action(result: UpstreamMonitorResult) -> str:
+    return (
+        f"create and push {result.submodule_ref} for {result.component} "
+        f"before opening the {result.repo} upstream PR"
+    )
 
 
 def _align_shared_release_digest_groups(
@@ -832,6 +907,7 @@ def default_release_notes_url(config: dict[str, Any]) -> str:
 
 
 def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
+    blocked = bool(getattr(result, "blocked", False))
     data: dict[str, object] = {
         "repo": result.repo,
         "component": result.component,
@@ -847,7 +923,16 @@ def result_dict(result: UpstreamMonitorResult) -> dict[str, object]:
         "updates_available": result.updates_available,
         "dockerfile": str(result.dockerfile),
         "release_notes_url": result.release_notes_url,
+        "state": (
+            "blocked"
+            if blocked
+            else ("updates" if result.updates_available else "current")
+        ),
     }
+    if blocked:
+        data["blocked"] = True
+        data["blocked_reason"] = getattr(result, "blocked_reason", "")
+        data["next_action"] = getattr(result, "next_action", "")
     skipped_versions = getattr(result, "skipped_versions", ())
     if skipped_versions:
         data["skipped_versions"] = list(skipped_versions)
@@ -868,15 +953,24 @@ def create_or_update_upstream_pr(
     changed = [
         result
         for result in results
-        if result.updates_available and result.strategy == "pr"
+        if result.updates_available and result.strategy == "pr" and not result.blocked
     ]
     if not changed:
-        reason = (
-            "no-pr-strategy-updates"
-            if any(result.updates_available for result in results)
-            else "no-updates"
-        )
-        return {"repo": repo.name, "action": "skipped", "reason": reason}
+        if any(result.blocked for result in results):
+            reason = "blocked-upstream-update"
+        elif any(result.updates_available for result in results):
+            reason = "no-pr-strategy-updates"
+        else:
+            reason = "no-updates"
+        action: dict[str, object] = {
+            "repo": repo.name,
+            "action": "skipped",
+            "reason": reason,
+        }
+        blocked = [result for result in results if result.blocked]
+        if blocked:
+            action["blockers"] = [result_dict(result) for result in blocked]
+        return action
     branch = upstream_branch(repo, changed)
     title = upstream_title(repo, changed)
     configured_paths = repo.list_value("upstream_commit_paths")

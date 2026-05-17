@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from aio_fleet.control_plane import publish_components
+from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import (
@@ -215,6 +216,16 @@ def _latest_github_release(repo: RepoConfig) -> dict[str, str]:
         check=False,
         text=True,
         capture_output=True,
+        env=github_cli_env(
+            (
+                "AIO_FLEET_DASHBOARD_TOKEN",
+                "AIO_FLEET_UPSTREAM_TOKEN",
+                "AIO_FLEET_CHECK_TOKEN",
+                "APP_TOKEN",
+                "GH_TOKEN",
+                "GITHUB_TOKEN",
+            )
+        ),
     )
     if result.returncode != 0:
         return {"state": "unknown", "detail": (result.stderr or result.stdout).strip()}

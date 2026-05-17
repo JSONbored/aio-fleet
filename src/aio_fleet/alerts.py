@@ -114,13 +114,18 @@ def summarize_report(
         errors = [
             item for item in repos if isinstance(item, dict) and item.get("error")
         ]
+        blocked: list[dict[str, Any]] = []
         updates: list[dict[str, Any]] = []
         actions: list[dict[str, Any]] = []
         for item in repos:
             if not isinstance(item, dict):
                 continue
             for result in item.get("results", []):
-                if isinstance(result, dict) and result.get("updates_available"):
+                if not isinstance(result, dict):
+                    continue
+                if result.get("blocked") or result.get("state") == "blocked":
+                    blocked.append({"repo": item.get("repo", ""), **result})
+                elif result.get("updates_available"):
                     updates.append({"repo": item.get("repo", ""), **result})
             for action in item.get("actions", []):
                 if isinstance(action, dict) and action.get("action") not in {
@@ -135,6 +140,28 @@ def summarize_report(
                 for item in errors[:10]
             ]
             return "failure", summary, annotations, {"errors": errors}
+        if blocked:
+            summary = f"Upstream monitor blocked for {len(blocked)} component(s)"
+            annotations = [
+                (
+                    "{repo}:{component} {current_version} -> {latest_version} "
+                    "blocked: {blocked_reason}; next={next_action}"
+                ).format(
+                    repo=item.get("repo", ""),
+                    component=item.get("component", "aio"),
+                    current_version=item.get("current_version", ""),
+                    latest_version=item.get("latest_version", ""),
+                    blocked_reason=item.get("blocked_reason", ""),
+                    next_action=item.get("next_action", ""),
+                )
+                for item in blocked[:10]
+            ]
+            return (
+                "warning",
+                summary,
+                annotations,
+                {"blocked": blocked, "updates": updates, "actions": actions},
+            )
         if updates or actions:
             summary = f"Upstream updates available for {len(updates)} component(s)"
             annotations = [

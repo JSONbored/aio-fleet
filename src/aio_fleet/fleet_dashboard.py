@@ -744,6 +744,32 @@ def _dashboard_row(
     include_registry: bool,
     registry_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if getattr(result, "blocked", False):
+        reason = str(getattr(result, "blocked_reason", "upstream update blocked"))
+        next_action = str(getattr(result, "next_action", "resolve upstream blocker"))
+        return {
+            "repo": repo.name,
+            "component": result.component,
+            "current": result.current_version,
+            "latest": result.latest_version,
+            "strategy": result.strategy,
+            "update": result.updates_available,
+            "pr": "",
+            "check": "blocked",
+            "signed": "blocked",
+            "registry": "not-run",
+            "registry_detail": {},
+            "release": "blocked",
+            "safety": "blocked",
+            "safety_confidence": "",
+            "config_delta": "submodule-ref-missing",
+            "template_impact": "none",
+            "runtime_smoke": "blocked",
+            "safety_signals": [],
+            "safety_warnings": [reason],
+            "safety_failures": [reason],
+            "next_action": next_action,
+        }
     branch = upstream_branch(repo, [result]) if result.strategy == "pr" else ""
     pr = _open_pr(repo, branch) if branch else None
     pr_url = str(pr.get("url", "")) if pr else ""
