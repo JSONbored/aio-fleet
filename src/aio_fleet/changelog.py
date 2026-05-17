@@ -21,13 +21,14 @@ class ReleasePlan:
     xml_paths: list[Path]
     cliff_config: str
     component: str = "aio"
+    release_suffix: str = "aio"
 
 
-def render_git_cliff_config(repo: RepoConfig) -> str:
+def render_git_cliff_config(repo: RepoConfig, *, release_suffix: str = "aio") -> str:
     tag_pattern = (
         "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
         if repo.publish_profile == "template"
-        else "^v?[0-9].*-aio\\.[0-9]+$"
+        else f"^v?[0-9].*-{re.escape(release_suffix)}\\.[0-9]+$"
     )
     return f'''[changelog]
 header = """
@@ -76,16 +77,20 @@ commit_parsers = [
 '''
 
 
-def write_temp_git_cliff_config(repo: RepoConfig) -> Path:
+def write_temp_git_cliff_config(
+    repo: RepoConfig, *, release_suffix: str = "aio"
+) -> Path:
     handle = tempfile.NamedTemporaryFile(
         "w", prefix=f"{repo.name}-git-cliff-", suffix=".toml", delete=False
     )
     with handle:
-        handle.write(render_git_cliff_config(repo))
+        handle.write(render_git_cliff_config(repo, release_suffix=release_suffix))
     return Path(handle.name)
 
 
 def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePlan:
+    config = component_config(repo, component)
+    release_suffix = str(config.get("release_suffix", "aio"))
     version = _next_version(repo, component=component)
     return ReleasePlan(
         version=version,
@@ -93,8 +98,9 @@ def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePl
         xml_paths=[
             repo.path / path for path in _release_xml_sources(repo, component=component)
         ],
-        cliff_config=render_git_cliff_config(repo),
+        cliff_config=render_git_cliff_config(repo, release_suffix=release_suffix),
         component=component,
+        release_suffix=release_suffix,
     )
 
 
@@ -185,7 +191,7 @@ def encode_for_template(body: str) -> str:
 def _next_version(repo: RepoConfig, *, component: str) -> str:
     if repo.publish_profile == "template":
         return next_semver_release_version(repo.path)
-    config = _component_config(repo, component)
+    config = component_config(repo, component)
     return next_aio_release_version(
         repo.path,
         repo.path / str(config.get("dockerfile", "Dockerfile")),
@@ -196,7 +202,7 @@ def _next_version(repo: RepoConfig, *, component: str) -> str:
 
 
 def _release_xml_sources(repo: RepoConfig, *, component: str) -> list[str]:
-    config = _component_config(repo, component)
+    config = component_config(repo, component)
     xml_paths = config.get("xml_paths", [])
     if isinstance(xml_paths, str) and xml_paths.endswith(".xml"):
         return [xml_paths]
@@ -215,7 +221,7 @@ def _release_xml_sources(repo: RepoConfig, *, component: str) -> list[str]:
     return [path for path in repo.list_value("xml_paths") if path.endswith(".xml")]
 
 
-def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
+def component_config(repo: RepoConfig, component: str) -> dict[str, object]:
     config: dict[str, object] = {
         "dockerfile": "Dockerfile",
         "upstream_config": "upstream.toml",

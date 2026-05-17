@@ -6,6 +6,7 @@ from pathlib import Path
 from aio_fleet.release import (
     find_release_publish_target_commit,
     latest_changelog_version,
+    latest_component_changelog_version,
     main,
     next_aio_release_version,
     next_semver_release_version,
@@ -77,6 +78,40 @@ def test_latest_changelog_version_supports_linked_headings(tmp_path: Path) -> No
     changelog.write_text("## [v1.2.3-aio.1](https://example.invalid)\n\n- test\n")
 
     assert latest_changelog_version(changelog) == "v1.2.3-aio.1"  # nosec B101
+
+
+def test_latest_component_changelog_version_uses_matching_suffix(
+    tmp_path: Path,
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "\n".join(
+            [
+                "# Changelog",
+                "",
+                "## 0.152.0-agent.1 - 2026-05-17",
+                "",
+                "- agent",
+                "",
+                "## v0.124.0-aio.1 - 2026-05-17",
+                "",
+                "- aio",
+            ]
+        )
+    )
+
+    assert (  # nosec B101
+        latest_component_changelog_version(
+            changelog, upstream_version="v0.124.0", suffix="aio"
+        )
+        == "v0.124.0-aio.1"
+    )
+    assert (  # nosec B101
+        latest_component_changelog_version(
+            changelog, upstream_version="0.152.0", suffix="agent"
+        )
+        == "0.152.0-agent.1"
+    )
 
 
 def test_release_publish_target_allows_changelog_format_followup(

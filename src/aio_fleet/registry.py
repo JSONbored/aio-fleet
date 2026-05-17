@@ -11,12 +11,13 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from aio_fleet.changelog import component_config
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.release import (
     find_release_target_commit,
     git,
     git_is_ancestor,
-    latest_changelog_version,
+    latest_component_changelog_version,
     read_upstream_version,
 )
 
@@ -194,9 +195,15 @@ def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:
 
 
 def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
+    upstream_version = _read_component_upstream_version(repo, component)
+    if not upstream_version:
+        return ""
+    release_suffix = str(component_config(repo, component).get("release_suffix", "aio"))
     try:
-        changelog_version = latest_changelog_version(
-            repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
+        changelog_version = latest_component_changelog_version(
+            repo.path / "CHANGELOG.md",
+            upstream_version=upstream_version,
+            suffix=release_suffix,
         )
     except (Exception, SystemExit):
         return ""
@@ -204,17 +211,25 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
         release_target_commit = find_release_target_commit(repo.path, changelog_version)
     except (Exception, SystemExit):
         release_target_commit = ""
-    if not _release_tag_sha_allowed(repo, release_target_commit, sha):
+    if not _release_tag_sha_allowed(
+        repo,
+        release_target_commit,
+        sha,
+        component=component,
+        release_suffix=release_suffix,
+    ):
         return ""
 
-    upstream_version = _read_component_upstream_version(repo, component)
-    match = re.match(rf"^{re.escape(upstream_version)}-aio\.(\d+)$", changelog_version)
+    match = re.match(
+        rf"^{re.escape(upstream_version)}-{re.escape(release_suffix)}\.(\d+)$",
+        changelog_version,
+    )
     if not match:
         return changelog_version if repo.publish_profile == "changelog-version" else ""
 
     revision = match.group(1)
     if repo.publish_profile == "upstream-aio-track":
-        return f"{upstream_version}-aio.{revision}"
+        return f"{upstream_version}-{release_suffix}.{revision}"
     return changelog_version
 
 
@@ -224,7 +239,12 @@ _RELEASE_FORMAT_SUBJECT = re.compile(
 
 
 def _release_tag_sha_allowed(
-    repo: RepoConfig, release_target_commit: str, sha: str
+    repo: RepoConfig,
+    release_target_commit: str,
+    sha: str,
+    *,
+    component: str = "aio",
+    release_suffix: str = "aio",
 ) -> bool:
     if release_target_commit == sha:
         return True
@@ -246,8 +266,55 @@ def _release_tag_sha_allowed(
     changed_paths = [
         path.strip() for path in changed_files.splitlines() if path.strip()
     ]
-    return (
-        bool(subject_lines)
-        and all(_RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines)
-        and changed_paths == ["CHANGELOG.md"]
+    if not subject_lines:
+        return False
+    if all(_RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines):
+        return changed_paths == ["CHANGELOG.md"]
+    allowed_paths = _component_release_followup_paths(repo, component)
+    return set(changed_paths).issubset(allowed_paths) and all(
+        _release_followup_subject_allowed(
+            repo, subject, component=component, release_suffix=release_suffix
+        )
+        for subject in subject_lines
     )
+
+
+def _component_release_followup_paths(repo: RepoConfig, component: str) -> set[str]:
+    paths = {"CHANGELOG.md"}
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return paths
+    for name, config in components.items():
+        if name == component or not isinstance(config, dict):
+            continue
+        xml_paths = config.get("xml_paths", [])
+        if isinstance(xml_paths, str):
+            candidate_paths = [xml_paths]
+        elif isinstance(xml_paths, list):
+            candidate_paths = [str(path) for path in xml_paths]
+        else:
+            candidate_paths = []
+        paths.update(path for path in candidate_paths if path.endswith(".xml"))
+    return paths
+
+
+def _release_followup_subject_allowed(
+    repo: RepoConfig, subject: str, *, component: str, release_suffix: str
+) -> bool:
+    if _RELEASE_FORMAT_SUBJECT.match(subject):
+        return True
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return False
+    for name, config in components.items():
+        if name == component or not isinstance(config, dict):
+            continue
+        other_suffix = str(config.get("release_suffix", "aio"))
+        if other_suffix == release_suffix:
+            continue
+        pattern = re.compile(
+            rf"^chore\(release\): .+-{re.escape(other_suffix)}\.\d+" r"(?: \(#\d+\))?$"
+        )
+        if pattern.match(subject):
+            return True
+    return False
