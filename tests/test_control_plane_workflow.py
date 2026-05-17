@@ -112,20 +112,16 @@ def test_app_code_checkouts_do_not_persist_credentials() -> None:
         assert checkout["with"]["persist-credentials"] is False  # nosec B101
 
 
-def test_app_code_checkouts_gate_submodule_checkout() -> None:
+def test_app_code_checkouts_use_manifest_submodule_policy() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     manual = _step(workflow["jobs"]["control-plane"], "Checkout app repo")
     poll = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
 
     assert "checkout_submodules" in manual["with"]["submodules"]  # nosec B101
-    assert (
-        "inputs.event != 'pull_request'" in manual["with"]["submodules"]
-    )  # nosec B101
+    assert "inputs.event" not in manual["with"]["submodules"]  # nosec B101
     assert "checkout_submodules" in poll["with"]["submodules"]  # nosec B101
-    assert (
-        "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
-    )  # nosec B101
+    assert "matrix.target.event" not in poll["with"]["submodules"]  # nosec B101
 
 
 def test_control_check_steps_gate_publish_explicitly() -> None:
