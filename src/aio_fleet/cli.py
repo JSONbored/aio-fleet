@@ -24,6 +24,7 @@ from aio_fleet.app_manifest import (
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
 from aio_fleet.changelog import (
     build_release_plan,
+    component_config,
     update_template_changes,
     write_temp_git_cliff_config,
 )
@@ -55,6 +56,8 @@ from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release import (
     find_release_publish_target_commit,
     latest_changelog_version,
+    latest_component_changelog_version,
+    read_upstream_version,
 )
 from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
 from aio_fleet.report import (
@@ -1669,7 +1672,7 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
     plan = build_release_plan(repo, component=args.component)
-    cliff_config = write_temp_git_cliff_config(repo)
+    cliff_config = write_temp_git_cliff_config(repo, release_suffix=plan.release_suffix)
     commands = [
         [
             "git",
@@ -1678,7 +1681,8 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
             str(cliff_config),
             "--tag",
             plan.version,
-            "--output",
+            "--unreleased",
+            "--prepend",
             str(plan.changelog_path),
         ]
     ]
@@ -1712,9 +1716,7 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
-    latest_version = latest_changelog_version(
-        repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
-    )
+    latest_version = _component_release_version(repo, component=args.component)
     release_target = find_release_publish_target_commit(repo.path, latest_version)
     notes = _run(
         [
@@ -1756,6 +1758,23 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     if result.stderr:
         print(result.stderr, file=sys.stderr, end="")
     return result.returncode
+
+
+def _component_release_version(repo: RepoConfig, *, component: str = "aio") -> str:
+    changelog = repo.path / "CHANGELOG.md"
+    if repo.publish_profile == "template":
+        return latest_changelog_version(changelog, semver=True)
+    config = component_config(repo, component)
+    upstream_version = read_upstream_version(
+        repo.path / str(config.get("dockerfile", "Dockerfile")),
+        repo.path / str(config.get("upstream_config", "upstream.toml")),
+        version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+    )
+    return latest_component_changelog_version(
+        changelog,
+        upstream_version=upstream_version,
+        suffix=str(config.get("release_suffix", "aio")),
+    )
 
 
 def cmd_validate(args: argparse.Namespace) -> int:

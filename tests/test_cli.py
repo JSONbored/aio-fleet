@@ -586,6 +586,33 @@ repos:
     return manifest, repo_path
 
 
+def test_release_prepare_dry_run_prepends_changelog_section(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.0\n")
+    (repo_path / "upstream.toml").write_text("[upstream]\n")
+    (repo_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## 0.9.0-aio.1 - 2026-01-01\n\n- old\n"
+    )
+    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+
+    result = cli.cmd_release_prepare(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            component="aio",
+            dry_run=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "--unreleased --prepend" in output  # nosec B101
+    assert "--output" not in output  # nosec B101
+
+
 def test_latest_main_ci_requires_external_id_bound_check(
     tmp_path: Path, monkeypatch
 ) -> None:

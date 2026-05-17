@@ -110,7 +110,17 @@ def main(argv: list[str] | None = None) -> int:
             print(latest_tag)
         return 0
     if args.command == "latest-changelog-version":
-        print(latest_changelog_version(changelog, semver=profile == "semver"))
+        if profile == "semver":
+            print(latest_changelog_version(changelog, semver=True))
+        else:
+            upstream_version = read_upstream_version(dockerfile, upstream_config)
+            print(
+                latest_component_changelog_version(
+                    changelog,
+                    upstream_version=upstream_version,
+                    suffix=suffix,
+                )
+            )
         return 0
     if args.command == "extract-release-notes":
         print(
@@ -265,8 +275,9 @@ def semver_key(tag: str) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in match.groups())
 
 
-def latest_changelog_version(changelog: Path, *, semver: bool = False) -> str:
+def changelog_versions(changelog: Path, *, semver: bool = False) -> list[str]:
     pattern = re.compile(r"^##\s+([^\s]+)") if semver else AIO_CHANGELOG_HEADING
+    versions: list[str] = []
     for line in changelog.read_text().splitlines():
         match = pattern.match(line.strip())
         version = None
@@ -275,8 +286,28 @@ def latest_changelog_version(changelog: Path, *, semver: bool = False) -> str:
         elif match:
             version = match.group("linked") or match.group("plain")
         if version and version != "Unreleased":
-            return version
+            versions.append(version)
+    return versions
+
+
+def latest_changelog_version(changelog: Path, *, semver: bool = False) -> str:
+    versions = changelog_versions(changelog, semver=semver)
+    if versions:
+        return versions[0]
     raise SystemExit(f"Unable to find a released version heading in {changelog}")
+
+
+def latest_component_changelog_version(
+    changelog: Path, *, upstream_version: str, suffix: str = "aio"
+) -> str:
+    pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
+    for version in changelog_versions(changelog):
+        if pattern.match(version):
+            return version
+    raise SystemExit(
+        "Unable to find a released "
+        f"{suffix} version for {upstream_version} in {changelog}"
+    )
 
 
 def extract_release_notes(

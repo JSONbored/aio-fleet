@@ -72,5 +72,7 @@ def test_component_release_plan_uses_component_xml_and_suffix(tmp_path: Path) ->
 
     assert aio.version == "v0.121.1-aio.1"  # nosec B101
     assert aio.xml_paths == [tmp_path / "signoz-aio.xml"]  # nosec B101
+    assert ".*-aio\\.[0-9]+" in aio.cliff_config  # nosec B101
     assert agent.version == "0.151.0-agent.1"  # nosec B101
     assert agent.xml_paths == [tmp_path / "signoz-agent.xml"]  # nosec B101
+    assert ".*-agent\\.[0-9]+" in agent.cliff_config  # nosec B101
