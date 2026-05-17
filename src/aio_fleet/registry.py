@@ -47,8 +47,12 @@ def compute_registry_tags(
     upstream_version = _read_component_upstream_version(repo, component)
     release_package_tag = _release_package_tag(repo, sha=sha, component=component)
 
-    dockerhub_tags = [f"{dockerhub_image}:latest"]
-    ghcr_tags = [f"{ghcr_image}:latest"]
+    dockerhub_tags = [
+        f"{dockerhub_image}:{tag}" for tag in _component_floating_tags(repo, component)
+    ]
+    ghcr_tags = [
+        f"{ghcr_image}:{tag}" for tag in _component_floating_tags(repo, component)
+    ]
     if upstream_version:
         dockerhub_tags.append(f"{dockerhub_image}:{upstream_version}")
         ghcr_tags.append(f"{ghcr_image}:{upstream_version}")
@@ -176,29 +180,36 @@ def _component_image_name(repo: RepoConfig, component: str) -> str:
     return repo.image_name
 
 
+def _component_floating_tags(repo: RepoConfig, component: str) -> list[str]:
+    tags = component_config(repo, component).get("floating_tags", ["latest"])
+    if isinstance(tags, str):
+        tags = [tags]
+    if not isinstance(tags, list):
+        return ["latest"]
+    cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
+    return list(dict.fromkeys(cleaned)) or ["latest"]
+
+
 def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:
     try:
-        if component == "agent" and repo.is_signoz_suite:
-            agent = repo.raw["components"]["agent"]
-            return read_upstream_version(
-                repo.path / str(agent["dockerfile"]),
-                repo.path / "components" / "signoz-agent" / "upstream.toml",
-                version_key=str(agent.get("upstream_version_key", "UPSTREAM_VERSION")),
-            )
+        config = component_config(repo, component)
         return read_upstream_version(
-            repo.path / "Dockerfile",
-            repo.path / "upstream.toml",
-            version_key=str(repo.get("upstream_version_key", "UPSTREAM_VERSION")),
+            repo.path / str(config.get("dockerfile", "Dockerfile")),
+            repo.path / str(config.get("upstream_config", "upstream.toml")),
+            version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
         )
     except (Exception, SystemExit):
         return ""
 
 
 def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
+    config = component_config(repo, component)
+    if str(config.get("release_policy", "")).strip() == "registry_only":
+        return ""
     upstream_version = _read_component_upstream_version(repo, component)
     if not upstream_version:
         return ""
-    release_suffix = str(component_config(repo, component).get("release_suffix", "aio"))
+    release_suffix = str(config.get("release_suffix", "aio"))
     try:
         changelog_version = latest_component_changelog_version(
             repo.path / "CHANGELOG.md",

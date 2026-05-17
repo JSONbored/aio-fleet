@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import subprocess  # nosec B404
 from pathlib import Path
@@ -53,6 +54,7 @@ def release_plan_for_repo(
     registry_failures: list[str] = []
     registry_tags: dict[str, list[str]] = {"dockerhub": [], "ghcr": []}
     github_release = _latest_github_release(repo)
+    registry_only_component_changes = False
 
     if repo.publish_profile == "template":
         latest_tag = latest_semver_tag(repo.path)
@@ -61,11 +63,12 @@ def release_plan_for_repo(
     else:
         latest_tag = _safe_latest_aio_tag(repo)
         next_version = _safe_next_aio(repo)
+        registry_only_component_changes = _only_registry_only_component_changes(repo)
         release_due = _safe_has_aio_changes(repo)
     if not latest_tag and github_release.get("state") == "ok":
         latest_tag = str(github_release.get("tag", ""))
     target_commit = str(github_release.get("target_commitish", ""))
-    if _looks_like_sha(target_commit) and sha:
+    if _looks_like_sha(target_commit) and sha and not registry_only_component_changes:
         release_due = target_commit != sha
 
     changelog_version = _safe_changelog_version(repo)
@@ -174,9 +177,75 @@ def _safe_next_aio(repo: RepoConfig) -> str:
 
 def _safe_has_aio_changes(repo: RepoConfig) -> bool:
     try:
+        if _only_registry_only_component_changes(repo):
+            return False
         return has_aio_unreleased_changes(repo.path)
     except (Exception, SystemExit):
         return False
+
+
+def _only_registry_only_component_changes(repo: RepoConfig) -> bool:
+    patterns = _registry_only_component_patterns(repo)
+    if not patterns:
+        return False
+    latest_tag = _safe_latest_aio_tag(repo)
+    if not latest_tag:
+        return False
+    changed_paths = _changed_paths_since(repo.path, latest_tag)
+    if not changed_paths:
+        return False
+    return all(
+        any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+        for path in changed_paths
+    )
+
+
+def _registry_only_component_patterns(repo: RepoConfig) -> set[str]:
+    patterns: set[str] = set()
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return patterns
+    for name, config in components.items():
+        if not isinstance(config, dict):
+            continue
+        if str(config.get("release_policy", "")).strip() != "registry_only":
+            continue
+        patterns.add(".aio-fleet.yml")
+        for key in ("dockerfile", "upstream_config"):
+            value = str(config.get(key, "")).strip()
+            if value:
+                patterns.add(value)
+        patterns.update(_string_list(config.get("xml_paths", [])))
+        patterns.update(_string_list(config.get("publish_paths", [])))
+        for monitor in repo.raw.get("upstream_monitor", []):
+            if (
+                isinstance(monitor, dict)
+                and str(monitor.get("component", "aio")) == name
+                and monitor.get("dockerfile")
+            ):
+                patterns.add(str(monitor["dockerfile"]))
+    return {pattern for pattern in patterns if pattern}
+
+
+def _string_list(value: object) -> set[str]:
+    if isinstance(value, str):
+        return {value} if value.strip() else set()
+    if isinstance(value, list):
+        return {str(item) for item in value if str(item).strip()}
+    return set()
+
+
+def _changed_paths_since(repo_path: Path, ref: str) -> list[str]:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", "diff", "--name-only", f"{ref}..HEAD"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _safe_next_semver(repo: RepoConfig) -> str:

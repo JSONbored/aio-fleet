@@ -194,6 +194,7 @@ def _align_shared_release_digest_groups(
             result.version_key,
             str(config.get("repo", "")),
             bool(config.get("stable_only", True)),
+            str(config.get("prerelease_channel", "")).strip(),
             str(config.get("version_strip_prefix", "")),
         )
         grouped.setdefault(key, []).append(index)
@@ -204,6 +205,7 @@ def _align_shared_release_digest_groups(
         _version_key,
         upstream_repo,
         stable_only,
+        prerelease_channel,
         strip_prefix,
     ), indexes in grouped.items():
         if len(indexes) < 2:
@@ -211,6 +213,7 @@ def _align_shared_release_digest_groups(
         candidates, skipped = github_release_candidates_result(
             upstream_repo,
             stable_only=stable_only,
+            prerelease_channel=prerelease_channel,
             strip_prefix=strip_prefix,
         )
         current_version = aligned[indexes[0]].current_version
@@ -337,6 +340,9 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
                 github_release_candidates_result(
                     str(config["repo"]),
                     stable_only=bool(config.get("stable_only", True)),
+                    prerelease_channel=str(
+                        config.get("prerelease_channel", "")
+                    ).strip(),
                     strip_prefix=str(config.get("version_strip_prefix", "")),
                 )
             )
@@ -349,6 +355,7 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
             latest_version, skipped_versions = latest_github_release_result(
                 str(config["repo"]),
                 stable_only=bool(config.get("stable_only", True)),
+                prerelease_channel=str(config.get("prerelease_channel", "")).strip(),
                 strip_prefix=str(config.get("version_strip_prefix", "")),
             )
     elif source == "ghcr-tags":
@@ -497,22 +504,32 @@ def latest_github_tag(repo: str, *, stable_only: bool, strip_prefix: str = "") -
 
 
 def latest_github_release(
-    repo: str, *, stable_only: bool, strip_prefix: str = ""
+    repo: str,
+    *,
+    stable_only: bool,
+    prerelease_channel: str = "",
+    strip_prefix: str = "",
 ) -> str:
     version, _skipped = latest_github_release_result(
         repo,
         stable_only=stable_only,
+        prerelease_channel=prerelease_channel,
         strip_prefix=strip_prefix,
     )
     return version
 
 
 def latest_github_release_result(
-    repo: str, *, stable_only: bool, strip_prefix: str = ""
+    repo: str,
+    *,
+    stable_only: bool,
+    prerelease_channel: str = "",
+    strip_prefix: str = "",
 ) -> tuple[str, tuple[dict[str, str], ...]]:
     candidates, skipped = github_release_candidates_result(
         repo,
         stable_only=stable_only,
+        prerelease_channel=prerelease_channel,
         strip_prefix=strip_prefix,
     )
     return candidates[0].version, skipped_github_release_report(
@@ -522,7 +539,11 @@ def latest_github_release_result(
 
 
 def github_release_candidates_result(
-    repo: str, *, stable_only: bool, strip_prefix: str = ""
+    repo: str,
+    *,
+    stable_only: bool,
+    prerelease_channel: str = "",
+    strip_prefix: str = "",
 ) -> tuple[tuple[GitHubReleaseCandidate, ...], tuple[dict[str, str], ...]]:
     data = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=100")
     if not isinstance(data, list):
@@ -550,6 +571,17 @@ def github_release_candidates_result(
                     "tag": tag,
                     "version": normalize_version(tag, strip_prefix=strip_prefix),
                     "reason": "version-prerelease",
+                }
+            )
+            continue
+        if prerelease_channel and not prerelease_channel_matches(
+            tag, prerelease_channel
+        ):
+            skipped.append(
+                {
+                    "tag": tag,
+                    "version": normalize_version(tag, strip_prefix=strip_prefix),
+                    "reason": f"outside-{prerelease_channel}-channel",
                 }
             )
             continue
@@ -864,6 +896,17 @@ def is_prerelease_suffix(suffix: str) -> bool:
         return True
     # Unknown suffixes stay prerelease-like until a repo needs an explicit stable allowlist entry.
     return True
+
+
+def prerelease_channel_matches(value: str, channel: str) -> bool:
+    match = SEMVER_RE.match(value)
+    if not match:
+        return False
+    suffix = match.group("prerelease") or ""
+    if not suffix:
+        return False
+    label = suffix.split(".", 1)[0].split("-", 1)[0].lower()
+    return label == channel.lower()
 
 
 def prerelease_sort_key(prerelease: str) -> tuple[tuple[int, object], ...]:

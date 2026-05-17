@@ -174,6 +174,22 @@ def test_workflow_installs_central_dependencies_before_app_checks() -> None:
         assert "control-check" in run_check["run"]  # nosec B101
 
 
+def test_workflow_forwards_component_scoped_publish() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    trigger = workflow.get("on") or workflow.get(True)
+    inputs = trigger["workflow_dispatch"]["inputs"]
+    assert "publish_component" in inputs  # nosec B101
+
+    manual_run = _step(workflow["jobs"]["control-plane"], "Run central control check")
+    poll_run = _step(workflow["jobs"]["poll-checks"], "Run central control check")
+
+    assert "PUBLISH_COMPONENT" in manual_run["env"]  # nosec B101
+    assert "--publish-component" in manual_run["run"]  # nosec B101
+    assert "TARGET_PUBLISH_COMPONENTS" in poll_run["env"]  # nosec B101
+    assert "--publish-component" in poll_run["run"]  # nosec B101
+
+
 def test_privileged_completion_restores_trusted_checkout_first() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
