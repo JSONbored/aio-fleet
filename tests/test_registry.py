@@ -221,6 +221,31 @@ def test_component_release_tag_uses_component_suffix(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/signoz-agent:0.152.0-agent.1" in tags.ghcr  # nosec B101
 
 
+def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    sha = "a" * 40
+
+    monkeypatch.setattr(
+        registry,
+        "_read_component_upstream_version",
+        lambda *_args, **_kwargs: "0.7.1-alpha.7",
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert tags.dockerhub == [  # nosec B101
+        "jsonbored/sure-aio-alpha:latest-alpha",
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+        f"jsonbored/sure-aio-alpha:sha-{sha}",
+    ]
+    assert tags.ghcr == [  # nosec B101
+        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+        f"ghcr.io/jsonbored/sure-aio-alpha:sha-{sha}",
+    ]
+
+
 def test_component_release_tag_allows_other_component_release_followup(
     monkeypatch,
 ) -> None:

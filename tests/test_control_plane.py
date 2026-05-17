@@ -43,7 +43,9 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
 def test_central_check_steps_for_push_include_integration_trunk_and_publish() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
 
-    steps = central_check_steps(repo, event="push", publish=True)
+    steps = central_check_steps(
+        repo, event="push", publish=True, publish_component_names=["aio"]
+    )
 
     names = [step.name for step in steps]
     assert "build-pytest-image" in names  # nosec B101
@@ -129,6 +131,35 @@ def test_central_check_steps_publish_signoz_components() -> None:
         "registry-publish-agent",
     ]
     assert publish_steps[1].command[-2:] == ["--component", "agent"]  # nosec B101
+
+
+def test_central_check_steps_can_target_alpha_component_publish() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    steps = central_check_steps(
+        repo,
+        event="push",
+        publish=True,
+        publish_component_names=["sure-alpha"],
+    )
+
+    names = [step.name for step in steps]
+    assert "build-pytest-image-sure-alpha" in names  # nosec B101
+    assert "registry-publish-sure-alpha" in names  # nosec B101
+    assert "registry-publish-aio" not in names  # nosec B101
+    build = steps[names.index("build-pytest-image-sure-alpha")]
+    assert (
+        build.command[build.command.index("-t") + 1] == "sure-aio-alpha:pytest"
+    )  # nosec B101
+    assert (
+        build.command[build.command.index("-f") + 1] == "Dockerfile.alpha"
+    )  # nosec B101
+    integration = steps[names.index("integration-tests")]
+    assert integration.env == {  # nosec B101
+        "AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE": "true"
+    }
+    publish = steps[names.index("registry-publish-sure-alpha")]
+    assert publish.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
 
 
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:

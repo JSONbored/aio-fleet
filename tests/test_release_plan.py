@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import shutil
+import subprocess  # nosec B404
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,3 +220,82 @@ def test_latest_github_release_uses_dashboard_token(
     assert captured_env["GH_TOKEN"] == "dashboard-token"  # nosec B101
     assert "AIO_FLEET_DASHBOARD_TOKEN" not in captured_env  # nosec B101
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
+
+
+def test_release_plan_ignores_registry_only_component_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=0.7.0\n" "ARG UPSTREAM_IMAGE_DIGEST=sha256:stable\n"
+    )
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.1\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:alpha\n"
+    )
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.0-aio.1")
+    _git(repo_path, "tag", "0.7.0-aio.1")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.2\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:alpha2\n"
+    )
+    (repo_path / "README.md").write_text("Alpha lane docs\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(deps): update sure alpha")
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "aio": {"image_name": "jsonbored/sure-aio"},
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_policy": "registry_only",
+                    "publish_paths": ["README.md", "rootfs-alpha/**"],
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {"state": "unknown"},
+    )
+    monkeypatch.setattr(release_plan_module, "_safe_next_aio", lambda _repo: "")
+    monkeypatch.setattr(
+        release_plan_module, "_safe_changelog_version", lambda _repo: "0.7.0-aio.1"
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
+def _git(path: Path, *args: str) -> None:
+    git = shutil.which("git")
+    assert git is not None  # nosec B101
+    result = subprocess.run(  # nosec B603
+        [git, *args],
+        cwd=path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr  # nosec B101

@@ -6,6 +6,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,12 +65,18 @@ def central_check_steps(
     event: str,
     manifest_path: Path | None = None,
     publish: bool = False,
+    publish_component_names: Sequence[str] | None = None,
     include_trunk: bool = True,
     include_integration: bool = True,
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
     trusted_cwd = _trusted_aio_root()
     registry_publish_enabled = publish and repo.publish_profile != "template"
+    selected_publish_components = (
+        list(publish_component_names)
+        if publish_component_names
+        else publish_components(repo)
+    )
     steps = [
         Step(
             "validate-repo",
@@ -135,8 +142,14 @@ def central_check_steps(
         and integration_args
     ):
         if registry_publish_enabled:
-            steps.append(_pytest_image_build_step(repo))
+            for build_step in _pytest_image_build_steps(
+                repo, selected_publish_components
+            ):
+                steps.append(build_step)
             prebuilt_integration_image = True
+        integration_env = _prebuilt_pytest_environment(
+            repo, selected_publish_components
+        )
         steps.append(
             Step(
                 "integration-tests",
@@ -147,11 +160,7 @@ def central_check_steps(
                     *shlex.split(integration_args),
                 ],
                 repo.path,
-                env=(
-                    {"AIO_PYTEST_USE_PREBUILT_IMAGE": "true"}
-                    if prebuilt_integration_image
-                    else None
-                ),
+                env=integration_env if prebuilt_integration_image else None,
                 timeout_seconds=_repo_timeout_seconds(
                     repo, "integration_timeout_seconds", default=1800
                 ),
@@ -180,7 +189,7 @@ def central_check_steps(
             )
         )
     if registry_publish_enabled:
-        components = publish_components(repo)
+        components = selected_publish_components
         for component in components:
             step_name = (
                 "registry-publish"
@@ -315,13 +324,51 @@ def _secret_environment_key(key: str) -> bool:
     )
 
 
-def _pytest_image_build_step(repo: RepoConfig) -> Step:
-    image_tag = str(repo.get("pytest_image_tag", "") or "").strip()
+def _pytest_image_build_steps(
+    repo: RepoConfig, components: Sequence[str]
+) -> list[Step]:
+    steps: list[Step] = []
+    seen: set[str] = set()
+    for component in components:
+        step = _pytest_image_build_step(repo, component)
+        if step is None:
+            continue
+        key = " ".join(step.command)
+        if key in seen:
+            continue
+        seen.add(key)
+        steps.append(step)
+    return steps
+
+
+def _pytest_image_build_step(repo: RepoConfig, component: str = "aio") -> Step | None:
+    component_config = _component_config(repo, component)
+    image_tag = str(
+        component_config.get("pytest_image_tag", repo.get("pytest_image_tag", "")) or ""
+    ).strip()
     if not image_tag:
-        raise ValueError(f"{repo.name} is missing pytest_image_tag")
-    platform = str(repo.get("pytest_image_platform", "linux/amd64") or "linux/amd64")
-    dockerfile = str(repo.get("pytest_dockerfile", "Dockerfile") or "Dockerfile")
-    context = str(repo.get("pytest_build_context", ".") or ".")
+        return None
+    platform = str(
+        component_config.get(
+            "pytest_image_platform", repo.get("pytest_image_platform", "linux/amd64")
+        )
+        or "linux/amd64"
+    )
+    dockerfile = str(
+        component_config.get(
+            "pytest_dockerfile",
+            component_config.get(
+                "dockerfile", repo.get("pytest_dockerfile", "Dockerfile")
+            ),
+        )
+        or "Dockerfile"
+    )
+    context = str(
+        component_config.get(
+            "pytest_build_context", repo.get("pytest_build_context", ".")
+        )
+        or "."
+    )
     command = [
         "docker",
         "build",
@@ -335,7 +382,11 @@ def _pytest_image_build_step(repo: RepoConfig) -> Step:
         command.extend(["-f", dockerfile])
     command.append(context)
     return Step(
-        "build-pytest-image",
+        (
+            "build-pytest-image"
+            if component == "aio"
+            else f"build-pytest-image-{component}"
+        ),
         command,
         repo.path,
         stream_output=True,
@@ -344,6 +395,26 @@ def _pytest_image_build_step(repo: RepoConfig) -> Step:
         ),
         inherit_secrets=False,
     )
+
+
+def _prebuilt_pytest_environment(
+    repo: RepoConfig, components: Sequence[str]
+) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for component in components:
+        component_config = _component_config(repo, component)
+        image_tag = str(
+            component_config.get("pytest_image_tag", repo.get("pytest_image_tag", ""))
+            or ""
+        ).strip()
+        if not image_tag:
+            continue
+        env_name = str(component_config.get("pytest_prebuilt_env", "") or "").strip()
+        if not env_name and component == "aio":
+            env_name = "AIO_PYTEST_USE_PREBUILT_IMAGE"
+        if env_name:
+            env[env_name] = "true"
+    return env
 
 
 def _repo_timeout_seconds(repo: RepoConfig, key: str, *, default: int) -> int:

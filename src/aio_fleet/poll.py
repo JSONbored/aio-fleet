@@ -18,6 +18,7 @@ class PollTarget:
     source: str
     checkout_submodules: bool = False
     publish: bool = False
+    publish_components: tuple[str, ...] = ()
 
 
 def poll_targets(
@@ -50,6 +51,7 @@ def poll_targets(
         if include_main:
             sha = _main_sha(repo)
             if sha:
+                components = publish_components_required(repo, sha=sha, event="push")
                 targets.append(
                     PollTarget(
                         repo=repo,
@@ -57,19 +59,30 @@ def poll_targets(
                         event="push",
                         source="main",
                         checkout_submodules=bool(repo.raw.get("checkout_submodules")),
-                        publish=publish_required(repo, sha=sha, event="push"),
+                        publish=bool(components),
+                        publish_components=tuple(components),
                     )
                 )
     return targets
 
 
 def publish_required(repo: RepoConfig, *, sha: str, event: str) -> bool:
+    return bool(publish_components_required(repo, sha=sha, event=event))
+
+
+def publish_components_required(repo: RepoConfig, *, sha: str, event: str) -> list[str]:
     if event != "push" or repo.publish_profile == "template":
-        return False
+        return []
     changed_paths = _commit_changed_paths(repo, sha)
     if changed_paths is None:
-        return True
-    return any(_is_publish_related_path(repo, path) for path in changed_paths)
+        return _publish_components(repo)
+    return [
+        component
+        for component in _publish_components(repo)
+        if any(
+            _is_publish_related_path(repo, path, component) for path in changed_paths
+        )
+    ]
 
 
 def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
@@ -87,34 +100,75 @@ def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
     return paths or None
 
 
-def _is_publish_related_path(repo: RepoConfig, path: str) -> bool:
-    return any(fnmatch(path, pattern) for pattern in _publish_related_patterns(repo))
+def _is_publish_related_path(repo: RepoConfig, path: str, component: str = "") -> bool:
+    if component:
+        patterns = _publish_related_patterns_for_component(repo, component)
+    else:
+        patterns = _publish_related_patterns(repo)
+    return any(fnmatch(path, pattern) for pattern in patterns)
 
 
 def _publish_related_patterns(repo: RepoConfig) -> set[str]:
-    patterns = {
-        ".aio-fleet.yml",
-        "CHANGELOG.md",
-        "Containerfile",
-        "Dockerfile",
-        "rootfs/**",
-        "upstream.toml",
-    }
-    for key in ("extra_publish_paths", "upstream_commit_paths", "xml_paths"):
-        patterns.update(repo.list_value(key))
-    for monitor in repo.raw.get("upstream_monitor", []):
-        if isinstance(monitor, dict) and monitor.get("dockerfile"):
-            patterns.add(str(monitor["dockerfile"]))
-    components = repo.raw.get("components")
-    if isinstance(components, dict):
-        for config in components.values():
-            if not isinstance(config, dict):
-                continue
-            if config.get("dockerfile"):
-                patterns.add(str(config["dockerfile"]))
-            for xml_path in config.get("xml_paths", []):
-                patterns.add(str(xml_path))
+    patterns: set[str] = set()
+    for component in _publish_components(repo):
+        patterns.update(_publish_related_patterns_for_component(repo, component))
     return {pattern for pattern in patterns if pattern}
+
+
+def _publish_related_patterns_for_component(
+    repo: RepoConfig, component: str
+) -> set[str]:
+    config = _component_config(repo, component)
+    patterns = {".aio-fleet.yml", "CHANGELOG.md"}
+    if component == "aio" or not config:
+        patterns.update({"Containerfile", "Dockerfile", "rootfs/**", "upstream.toml"})
+        for key in ("extra_publish_paths", "upstream_commit_paths", "xml_paths"):
+            patterns.update(repo.list_value(key))
+
+    if config:
+        for key in ("dockerfile", "upstream_config"):
+            value = str(config.get(key, "")).strip()
+            if value:
+                patterns.add(value)
+        patterns.update(_string_list(config.get("xml_paths", [])))
+        patterns.update(_string_list(config.get("publish_paths", [])))
+
+    for monitor in repo.raw.get("upstream_monitor", []):
+        if (
+            isinstance(monitor, dict)
+            and str(monitor.get("component", "aio")) == component
+            and monitor.get("dockerfile")
+        ):
+            patterns.add(str(monitor["dockerfile"]))
+    return {pattern for pattern in patterns if pattern}
+
+
+def _publish_components(repo: RepoConfig) -> list[str]:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return ["aio"]
+    names = [
+        name
+        for name, config in components.items()
+        if name == "aio" or (isinstance(config, dict) and config.get("image_name"))
+    ]
+    return names or ["aio"]
+
+
+def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return {}
+    config = components.get(component)
+    return config if isinstance(config, dict) else {}
+
+
+def _string_list(value: object) -> set[str]:
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list):
+        return {str(item) for item in value if str(item).strip()}
+    return set()
 
 
 def _open_pull_requests(repo: RepoConfig) -> list[dict[str, object]]:

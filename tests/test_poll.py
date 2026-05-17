@@ -158,6 +158,29 @@ def test_poll_targets_publish_only_for_publish_related_main_commits(
     assert targets[0].publish is True  # nosec B101
 
 
+def test_publish_components_required_can_target_alpha_component(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path, include_alpha_component=True)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile.alpha"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["sure-alpha"]
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["aio"]
+
+
 def test_poll_gh_maps_app_token_to_gh_token(monkeypatch) -> None:
     captured_env: dict[str, str] = {}
 
@@ -179,11 +202,31 @@ def test_poll_gh_maps_app_token_to_gh_token(monkeypatch) -> None:
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
 
 
-def _write_manifest(tmp_path: Path, *, checkout_submodules: bool = False) -> Path:
+def _write_manifest(
+    tmp_path: Path,
+    *,
+    checkout_submodules: bool = False,
+    include_alpha_component: bool = False,
+) -> Path:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     checkout_line = "    checkout_submodules: true\n" if checkout_submodules else ""
     manifest = tmp_path / "fleet.yml"
+    components = (
+        """
+    components:
+      aio:
+        image_name: jsonbored/example-aio
+        dockerfile: Dockerfile
+      sure-alpha:
+        image_name: jsonbored/example-aio-alpha
+        dockerfile: Dockerfile.alpha
+        publish_paths:
+          - rootfs-alpha/**
+"""
+        if include_alpha_component
+        else ""
+    )
     manifest.write_text(f"""
 owner: JSONbored
 repos:
@@ -194,5 +237,6 @@ repos:
     docker_cache_scope: example-aio-image
     pytest_image_tag: example-aio:pytest
 {checkout_line.rstrip()}
+{components.rstrip()}
 """)
     return manifest

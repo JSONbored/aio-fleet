@@ -711,6 +711,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
             "source": target.source,
             "checkout_submodules": target.checkout_submodules,
             "publish": target.publish,
+            "publish_components": list(target.publish_components),
         }
         emitted.append(row)
         if args.create_checks:
@@ -966,6 +967,7 @@ def cmd_control_check(args: argparse.Namespace) -> int:
         event=args.event,
         manifest_path=Path(args.manifest).resolve(),
         publish=args.publish,
+        publish_component_names=args.publish_component,
         include_trunk=not args.no_trunk,
         include_integration=not args.no_integration,
     )
@@ -2928,6 +2930,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pull_request", "push", "release", "workflow_dispatch"],
     )
     control.add_argument("--publish", action="store_true")
+    control.add_argument(
+        "--publish-component",
+        action="append",
+        default=[],
+        dest="publish_component",
+        help="Publish only this image component; may be provided more than once.",
+    )
     control.add_argument("--no-trunk", action="store_true")
     control.add_argument("--no-integration", action="store_true")
     control.add_argument("--check-run", action="store_true")

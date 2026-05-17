@@ -249,11 +249,7 @@ def tracked_artifact_failures(repo_path: Path) -> list[str]:
 def publish_platform_failures(repo: RepoConfig) -> list[str]:
     platforms = _platforms(repo)
     failures: list[str] = []
-    dockerfiles = [repo.path / "Dockerfile"]
-    if repo.is_signoz_suite:
-        agent_dockerfile = str(repo.raw["components"]["agent"].get("dockerfile", ""))
-        if agent_dockerfile:
-            dockerfiles.append(repo.path / agent_dockerfile)
+    dockerfiles = _publish_dockerfiles(repo)
 
     for dockerfile in dockerfiles:
         if not dockerfile.exists():
@@ -272,6 +268,19 @@ def publish_platform_failures(repo: RepoConfig) -> list[str]:
             )
 
     return failures
+
+
+def _publish_dockerfiles(repo: RepoConfig) -> list[Path]:
+    dockerfiles = [repo.path / "Dockerfile"]
+    components = repo.raw.get("components")
+    if isinstance(components, dict):
+        for config in components.values():
+            if not isinstance(config, dict):
+                continue
+            dockerfile = str(config.get("dockerfile", "")).strip()
+            if dockerfile:
+                dockerfiles.append(repo.path / dockerfile)
+    return list(dict.fromkeys(dockerfiles))
 
 
 def pinned_action_failures(repo_path: Path) -> list[str]:

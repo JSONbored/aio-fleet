@@ -115,6 +115,34 @@ repos:
     }
 
 
+def test_github_release_candidates_filter_alpha_channel(monkeypatch) -> None:
+    monkeypatch.setattr(
+        upstream,
+        "http_json",
+        lambda _url: [
+            {"tag_name": "v0.7.1", "prerelease": False},
+            {"tag_name": "v0.7.2-beta.1", "prerelease": True},
+            {"tag_name": "v0.7.2-alpha.1", "prerelease": True},
+            {"tag_name": "v0.7.1-alpha.7", "prerelease": True},
+        ],
+    )
+
+    candidates, skipped = upstream.github_release_candidates_result(
+        "we-promise/sure",
+        stable_only=False,
+        prerelease_channel="alpha",
+        strip_prefix="v",
+    )
+
+    assert [candidate.version for candidate in candidates] == [  # nosec B101
+        "0.7.2-alpha.1",
+        "0.7.1-alpha.7",
+    ]
+    assert {item["reason"] for item in skipped} == {  # nosec B101
+        "outside-alpha-channel"
+    }
+
+
 def test_shared_version_digest_group_uses_one_resolvable_release(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -26,11 +26,19 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
     assert rendered["repo"] == "sure-aio"  # nosec B101
     assert rendered["image"]["name"] == "jsonbored/sure-aio"  # nosec B101
     assert rendered["release"]["profile"] == "upstream-aio-track"  # nosec B101
-    assert rendered["template"]["xml_paths"] == ["sure-aio.xml"]  # nosec B101
+    assert rendered["template"]["xml_paths"] == [  # nosec B101
+        "sure-aio.xml",
+        "sure-aio-alpha.xml",
+    ]
     assert rendered["catalog"]["assets"] == [  # nosec B101
-        {"source": "sure-aio.xml", "target": "sure-aio.xml"}
+        {"source": "sure-aio.xml", "target": "sure-aio.xml"},
+        {"source": "sure-aio-alpha.xml", "target": "sure-aio-alpha.xml"},
     ]
     assert "  xml_paths:\n    - sure-aio.xml\n" in content  # nosec B101
+    assert "    - sure-aio-alpha.xml\n" in content  # nosec B101
+    assert rendered["components"]["sure-alpha"]["release_policy"] == (  # nosec B101
+        "registry_only"
+    )
     assert '    - "Productivity:"\n' in content  # nosec B101
 
 
