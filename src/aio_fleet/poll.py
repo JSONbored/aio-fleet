@@ -10,6 +10,10 @@ from fnmatch import fnmatch
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
 
+class PublishPathResolutionError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class PollTarget:
     repo: RepoConfig
@@ -75,7 +79,10 @@ def publish_components_required(repo: RepoConfig, *, sha: str, event: str) -> li
         return []
     changed_paths = _commit_changed_paths(repo, sha)
     if changed_paths is None:
-        return _publish_components(repo)
+        raise PublishPathResolutionError(
+            f"{repo.name}: unable to resolve changed files for {sha}; "
+            "publish skipped until the commit can be inspected or manually published"
+        )
     return [
         component
         for component in _publish_components(repo)

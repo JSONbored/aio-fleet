@@ -46,21 +46,30 @@ def compute_registry_tags(
     ghcr_image = (ghcr_image_name or f"ghcr.io/{image_name}").lower()
     upstream_version = _read_component_upstream_version(repo, component)
     release_package_tag = _release_package_tag(repo, sha=sha, component=component)
+    version_tags_allowed = _version_tags_allowed(
+        repo, component=component, release_package_tag=release_package_tag
+    )
 
-    dockerhub_tags = [
-        f"{dockerhub_image}:{tag}" for tag in _component_floating_tags(repo, component)
-    ]
-    ghcr_tags = [
-        f"{ghcr_image}:{tag}" for tag in _component_floating_tags(repo, component)
-    ]
-    if upstream_version:
+    dockerhub_tags = []
+    ghcr_tags = []
+    if version_tags_allowed:
+        dockerhub_tags.extend(
+            f"{dockerhub_image}:{tag}"
+            for tag in _component_floating_tags(repo, component)
+        )
+        ghcr_tags.extend(
+            f"{ghcr_image}:{tag}" for tag in _component_floating_tags(repo, component)
+        )
+    if version_tags_allowed and upstream_version:
         dockerhub_tags.append(f"{dockerhub_image}:{upstream_version}")
         ghcr_tags.append(f"{ghcr_image}:{upstream_version}")
         if release_package_tag:
             dockerhub_tags.append(f"{dockerhub_image}:{release_package_tag}")
             ghcr_tags.append(f"{ghcr_image}:{release_package_tag}")
-    dockerhub_tags.append(f"{dockerhub_image}:sha-{sha}")
-    ghcr_tags.append(f"{ghcr_image}:sha-{sha}")
+    dockerhub_tags.append(
+        f"{dockerhub_image}:{_component_sha_tag(repo, component, sha)}"
+    )
+    ghcr_tags.append(f"{ghcr_image}:{_component_sha_tag(repo, component, sha)}")
     return RegistryTagSet(
         dockerhub=dockerhub_tags,
         ghcr=ghcr_tags,
@@ -82,6 +91,17 @@ def component_registry_release_tag(repo: RepoConfig, component: str = "aio") -> 
         return ""
     release_suffix = str(config.get("release_suffix", "aio"))
     return f"{upstream_version}-{release_suffix}.{revision}"
+
+
+def _version_tags_allowed(
+    repo: RepoConfig, *, component: str, release_package_tag: str
+) -> bool:
+    config = component_config(repo, component)
+    if str(config.get("release_policy", "")).strip() == "registry_only":
+        return bool(release_package_tag)
+    if repo.publish_profile == "upstream-aio-track":
+        return bool(release_package_tag)
+    return True
 
 
 def verify_registry_tags(
@@ -203,6 +223,11 @@ def _component_floating_tags(repo: RepoConfig, component: str) -> list[str]:
         return ["latest"]
     cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
     return list(dict.fromkeys(cleaned)) or ["latest"]
+
+
+def _component_sha_tag(repo: RepoConfig, component: str, sha: str) -> str:
+    prefix = str(component_config(repo, component).get("sha_tag_prefix", "sha-"))
+    return f"{prefix}{sha}"
 
 
 def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:
