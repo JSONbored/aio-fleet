@@ -3322,6 +3322,7 @@ def build_parser() -> argparse.ArgumentParser:
             "upstream-aio-track",
             "changelog-version",
             "dify",
+            "multi-component",
             "signoz-suite",
         ],
     )
@@ -3351,6 +3352,7 @@ def build_parser() -> argparse.ArgumentParser:
             "upstream-aio-track",
             "changelog-version",
             "dify",
+            "multi-component",
             "signoz-suite",
         ],
     )

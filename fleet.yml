@@ -13,14 +13,6 @@ dashboard:
       description: Community Apps-facing XML and icon catalog for validated AIO source repo changes.
       catalog_path: /Users/shadowbook/Documents/awesome-unraid
       next_action: Validate catalog state and sync source repo changes only after source validation passes.
-  rehab_repos:
-    nanoclaw-aio:
-      path: /Users/shadowbook/Documents/nanoclaw-aio
-      github_repo: JSONbored/nanoclaw-aio
-      public: true
-      status: rehab
-      description: Neglected pre-aio-fleet AIO repo that needs a full template/runtime/container overhaul before active fleet promotion.
-      next_action: Run a rehab audit, remove legacy shared files, export .aio-fleet.yml, then prove aio-fleet / required before promotion.
 defaults:
   python_version: "3.13"
   trunk_org_slug: aethereal
@@ -1103,3 +1095,100 @@ repos:
         - DonateText
         - DonateLink
     upstream_version_key: UPSTREAM_SIGNOZ_VERSION
+  nanoclaw-aio:
+    path: /Users/shadowbook/Documents/nanoclaw-aio
+    public: true
+    workflow_name: CI / NanoClaw AIO
+    app_slug: nanoclaw-aio
+    image_name: jsonbored/nanoclaw-aio
+    docker_cache_scope: nanoclaw-aio-image
+    pytest_image_tag: nanoclaw-aio:pytest
+    unit_pytest_args: tests/template
+    integration_pytest_args: tests/integration -m integration
+    publish_profile: multi-component
+    runtime_supervisor: tini
+    release_name: NanoClaw-AIO
+    check_upstream_name: Check NanoClaw Upstream
+    upstream_components:
+      - nanoclaw-aio
+      - nanoclaw-agent
+    upstream_commit_paths:
+      - Dockerfile
+      - components/nanoclaw-agent/Dockerfile
+    upstream_name: NanoClaw
+    upstream_monitor:
+      - component: aio
+        name: NanoClaw
+        source: github-releases
+        repo: nanocoai/nanoclaw
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/nanocoai/nanoclaw/releases
+      - component: agent
+        name: NanoClaw Agent
+        source: github-releases
+        repo: nanocoai/nanoclaw
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        version_key: UPSTREAM_VERSION
+        stable_only: true
+        strategy: pr
+        release_notes_url: https://github.com/nanocoai/nanoclaw/releases
+    image_description: Telegram-first Unraid AIO wrapper for NanoClaw v2
+    publish_platforms: linux/amd64
+    catalog_assets:
+      - source: nanoclaw-aio.xml
+        target: nanoclaw-aio.xml
+    components:
+      aio:
+        image_name: jsonbored/nanoclaw-aio
+        dockerfile: Dockerfile
+        upstream_config: upstream.toml
+        docker_cache_scope: nanoclaw-aio-image
+        oci_description: Telegram-first Unraid AIO wrapper for NanoClaw v2
+        release_suffix: aio
+        floating_tags:
+          - latest
+        upstream_version_key: UPSTREAM_VERSION
+        xml_paths:
+          - nanoclaw-aio.xml
+      agent:
+        image_name: jsonbored/nanoclaw-agent
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        context: components/nanoclaw-agent
+        upstream_config: upstream.toml
+        docker_cache_scope: nanoclaw-agent-image
+        oci_description: Helper sandbox image spawned by nanoclaw-aio
+        release_policy: registry_only
+        release_suffix: agent
+        registry_revision_arg: AGENT_REVISION
+        floating_tags:
+          - latest
+        upstream_version_key: UPSTREAM_VERSION
+    validation:
+      docker_socket_required: true
+      required_targets:
+        - /appdata
+        - /var/run/docker.sock
+        - TELEGRAM_BOT_TOKEN
+        - ANTHROPIC_API_KEY
+        - CLAUDE_CODE_OAUTH_TOKEN
+        - ANTHROPIC_AUTH_TOKEN
+        - ANTHROPIC_BASE_URL
+        - ONECLI_URL
+        - ONECLI_API_KEY
+        - CONTAINER_IMAGE
+        - CONTAINER_IMAGE_BASE
+        - CONTAINER_TIMEOUT
+        - IDLE_TIMEOUT
+        - CONTAINER_MAX_OUTPUT_SIZE
+        - MAX_MESSAGES_PER_PROMPT
+        - MAX_CONCURRENT_CONTAINERS
+        - LOG_LEVEL
+        - ASSISTANT_NAME
+        - ASSISTANT_HAS_OWN_NUMBER
+        - NANOCLAW_HOST_APPDATA_DIR
+        - TZ
+      required_text_fields:
+        - ReadMe

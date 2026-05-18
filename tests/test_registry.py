@@ -386,6 +386,57 @@ def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> Non
     assert "jsonbored/signoz-agent:0.151.0" in command  # nosec B101
 
 
+def test_nanoclaw_component_tags_use_paired_release_model(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    sha = "f" * 40
+
+    def fake_version(_repo: object, component: str = "aio") -> str:
+        return "v2.0.63"
+
+    def fake_release_tag(_repo: object, *, component: str = "aio", **_kwargs) -> str:
+        return "v2.0.63-aio.1" if component == "aio" else "v2.0.63-agent.1"
+
+    monkeypatch.setattr(registry, "_read_component_upstream_version", fake_version)
+    monkeypatch.setattr(registry, "_release_package_tag", fake_release_tag)
+    monkeypatch.setattr(registry, "_read_component_arg", lambda *_args: "1")
+
+    aio = registry.compute_registry_tags(repo, sha=sha, component="aio")
+    agent = registry.compute_registry_tags(repo, sha=sha, component="agent")
+
+    assert aio.dockerhub == [  # nosec B101
+        "jsonbored/nanoclaw-aio:latest",
+        "jsonbored/nanoclaw-aio:v2.0.63",
+        "jsonbored/nanoclaw-aio:v2.0.63-aio.1",
+        f"jsonbored/nanoclaw-aio:sha-{sha}",
+    ]
+    assert agent.dockerhub == [  # nosec B101
+        "jsonbored/nanoclaw-agent:latest",
+        "jsonbored/nanoclaw-agent:v2.0.63",
+        "jsonbored/nanoclaw-agent:v2.0.63-agent.1",
+        f"jsonbored/nanoclaw-agent:sha-{sha}",
+    ]
+    assert set(aio.all_tags).isdisjoint(agent.all_tags)  # nosec B101
+
+
+def test_nanoclaw_agent_publish_command_uses_component_context(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "v2.0.63"
+    )
+    monkeypatch.setattr(
+        registry, "_release_package_tag", lambda *_args, **_kwargs: "v2.0.63-agent.1"
+    )
+
+    command = registry_publish_command(repo, sha="c" * 40, component="agent")
+
+    assert "--file" in command  # nosec B101
+    assert "components/nanoclaw-agent/Dockerfile" in command  # nosec B101
+    assert command[-1] == "components/nanoclaw-agent"  # nosec B101
+    assert "jsonbored/nanoclaw-agent:v2.0.63" in command  # nosec B101
+    assert "jsonbored/nanoclaw-aio:v2.0.63" not in command  # nosec B101
+
+
 def test_component_registry_tags_use_configured_component_image(
     tmp_path: Path, monkeypatch
 ) -> None:
