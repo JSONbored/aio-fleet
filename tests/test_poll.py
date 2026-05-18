@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from aio_fleet import poll
 from aio_fleet.manifest import load_manifest
 
@@ -87,6 +89,9 @@ def test_poll_targets_emit_checkout_submodules_for_same_repo_prs_and_main(
         ],
     )
     monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
 
     targets = poll.poll_targets(manifest)
 
@@ -195,6 +200,11 @@ def test_publish_components_required_can_target_alpha_component(
     assert poll.publish_components_required(  # nosec B101
         repo, sha="a" * 40, event="push"
     ) == ["aio"]
+
+    monkeypatch.setattr(poll, "_commit_changed_paths", lambda _repo, _sha: None)
+
+    with pytest.raises(poll.PublishPathResolutionError):
+        poll.publish_components_required(repo, sha="a" * 40, event="push")
 
     monkeypatch.setattr(
         poll, "_commit_changed_paths", lambda _repo, _sha: ["example-aio.xml"]

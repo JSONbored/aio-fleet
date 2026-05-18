@@ -6,6 +6,8 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from aio_fleet.public_text import assert_public_text
+
 SUCCESS_STATES = {"success", "succeeded", "ok", "up", "passed"}
 FAILURE_STATES = {"failure", "failed", "error", "down", "timed_out", "cancelled"}
 WARNING_STATES = {"warning", "blocked", "missing", "updates", "attention"}
@@ -355,6 +357,7 @@ def emit_alert(
     force_webhook: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    assert_public_text(json.dumps(payload.as_dict(), sort_keys=True), context="alert")
     deliveries: dict[str, Any] = {
         "payload": payload.as_dict(),
         "kuma": "skipped",

@@ -19,6 +19,7 @@ from aio_fleet.changelog import component_config
 from aio_fleet.checks import check_run_payload, upsert_check_run
 from aio_fleet.github_writer import commit_paths_to_branch
 from aio_fleet.manifest import RepoConfig
+from aio_fleet.public_text import assert_public_text
 from aio_fleet.safety import assess_expected_update, render_safety_summary
 
 SEMVER_RE = re.compile(
@@ -1250,6 +1251,8 @@ def run_git(
 
 
 def upsert_pr(repo: RepoConfig, *, branch: str, title: str, body: str) -> str:
+    assert_public_text(title, context="upstream PR title")
+    assert_public_text(body, context="upstream PR body")
     gh = required_executable("gh")
     env = github_cli_env()
     existing = subprocess.run(  # nosec B603

@@ -53,6 +53,7 @@ from aio_fleet.fleet_dashboard import (
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
+from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
@@ -1151,10 +1152,16 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     print(f"{repo.name}:{args.component}: registry=publishing", flush=True)
     try:
         with _registry_publish_environment(repo) as publish_env:
+            preserved = _registry_preserve_tag_digests(
+                _registry_preserve_tags(repo, args.component), env=publish_env
+            )
             result = _run_streaming(command, cwd=repo.path, env=publish_env)
             if result.returncode != 0:
                 return result.returncode
             verification_failures = verify_registry_tags(tags.all_tags, env=publish_env)
+            verification_failures.extend(
+                _registry_preserve_tag_failures(preserved, env=publish_env)
+            )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1173,6 +1180,65 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
         )
         return 1
     return 0
+
+
+def _registry_preserve_tags(repo: RepoConfig, component: str) -> list[str]:
+    value = component_config(repo, component).get("preserve_tags", [])
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, list):
+        candidates = [str(item) for item in value]
+    else:
+        candidates = []
+    return [tag.strip() for tag in candidates if tag.strip()]
+
+
+def _registry_preserve_tag_digests(
+    tags: list[str], *, env: dict[str, str] | None
+) -> dict[str, str]:
+    digests: dict[str, str] = {}
+    for tag in tags:
+        digest = _registry_tag_digest(tag, env=env)
+        if not digest:
+            raise RuntimeError(f"{tag}: unable to capture pre-publish digest")
+        digests[tag] = digest
+    return digests
+
+
+def _registry_preserve_tag_failures(
+    expected: dict[str, str], *, env: dict[str, str] | None
+) -> list[str]:
+    failures: list[str] = []
+    for tag, before in expected.items():
+        after = _registry_tag_digest(tag, env=env)
+        if not after:
+            failures.append(f"{tag}: unable to capture post-publish digest")
+        elif after != before:
+            failures.append(
+                f"{tag}: protected digest changed during component publish "
+                f"({before} -> {after})"
+            )
+    return failures
+
+
+def _registry_tag_digest(tag: str, *, env: dict[str, str] | None) -> str:
+    docker = shutil.which("docker")
+    if docker is None:
+        return ""
+    result = subprocess.run(  # nosec B603
+        [docker, "buildx", "imagetools", "inspect", tag],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        return ""
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Digest:"):
+            return stripped.split(":", 1)[1].strip()
+    return ""
 
 
 @contextmanager
@@ -2833,6 +2899,8 @@ def _catalog_commit_and_pr(
     paths: list[Path],
     dry_run: bool,
 ) -> None:
+    assert_public_text(title, context="catalog PR title")
+    assert_public_text(body, context="catalog PR body")
     relative_paths = [str(path.relative_to(catalog_path)) for path in paths]
     commands = [
         ["git", "config", "user.name", "github-actions[bot]"],

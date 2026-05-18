@@ -57,9 +57,10 @@ def test_compute_registry_tags_tolerates_missing_release_commit(monkeypatch) -> 
     tags = registry.compute_registry_tags(repo, sha="b" * 40)
 
     assert tags.dockerhub == [  # nosec B101
-        "jsonbored/sure-aio:latest",
-        "jsonbored/sure-aio:0.7.0",
         f"jsonbored/sure-aio:sha-{'b' * 40}",
+    ]
+    assert tags.ghcr == [  # nosec B101
+        f"ghcr.io/jsonbored/sure-aio:sha-{'b' * 40}",
     ]
 
 
@@ -236,17 +237,45 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
 
     assert tags.release_package_tag == "0.7.1-alpha.7-aio.1"  # nosec B101
     assert tags.dockerhub == [  # nosec B101
-        "jsonbored/sure-aio-alpha:latest-alpha",
-        "jsonbored/sure-aio-alpha:0.7.1-alpha.7",
-        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
-        f"jsonbored/sure-aio-alpha:sha-{sha}",
+        "jsonbored/sure-aio:latest-alpha",
+        "jsonbored/sure-aio:0.7.1-alpha.7",
+        "jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
+        f"jsonbored/sure-aio:sha-alpha-{sha}",
     ]
     assert tags.ghcr == [  # nosec B101
-        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
-        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7",
-        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
-        f"ghcr.io/jsonbored/sure-aio-alpha:sha-{sha}",
+        "ghcr.io/jsonbored/sure-aio:latest-alpha",
+        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7",
+        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
+        f"ghcr.io/jsonbored/sure-aio:sha-alpha-{sha}",
     ]
+
+
+def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    sha = "a" * 40
+
+    def fake_version(_repo: object, component: str = "aio") -> str:
+        return "0.7.1-alpha.7" if component == "sure-alpha" else "0.7.0-hotfix.3"
+
+    def fake_release_tag(_repo: object, *, component: str = "aio", **_kwargs) -> str:
+        return (
+            "0.7.1-alpha.7-aio.1"
+            if component == "sure-alpha"
+            else "0.7.0-hotfix.3-aio.1"
+        )
+
+    monkeypatch.setattr(registry, "_read_component_upstream_version", fake_version)
+    monkeypatch.setattr(registry, "_release_package_tag", fake_release_tag)
+    monkeypatch.setattr(registry, "_read_component_arg", lambda *_args: "1")
+
+    stable = registry.compute_registry_tags(repo, sha=sha, component="aio")
+    alpha = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
+
+    assert set(stable.all_tags).isdisjoint(alpha.all_tags)  # nosec B101
+    assert "jsonbored/sure-aio:latest" in stable.dockerhub  # nosec B101
+    assert "jsonbored/sure-aio:latest-alpha" in alpha.dockerhub  # nosec B101
+    assert f"jsonbored/sure-aio:sha-{sha}" in stable.dockerhub  # nosec B101
+    assert f"jsonbored/sure-aio:sha-alpha-{sha}" in alpha.dockerhub  # nosec B101
 
 
 def test_component_release_tag_allows_other_component_release_followup(

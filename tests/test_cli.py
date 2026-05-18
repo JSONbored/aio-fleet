@@ -1036,6 +1036,59 @@ def test_registry_publish_rebuilds_when_tags_are_current(
     )  # nosec B101
 
 
+def test_registry_publish_fails_when_preserved_tag_changes(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    components:
+      sure-alpha:
+        image_name: jsonbored/example-aio
+        dockerfile: Dockerfile.alpha
+        floating_tags:
+          - latest-alpha
+        sha_tag_prefix: sha-alpha-
+        preserve_tags:
+          - jsonbored/example-aio:latest
+""")
+    monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
+    monkeypatch.setattr(
+        cli, "_run_streaming", lambda *_args, **_kwargs: SimpleNamespace(returncode=0)
+    )
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, **_kwargs: [])
+    digests = iter(["sha256:before", "sha256:after"])
+    monkeypatch.setattr(
+        cli, "_registry_tag_digest", lambda *_args, **_kwargs: next(digests)
+    )
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            component="sure-alpha",
+            dry_run=False,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    captured = capsys.readouterr()
+    assert "protected digest changed" in captured.err  # nosec B101
+
+
 def test_registry_publish_refuses_template_profile(tmp_path: Path, capsys) -> None:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
