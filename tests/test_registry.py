@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -653,10 +654,14 @@ def test_delete_dockerhub_tags_deletes_only_guarded_tags(monkeypatch) -> None:
 
     def fake_urlopen(request, timeout: int):
         del timeout
-        if request.full_url == "https://hub.docker.com/v2/users/login/":
-            return Response(200, b'{"token":"hub-jwt"}')
+        if request.full_url == "https://hub.docker.com/v2/auth/token":
+            assert json.loads(request.data.decode()) == {  # nosec B101
+                "identifier": "jsonbored",
+                "secret": "hub-token",
+            }
+            return Response(200, b'{"access_token":"hub-jwt"}')
         assert request.get_method() == "DELETE"  # nosec B101
-        assert request.headers["Authorization"] == "JWT hub-jwt"  # nosec B101
+        assert request.headers["Authorization"] == "Bearer hub-jwt"  # nosec B101
         deleted_urls.append(request.full_url)
         return Response(204)
 
@@ -675,8 +680,8 @@ def test_delete_dockerhub_tags_deletes_only_guarded_tags(monkeypatch) -> None:
         {"tag": "0.7.1-alpha.7-aio.4", "state": "deleted"},
     ]
     assert deleted_urls == [  # nosec B101
-        "https://hub.docker.com/v2/repositories/jsonbored/sure-aio/tags/latest-alpha/",
-        "https://hub.docker.com/v2/repositories/jsonbored/sure-aio/tags/0.7.1-alpha.7-aio.4/",
+        "https://hub.docker.com/v2/namespaces/jsonbored/repositories/sure-aio/tags/latest-alpha",
+        "https://hub.docker.com/v2/namespaces/jsonbored/repositories/sure-aio/tags/0.7.1-alpha.7-aio.4",
     ]
 
 
