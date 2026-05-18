@@ -49,6 +49,10 @@ def compute_registry_tags(
     version_tags_allowed = _version_tags_allowed(
         repo, component=component, release_package_tag=release_package_tag
     )
+    include_upstream_version_tag = _component_bool(
+        repo, component, "include_upstream_version_tag", True
+    )
+    include_sha_tag = _component_bool(repo, component, "include_sha_tag", True)
 
     dockerhub_tags = []
     ghcr_tags = []
@@ -60,16 +64,17 @@ def compute_registry_tags(
         ghcr_tags.extend(
             f"{ghcr_image}:{tag}" for tag in _component_floating_tags(repo, component)
         )
-    if version_tags_allowed and upstream_version:
+    if version_tags_allowed and include_upstream_version_tag and upstream_version:
         dockerhub_tags.append(f"{dockerhub_image}:{upstream_version}")
         ghcr_tags.append(f"{ghcr_image}:{upstream_version}")
-        if release_package_tag:
-            dockerhub_tags.append(f"{dockerhub_image}:{release_package_tag}")
-            ghcr_tags.append(f"{ghcr_image}:{release_package_tag}")
-    dockerhub_tags.append(
-        f"{dockerhub_image}:{_component_sha_tag(repo, component, sha)}"
-    )
-    ghcr_tags.append(f"{ghcr_image}:{_component_sha_tag(repo, component, sha)}")
+    if version_tags_allowed and release_package_tag:
+        dockerhub_tags.append(f"{dockerhub_image}:{release_package_tag}")
+        ghcr_tags.append(f"{ghcr_image}:{release_package_tag}")
+    if include_sha_tag:
+        dockerhub_tags.append(
+            f"{dockerhub_image}:{_component_sha_tag(repo, component, sha)}"
+        )
+        ghcr_tags.append(f"{ghcr_image}:{_component_sha_tag(repo, component, sha)}")
     return RegistryTagSet(
         dockerhub=dockerhub_tags,
         ghcr=ghcr_tags,
@@ -228,6 +233,15 @@ def _component_floating_tags(repo: RepoConfig, component: str) -> list[str]:
 def _component_sha_tag(repo: RepoConfig, component: str, sha: str) -> str:
     prefix = str(component_config(repo, component).get("sha_tag_prefix", "sha-"))
     return f"{prefix}{sha}"
+
+
+def _component_bool(repo: RepoConfig, component: str, key: str, default: bool) -> bool:
+    value = component_config(repo, component).get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
 
 
 def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:

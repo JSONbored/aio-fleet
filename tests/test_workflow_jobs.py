@@ -136,7 +136,7 @@ repos:
     components:
       aio: {}
       sure-alpha:
-        image_name: jsonbored/sure-aio
+        image_name: jsonbored/sure-aio-alpha
 """)
 
     def fake_checkout_refs(refs, *, token: str, submodules: str):
@@ -166,8 +166,8 @@ repos:
                             "repo": "sure-aio",
                             "component": component,
                             "sha": "a" * 40,
-                            "dockerhub": ["jsonbored/sure-aio:latest-alpha"],
-                            "ghcr": ["ghcr.io/jsonbored/sure-aio:latest-alpha"],
+                            "dockerhub": ["jsonbored/sure-aio-alpha:latest-alpha"],
+                            "ghcr": ["ghcr.io/jsonbored/sure-aio-alpha:latest-alpha"],
                             "failures": [],
                         }
                     ]
