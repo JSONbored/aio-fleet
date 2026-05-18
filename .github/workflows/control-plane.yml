@@ -336,6 +336,7 @@ jobs:
         env:
           TARGET_REPO: ${{ inputs.repo }}
           TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
           TARGET_EVENT: ${{ inputs.event }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -356,6 +357,7 @@ jobs:
         env:
           TARGET_REPO: ${{ inputs.repo }}
           TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
           TARGET_EVENT: ${{ inputs.event }}
           PUBLISH: ${{ inputs.publish }}
           PUBLISH_COMPONENT: ${{ inputs.publish_component }}
@@ -374,6 +376,7 @@ jobs:
             --repo "${TARGET_REPO}"
             --repo-path app-repo
             --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
             --event "${TARGET_EVENT}"
           )
           if [[ "${PUBLISH}" == "true" ]]; then
@@ -470,7 +473,7 @@ jobs:
           exit 0
 
   poll-checks:
-    name: poll-check (${{ matrix.target.repo }})
+    name: poll-check (${{ matrix.target.repo }} / ${{ matrix.target.source }})
     needs: control-plane
     if: ${{ needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_targets == 'true' }}
     runs-on: ubuntu-latest
@@ -558,6 +561,7 @@ jobs:
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
           TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
           TARGET_EVENT: ${{ matrix.target.event }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -577,6 +581,7 @@ jobs:
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
           TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH: ${{ matrix.target.publish }}
           TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
@@ -594,6 +599,7 @@ jobs:
             --repo "${TARGET_REPO}"
             --repo-path app-repo
             --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
             --event "${TARGET_EVENT}"
           )
           if [[ "${TARGET_PUBLISH}" == "true" ]]; then
@@ -685,15 +691,37 @@ jobs:
           DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
           TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
           set +e
           if [[ "${JOB_STATUS}" == "success" ]]; then
+            exit 0
+          fi
+          if [[ "${TARGET_PUBLISH}" == "true" && -f "${CONTROL_REPORT}" ]]; then
+            exit 0
+          fi
+          dedupe="poll-check:${TARGET_REPO}:${TARGET_SOURCE}:${TARGET_SHA}"
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event poll-check \
+              --report-json "${CONTROL_REPORT}" \
+              --dedupe-key "${dedupe}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
             exit 0
           fi
           python -m aio_fleet alert send \
             --event poll-check \
             --status "${JOB_STATUS}" \
             --repo "${TARGET_REPO}" \
+            --dedupe-key "${dedupe}" \
+            --annotation "source=${TARGET_SOURCE}" \
+            --annotation "event=${TARGET_EVENT}" \
+            --annotation "sha=${TARGET_SHA}" \
             --summary "aio-fleet required check failed for ${TARGET_REPO}" \
             --details-url "${DETAILS_URL}" \
             --format json

@@ -213,6 +213,25 @@ def test_workflow_forwards_component_scoped_publish() -> None:
     assert "--publish-component" in poll_run["run"]  # nosec B101
 
 
+def test_poll_failure_alert_uses_report_context_and_skips_publish_duplicates() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    poll = workflow["jobs"]["poll-checks"]
+    failure = _step(poll, "Alert poll-check failure")
+    run = failure["run"]
+
+    assert "matrix.target.source" in poll["name"]  # nosec B101
+    assert "TARGET_SOURCE" in failure["env"]  # nosec B101
+    assert "TARGET_SHA" in failure["env"]  # nosec B101
+    assert "CONTROL_REPORT" in failure["env"]  # nosec B101
+    assert (  # nosec B101
+        '"${TARGET_PUBLISH}" == "true" && -f "${CONTROL_REPORT}"' in run
+    )
+    assert "--report-json" in run  # nosec B101
+    assert (  # nosec B101
+        "poll-check:${TARGET_REPO}:${TARGET_SOURCE}:${TARGET_SHA}" in run
+    )
+
+
 def test_privileged_completion_restores_trusted_checkout_first() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 

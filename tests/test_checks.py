@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -125,3 +126,24 @@ def test_check_run_satisfied_requires_completed_success(monkeypatch) -> None:
     assert checks.check_run_satisfied(  # nosec B101
         repo, sha="e" * 40, event="pull_request", token="token"  # nosec B106
     )
+
+
+def test_check_run_forbidden_error_is_concise(monkeypatch) -> None:
+    def fake_read(*_args: object, **_kwargs: object):
+        raise urllib.error.HTTPError(
+            "https://api.github.com/repos/JSONbored/nanoclaw-aio/check-runs",
+            403,
+            "Forbidden",
+            {},
+            None,
+        )
+
+    monkeypatch.setattr(checks, "read_urlopen_with_retry", fake_read)
+
+    with pytest.raises(RuntimeError, match="Checks: write access"):
+        checks._github_request(  # noqa: SLF001
+            "https://api.github.com/repos/JSONbored/nanoclaw-aio/check-runs",
+            token="token",  # nosec B106
+            method="POST",
+            payload={},
+        )

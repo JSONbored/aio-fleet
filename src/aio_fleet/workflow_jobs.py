@@ -11,6 +11,9 @@ from typing import Any
 
 import yaml
 
+from aio_fleet.manifest import load_manifest
+from aio_fleet.poll import PublishPathResolutionError, publish_components_required
+
 
 def poll_outputs(
     *, report_path: Path, run_checks: bool, github_output: Path | None
@@ -244,13 +247,12 @@ def registry_audit_checkouts(
     token: str,
     github_output: Path | None,
 ) -> dict[str, Any]:
-    manifest = yaml.safe_load(manifest_path.read_text()) or {}
-    owner = manifest["owner"]
+    manifest = load_manifest(manifest_path)
     checkout_root.mkdir(exist_ok=True)
     report: dict[str, Any] = {"repos": []}
     status = 0
-    for repo, repo_config in manifest["repos"].items():
-        if repo_config.get("publish_profile") == "template":
+    for repo, repo_config in manifest.repos.items():
+        if repo_config.publish_profile == "template":
             report["repos"].append(
                 {
                     "repo": repo,
@@ -264,7 +266,7 @@ def registry_audit_checkouts(
             continue
         worktree = checkout_root / repo
         checkout = _checkout_refs(
-            [(repo, repo_config.get("github_repo", f"{owner}/{repo}"), worktree)],
+            [(repo, repo_config.github_repo, worktree)],
             token=token,
             submodules="none",
         )[0]
@@ -285,8 +287,39 @@ def registry_audit_checkouts(
             env=_minimal_env(),
             text=True,
         ).strip()
-        components = _publish_components(repo_config)
+        components = _publish_components(repo_config.raw)
+        try:
+            required_components = set(
+                publish_components_required(repo_config, sha=sha, event="push")
+            )
+        except PublishPathResolutionError as exc:
+            status = 1
+            for component in components:
+                report["repos"].append(
+                    {
+                        "repo": repo,
+                        "component": component,
+                        "sha": sha,
+                        "dockerhub": [],
+                        "ghcr": [],
+                        "failures": [str(exc)],
+                    }
+                )
+            continue
         for component in components:
+            if component not in required_components:
+                report["repos"].append(
+                    {
+                        "repo": repo,
+                        "component": component,
+                        "sha": sha,
+                        "dockerhub": [],
+                        "ghcr": [],
+                        "failures": [],
+                        "skipped": "not-publish-related",
+                    }
+                )
+                continue
             verify = subprocess.run(  # nosec B603
                 [
                     sys.executable,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -234,5 +235,22 @@ def _github_request(
             **({"Content-Type": "application/json"} if payload is not None else {}),
         },
     )
-    raw = read_urlopen_with_retry(request, timeout=30).decode("utf-8")
+    try:
+        raw = read_urlopen_with_retry(request, timeout=30).decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            raise RuntimeError(_forbidden_check_run_message(url)) from None
+        raise
     return json.loads(raw or "{}")
+
+
+def _forbidden_check_run_message(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    repo = "unknown"
+    if len(parts) >= 4 and parts[:2] == ["repos"]:
+        repo = f"{parts[2]}/{parts[3]}"
+    return (
+        f"GitHub check-run request forbidden for {repo}; verify the AIO Fleet "
+        "GitHub App installation has Checks: write access for that repo"
+    )

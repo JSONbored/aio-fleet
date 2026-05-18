@@ -210,6 +210,24 @@ def test_run_steps_includes_failure_detail(monkeypatch, tmp_path: Path) -> None:
     ]
 
 
+def test_run_steps_prefers_actionable_failure_detail(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(*_args: object, **_kwargs: object):
+        return subprocess.CompletedProcess(
+            ["trunk"],
+            1,
+            "Checked 1 file\nIncorrect formatting\nTrunk is now managing hooks\n",
+            "",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    failures = run_steps([Step("trunk", ["trunk"], tmp_path)], dry_run=False)
+
+    assert failures == ["trunk: exit 1: Incorrect formatting"]  # nosec B101
+
+
 def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
     monkeypatch, tmp_path: Path
 ) -> None:
