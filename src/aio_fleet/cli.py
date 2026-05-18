@@ -1896,11 +1896,33 @@ def _publish_github_prerelease(
     target = _git_head(repo.path)
     env = _github_cli_env()
     view = _run(
-        ["gh", "release", "view", tag, "--repo", repo.github_repo],
+        [
+            "gh",
+            "release",
+            "view",
+            tag,
+            "--repo",
+            repo.github_repo,
+            "--json",
+            "targetCommitish",
+            "--jq",
+            ".targetCommitish",
+        ],
         cwd=repo.path,
         env=env,
     )
     action = "updated" if view.returncode == 0 else "created"
+    if action == "updated":
+        existing_target = view.stdout.strip()
+        if existing_target and existing_target != target:
+            print(
+                f"{repo.name}:{component}: existing prerelease {tag} targets "
+                f"{existing_target}; refusing to retarget immutable release to "
+                f"{target}. Bump the component AIO revision or publish from the "
+                "original release commit.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
     command = [
         "gh",
         "release",
@@ -1914,9 +1936,9 @@ def _publish_github_prerelease(
         notes,
         "--prerelease",
         "--latest=false",
-        "--target",
-        target,
     ]
+    if action == "created":
+        command.extend(["--target", target])
     if dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         dry_action = "would-update" if action == "updated" else "would-create"

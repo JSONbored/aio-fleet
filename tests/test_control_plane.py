@@ -163,6 +163,7 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
     assert publish.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
     release = steps[names.index("github-prerelease-sure-alpha")]
     assert release.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
+    assert release.stream_output is False  # nosec B101
 
 
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
@@ -189,6 +190,24 @@ def test_run_steps_reports_timeout(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert failures == ["slow-step: timed out after 5s"]  # nosec B101
+
+
+def test_run_steps_includes_failure_detail(monkeypatch, tmp_path: Path) -> None:
+    def fake_run(*_args: object, **_kwargs: object):
+        return subprocess.CompletedProcess(
+            ["release"],
+            1,
+            "stdout context\n",
+            "first stderr line\nretarget immutable release\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    failures = run_steps([Step("release-step", ["release"], tmp_path)], dry_run=False)
+
+    assert failures == [  # nosec B101
+        "release-step: exit 1: retarget immutable release"
+    ]
 
 
 def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
