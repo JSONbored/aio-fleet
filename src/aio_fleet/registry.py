@@ -183,6 +183,12 @@ def delete_dockerhub_tags(
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 results.append({"tag": tag, "state": "missing"})
+            elif error.code == 403:
+                raise RuntimeError(
+                    f"{tag}: Docker Hub delete forbidden for "
+                    f"{namespace}/{repository}; the Docker Hub token "
+                    "authenticated but lacks tag delete/admin permission"
+                ) from error
             else:
                 raise RuntimeError(
                     f"{tag}: Docker Hub delete failed: HTTP {error.code}: "

@@ -183,7 +183,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dockerhub-tag-cleanup' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_DELETE_TOKEN || secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_IMAGE: ${{ inputs.dockerhub_image }}
           DOCKERHUB_TAGS: ${{ inputs.dockerhub_tags }}
           DRY_RUN: ${{ inputs.dry_run }}

@@ -125,7 +125,7 @@ def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
         "${{ secrets.DOCKERHUB_USERNAME }}"
     )
     assert cleanup["env"]["DOCKERHUB_TOKEN"] == (  # nosec B101
-        "${{ secrets.DOCKERHUB_TOKEN }}"
+        "${{ secrets.DOCKERHUB_DELETE_TOKEN || secrets.DOCKERHUB_TOKEN }}"
     )
     assert "registry delete-dockerhub-tags" in cleanup["run"]  # nosec B101
     assert "--required-substring" in cleanup["run"]  # nosec B101
