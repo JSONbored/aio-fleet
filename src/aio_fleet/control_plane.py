@@ -291,9 +291,19 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="")
         if result.returncode != 0:
-            failures.append(f"{step.name}: exit {result.returncode}")
+            detail = _failure_detail(result.stdout, result.stderr)
+            suffix = f": {detail}" if detail else ""
+            failures.append(f"{step.name}: exit {result.returncode}{suffix}")
             break
     return failures
+
+
+def _failure_detail(stdout: str, stderr: str) -> str:
+    for output in (stderr, stdout):
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return ""
 
 
 def _step_environment(
@@ -529,7 +539,6 @@ def _github_release_publish_step(
             component,
         ],
         _trusted_aio_root(),
-        stream_output=True,
         timeout_seconds=_repo_timeout_seconds(
             repo, "github_release_publish_timeout_seconds", default=300
         ),
