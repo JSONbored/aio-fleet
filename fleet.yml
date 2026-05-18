@@ -114,6 +114,10 @@ repos:
         registry_revision_arg: AIO_REVISION
         github_release_latest: false
         github_release_title_prefix: Sure AIO Alpha
+        release_customization_notes:
+          - Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.
+          - Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.
+          - Keep alpha passkey/WebAuthn template controls separate from stable.
         floating_tags:
           - latest-alpha
         sha_tag_prefix: sha-alpha-

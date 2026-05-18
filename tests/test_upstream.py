@@ -304,6 +304,10 @@ repos:
         release_changelog: CHANGELOG.alpha.md
         release_suffix: aio
         registry_revision_arg: AIO_REVISION
+        release_customization_notes:
+          - Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.
+          - Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.
+          - Keep alpha passkey/WebAuthn template controls separate from stable.
 """)
 
     def fake_http_json(url: str, _headers=None):
@@ -329,7 +333,7 @@ repos:
     assert "ARG AIO_REVISION=1" in text  # nosec B101
     changelog_text = changelog.read_text()
     assert "## 0.7.1-alpha.7-aio.1" in changelog_text  # nosec B101
-    assert "Track upstream Sure alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
+    assert "Track upstream Sure Alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
     assert "SURE_IMPORT_MAX_NDJSON_SIZE_MB" in changelog_text  # nosec B101
     assert "passkey/WebAuthn template controls" in changelog_text  # nosec B101
 
