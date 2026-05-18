@@ -22,6 +22,7 @@ from aio_fleet.cli import (
     cmd_fleet_report_schema,
     cmd_fleet_report_validate,
     cmd_infra_doctor,
+    cmd_registry_delete_dockerhub_tags,
     cmd_onboard_repo,
     cmd_poll,
     cmd_promote_rehab,
@@ -1190,6 +1191,30 @@ repos:
         "unraid-aio-template: registry publish is disabled for template-profile repos"
         in capsys.readouterr().err
     )  # nosec B101
+
+
+def test_registry_delete_dockerhub_tags_dry_run_without_credentials(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+
+    result = cmd_registry_delete_dockerhub_tags(
+        Namespace(
+            image="jsonbored/sure-aio",
+            tag=["latest-alpha"],
+            tag_list="0.7.1-alpha.7-aio.4",
+            required_substring="alpha",
+            dry_run=True,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert capsys.readouterr().out.splitlines() == [  # nosec B101
+        "jsonbored/sure-aio:latest-alpha: would-delete",
+        "jsonbored/sure-aio:0.7.1-alpha.7-aio.4: would-delete",
+    ]
 
 
 def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(

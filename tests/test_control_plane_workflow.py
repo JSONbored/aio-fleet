@@ -106,6 +106,32 @@ def test_alert_test_mode_uses_alert_webhook_secret_only() -> None:
     assert "--dry-run" not in alert_test["run"]  # nosec B101
 
 
+def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    on_config = workflow.get("on", workflow.get(True))
+    inputs = on_config["workflow_dispatch"]["inputs"]
+    mode = inputs["mode"]
+    cleanup = _step(workflow["jobs"]["control-plane"], "Delete Docker Hub tags")
+
+    assert len(inputs) <= 10  # nosec B101
+    assert "dockerhub-tag-cleanup" in mode["options"]  # nosec B101
+    assert "dockerhub_image" in inputs  # nosec B101
+    assert "dockerhub_tags" in inputs  # nosec B101
+    assert cleanup["if"] == (  # nosec B101
+        "${{ github.event_name == 'workflow_dispatch' && "
+        "inputs.mode == 'dockerhub-tag-cleanup' }}"
+    )
+    assert cleanup["env"]["DOCKERHUB_USERNAME"] == (  # nosec B101
+        "${{ secrets.DOCKERHUB_USERNAME }}"
+    )
+    assert cleanup["env"]["DOCKERHUB_TOKEN"] == (  # nosec B101
+        "${{ secrets.DOCKERHUB_TOKEN }}"
+    )
+    assert "registry delete-dockerhub-tags" in cleanup["run"]  # nosec B101
+    assert "--required-substring" in cleanup["run"]  # nosec B101
+    assert "--required-substring alpha" in cleanup["run"]  # nosec B101
+
+
 def test_app_code_checkouts_do_not_persist_credentials() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
