@@ -22,6 +22,7 @@ _SECRET_ENV_EXACT = {
     "AIO_FLEET_CHECK_TOKEN",
     "AIO_FLEET_GHCR_TOKEN",
     "AIO_FLEET_KUMA_PUSH_URL",
+    "AIO_FLEET_RELEASE_TOKEN",
     "APP_TOKEN",
     "DOCKERHUB_PASSWORD",
     "DOCKERHUB_TOKEN",
@@ -220,6 +221,11 @@ def central_check_steps(
                     ),
                 )
             )
+            release_step = _github_release_publish_step(
+                repo, component, manifest_args=manifest_args
+            )
+            if release_step is not None:
+                steps.append(release_step)
     return steps
 
 
@@ -467,6 +473,8 @@ def registry_publish_command(
         command.extend(["--file", str(dockerfile)])
     for tag in tags.all_tags:
         command.extend(["--tag", tag])
+    for annotation in _component_oci_annotations(repo, component):
+        command.extend(["--annotation", annotation])
     command.append(str(component_config.get("context", ".")))
     return command
 
@@ -478,6 +486,54 @@ def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
         if isinstance(config, dict):
             return config
     return {}
+
+
+def _component_oci_annotations(repo: RepoConfig, component: str) -> list[str]:
+    config = _component_config(repo, component)
+    source = str(
+        config.get("oci_source", "") or f"https://github.com/{repo.github_repo}"
+    ).strip()
+    description = str(
+        config.get("oci_description", "")
+        or config.get("image_description", "")
+        or repo.get("image_description", "")
+        or f"{repo.name} container image"
+    ).strip()
+    annotations = [
+        f"index:org.opencontainers.image.source={source}",
+        f"index:org.opencontainers.image.description={description}",
+    ]
+    return [annotation for annotation in annotations if annotation.rsplit("=", 1)[-1]]
+
+
+def _github_release_publish_step(
+    repo: RepoConfig, component: str, *, manifest_args: list[str]
+) -> Step | None:
+    config = _component_config(repo, component)
+    if str(config.get("release_history", "")).strip() != "github_prerelease":
+        return None
+    return Step(
+        f"github-prerelease-{component}",
+        [
+            sys.executable,
+            "-m",
+            "aio_fleet.cli",
+            *manifest_args,
+            "release",
+            "publish",
+            "--repo",
+            repo.name,
+            "--repo-path",
+            str(repo.path),
+            "--component",
+            component,
+        ],
+        _trusted_aio_root(),
+        stream_output=True,
+        timeout_seconds=_repo_timeout_seconds(
+            repo, "github_release_publish_timeout_seconds", default=300
+        ),
+    )
 
 
 def run_central_trunk(

@@ -69,6 +69,21 @@ def compute_registry_tags(
     )
 
 
+def component_registry_release_tag(repo: RepoConfig, component: str = "aio") -> str:
+    config = component_config(repo, component)
+    revision_arg = str(config.get("registry_revision_arg", "") or "").strip()
+    if not revision_arg:
+        return ""
+    upstream_version = _read_component_upstream_version(repo, component)
+    if not upstream_version:
+        return ""
+    revision = _read_component_arg(repo, component, revision_arg)
+    if not revision:
+        return ""
+    release_suffix = str(config.get("release_suffix", "aio"))
+    return f"{upstream_version}-{release_suffix}.{revision}"
+
+
 def verify_registry_tags(
     tags: list[str], *, env: Mapping[str, str] | None = None
 ) -> list[str]:
@@ -202,10 +217,24 @@ def _read_component_upstream_version(repo: RepoConfig, component: str) -> str:
         return ""
 
 
+def _read_component_arg(repo: RepoConfig, component: str, arg_name: str) -> str:
+    try:
+        config = component_config(repo, component)
+        dockerfile = repo.path / str(config.get("dockerfile", "Dockerfile"))
+        pattern = re.compile(rf"^ARG {re.escape(arg_name)}=(.+)$")
+        for line in dockerfile.read_text().splitlines():
+            match = pattern.match(line.strip())
+            if match:
+                return match.group(1).split("@", 1)[0]
+    except (Exception, SystemExit):
+        return ""
+    return ""
+
+
 def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     config = component_config(repo, component)
     if str(config.get("release_policy", "")).strip() == "registry_only":
-        return ""
+        return component_registry_release_tag(repo, component)
     upstream_version = _read_component_upstream_version(repo, component)
     if not upstream_version:
         return ""

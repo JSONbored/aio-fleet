@@ -28,6 +28,7 @@ from aio_fleet.cli import (
     cmd_registry_publish,
     cmd_registry_verify,
     cmd_release_plan,
+    cmd_release_publish,
     cmd_security_audit_workflows,
     cmd_trunk_audit,
     cmd_upstream_assess,
@@ -611,6 +612,84 @@ def test_release_prepare_dry_run_prepends_changelog_section(
     output = capsys.readouterr().out
     assert "--unreleased --prepend" in output  # nosec B101
     assert "--output" not in output  # nosec B101
+
+
+def test_release_publish_dry_run_creates_alpha_prerelease_command(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        upstream_version_key: UPSTREAM_VERSION
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        github_release_latest: false
+        github_release_title_prefix: Sure AIO Alpha
+""")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=1\n"
+    )
+    (repo_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "UPSTREAM_VERSION"\n'
+    )
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
+        "- alpha release notes\n"
+    )
+    report_json = tmp_path / "release-report.json"
+
+    def fake_run(command: list[str], **kwargs):
+        del kwargs
+        if command == ["git", "rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr="")
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component="sure-alpha",
+            repo_path=None,
+            dry_run=True,
+            report_json=str(report_json),
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "gh release create sure-alpha/0.7.1-alpha.7-aio.1" in output  # nosec B101
+    assert "--prerelease --latest=false" in output  # nosec B101
+    report = json.loads(report_json.read_text())
+    assert report["action"] == "would-create"  # nosec B101
+    assert report["tag"] == "sure-alpha/0.7.1-alpha.7-aio.1"  # nosec B101
+    assert report["release_package_tag"] == "0.7.1-alpha.7-aio.1"  # nosec B101
+    assert "sure-alpha%2F0.7.1-alpha.7-aio.1" in report["url"]  # nosec B101
 
 
 def test_latest_main_ci_requires_external_id_bound_check(

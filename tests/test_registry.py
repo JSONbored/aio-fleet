@@ -230,18 +230,21 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
         "_read_component_upstream_version",
         lambda *_args, **_kwargs: "0.7.1-alpha.7",
     )
+    monkeypatch.setattr(registry, "_read_component_arg", lambda *_args, **_kwargs: "1")
 
     tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
 
-    assert tags.release_package_tag == ""  # nosec B101
+    assert tags.release_package_tag == "0.7.1-alpha.7-aio.1"  # nosec B101
     assert tags.dockerhub == [  # nosec B101
         "jsonbored/sure-aio-alpha:latest-alpha",
         "jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
         f"jsonbored/sure-aio-alpha:sha-{sha}",
     ]
     assert tags.ghcr == [  # nosec B101
         "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
         f"ghcr.io/jsonbored/sure-aio-alpha:sha-{sha}",
     ]
 
@@ -388,6 +391,22 @@ repos:
     ]
     assert "jsonbored/example-worker:latest" in command  # nosec B101
     assert "jsonbored/example-aio:latest" not in command  # nosec B101
+
+
+def test_registry_publish_command_adds_oci_source_annotations() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    command = registry_publish_command(repo, sha="a" * 40, component="sure-alpha")
+
+    assert "--annotation" in command  # nosec B101
+    assert (  # nosec B101
+        "index:org.opencontainers.image.source=https://github.com/JSONbored/sure-aio"
+        in command
+    )
+    assert (  # nosec B101
+        "index:org.opencontainers.image.description="
+        "Unstable Unraid-first Sure AIO alpha testing image" in command
+    )
 
 
 def test_dockerhub_verification_uses_docker_imagetools_first(monkeypatch) -> None:

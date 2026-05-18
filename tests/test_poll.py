@@ -173,7 +173,31 @@ def test_publish_components_required_can_target_alpha_component(
     ) == ["sure-alpha"]
 
     monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["sure-aio-alpha.xml"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["sure-alpha"]
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["CHANGELOG.alpha.md"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["sure-alpha"]
+
+    monkeypatch.setattr(
         poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["aio"]
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["example-aio.xml"]
     )
 
     assert poll.publish_components_required(  # nosec B101
@@ -218,9 +242,14 @@ def _write_manifest(
       aio:
         image_name: jsonbored/example-aio
         dockerfile: Dockerfile
+        xml_paths:
+          - example-aio.xml
       sure-alpha:
         image_name: jsonbored/example-aio-alpha
         dockerfile: Dockerfile.alpha
+        release_changelog: CHANGELOG.alpha.md
+        xml_paths:
+          - sure-aio-alpha.xml
         publish_paths:
           - rootfs-alpha/**
 """

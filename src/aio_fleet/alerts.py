@@ -10,7 +10,9 @@ SUCCESS_STATES = {"success", "succeeded", "ok", "up", "passed"}
 FAILURE_STATES = {"failure", "failed", "error", "down", "timed_out", "cancelled"}
 WARNING_STATES = {"warning", "blocked", "missing", "updates", "attention"}
 WEBHOOK_EVENT_ALLOWLIST = {
+    "publish",
     "recovery",
+    "release-publish",
     "registry-audit",
     "release-readiness",
     "upstream-monitor",
@@ -132,7 +134,7 @@ def summarize_report(
                     "skipped",
                     "",
                 }:
-                    actions.append(action)
+                    actions.append({"repo": item.get("repo", ""), **action})
         if errors:
             summary = f"Upstream monitor failed for {len(errors)} repo(s)"
             annotations = [
@@ -161,6 +163,32 @@ def summarize_report(
                 summary,
                 annotations,
                 {"blocked": blocked, "updates": updates, "actions": actions},
+            )
+        pr_actions = [
+            action
+            for action in actions
+            if action.get("action") in {"upserted-pr", "would-create-pr"}
+        ]
+        if pr_actions:
+            summary = f"Upstream PR opened or updated for {len(pr_actions)} repo(s)"
+            annotations = []
+            for action in pr_actions[:10]:
+                repo_name = action.get("repo", "")
+                url = action.get("url", "")
+                branch = action.get("branch", "")
+                annotations.append(
+                    f"{repo_name}: {action.get('action')} {branch} {url}".strip()
+                )
+            return (
+                "success",
+                summary,
+                annotations,
+                {
+                    "updates": updates,
+                    "actions": actions,
+                    "notify_success": True,
+                    "discord_fields": _action_fields(pr_actions),
+                },
             )
         if updates or actions:
             summary = f"Upstream updates available for {len(updates)} component(s)"
@@ -199,6 +227,65 @@ def summarize_report(
             )
         return "success", "Registry audit passed", [], {}
 
+    if event in {"publish", "release-publish"}:
+        failures = [
+            str(failure)
+            for failure in report.get("failures", [])
+            if str(failure).strip()
+        ]
+        components = [
+            item for item in report.get("components", []) if isinstance(item, dict)
+        ]
+        repo = str(report.get("repo", "fleet"))
+        if failures or report.get("status") == "failure":
+            summary = f"Publish failed for {repo}"
+            details: dict[str, Any] = {"failures": failures, "components": components}
+            fields = _publish_fields(components)
+            if failures:
+                fields.append({"name": "Next action", "value": failures[0]})
+            if fields:
+                details["discord_fields"] = fields
+            return "failure", summary, failures[:10], details
+        if event == "release-publish" and report.get("tag"):
+            tag = str(report.get("tag", ""))
+            summary = f"GitHub release published for {repo}: {tag}"
+            return (
+                "success",
+                summary,
+                [str(report.get("url", ""))],
+                {"notify_success": True, "discord_fields": _release_fields(report)},
+            )
+        if components:
+            label = ", ".join(
+                f"{repo}:{item.get('component', 'aio')}" for item in components[:3]
+            )
+            has_release_history = any(
+                isinstance(item.get("github_release"), dict)
+                and item["github_release"].get("url")
+                for item in components
+            )
+            if has_release_history:
+                summary = f"Published images and release history for {label}"
+            else:
+                summary = f"Published images for {label}"
+            annotations = []
+            for item in components[:5]:
+                version = item.get("release_package_tag") or item.get(
+                    "upstream_version", ""
+                )
+                annotations.append(f"{repo}:{item.get('component', 'aio')} {version}")
+            return (
+                "success",
+                summary,
+                annotations,
+                {
+                    "components": components,
+                    "notify_success": True,
+                    "discord_fields": _publish_fields(components),
+                },
+            )
+        return "success", f"{event}: success", [], {}
+
     return "success", f"{event}: success", [], {}
 
 
@@ -208,6 +295,8 @@ def should_send_webhook(payload: AlertPayload, *, force: bool = False) -> bool:
     if payload.event == "recovery":
         return True
     if payload.status in {"failure", "warning"}:
+        return True
+    if payload.status == "success" and payload.details.get("notify_success"):
         return True
     return payload.event in WEBHOOK_EVENT_ALLOWLIST and payload.status != "success"
 
@@ -330,8 +419,66 @@ def _discord_body(payload: AlertPayload) -> dict[str, Any]:
         )
     if payload.details_url:
         embed["url"] = payload.details_url
+    for field in payload.details.get("discord_fields", []):
+        if not isinstance(field, dict):
+            continue
+        name = str(field.get("name", "")).strip()
+        value = str(field.get("value", "")).strip()
+        if not name or not value:
+            continue
+        embed["fields"].append(
+            {
+                "name": name[:256],
+                "value": value[:1024],
+                "inline": bool(field.get("inline", False)),
+            }
+        )
     return {
         "content": f"aio-fleet: {payload.summary}"[:2000],
         "embeds": [embed],
         "allowed_mentions": {"parse": []},
     }
+
+
+def _action_fields(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for action in actions[:5]:
+        value = str(action.get("url") or action.get("branch") or action.get("action"))
+        fields.append(
+            {
+                "name": str(action.get("repo", "Repo"))[:256],
+                "value": value[:1024],
+                "inline": False,
+            }
+        )
+    return fields
+
+
+def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for item in components[:3]:
+        component = str(item.get("component", "aio"))
+        dockerhub = "\n".join(str(tag) for tag in item.get("dockerhub", [])[:4])
+        ghcr = "\n".join(str(tag) for tag in item.get("ghcr", [])[:4])
+        error = str(item.get("error", "") or "").strip()
+        release = item.get("github_release", {})
+        release_url = release.get("url", "") if isinstance(release, dict) else ""
+        if error:
+            fields.append({"name": f"{component} error", "value": error})
+        if dockerhub:
+            fields.append({"name": f"{component} Docker Hub", "value": dockerhub})
+        if ghcr:
+            fields.append({"name": f"{component} GHCR", "value": ghcr})
+        if release_url:
+            fields.append({"name": f"{component} GitHub release", "value": release_url})
+    return fields
+
+
+def _release_fields(report: dict[str, Any]) -> list[dict[str, Any]]:
+    fields = [
+        {"name": "Tag", "value": str(report.get("tag", "")), "inline": True},
+        {"name": "Target", "value": str(report.get("target", "")), "inline": True},
+    ]
+    if report.get("url"):
+        fields.append({"name": "Release", "value": str(report["url"])})
+    return fields

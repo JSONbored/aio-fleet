@@ -122,8 +122,10 @@ def _publish_related_patterns_for_component(
     patterns = {".aio-fleet.yml", "CHANGELOG.md"}
     if component == "aio" or not config:
         patterns.update({"Containerfile", "Dockerfile", "rootfs/**", "upstream.toml"})
-        for key in ("extra_publish_paths", "upstream_commit_paths", "xml_paths"):
+        for key in ("extra_publish_paths", "upstream_commit_paths"):
             patterns.update(repo.list_value(key))
+        if not config:
+            patterns.update(repo.list_value("xml_paths"))
 
     if config:
         for key in ("dockerfile", "upstream_config"):
@@ -132,6 +134,9 @@ def _publish_related_patterns_for_component(
                 patterns.add(value)
         patterns.update(_string_list(config.get("xml_paths", [])))
         patterns.update(_string_list(config.get("publish_paths", [])))
+        release_changelog = str(config.get("release_changelog", "") or "").strip()
+        if release_changelog:
+            patterns.add(release_changelog)
 
     for monitor in repo.raw.get("upstream_monitor", []):
         if (

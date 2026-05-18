@@ -170,6 +170,8 @@ def latest_component_release_tag(repo_path: Path, suffix: str = "aio") -> str | 
         "--abbrev=0",
         "--match",
         f"*-{suffix}.*",
+        "--exclude",
+        "*/*",
         "HEAD",
     )
     if completed.returncode != 0:

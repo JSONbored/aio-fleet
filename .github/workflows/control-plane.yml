@@ -362,6 +362,8 @@ jobs:
           DOCKERHUB_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.DOCKERHUB_TOKEN || '' }}
           AIO_FLEET_GHCR_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
           AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ inputs.publish && !inputs.dry_run && steps.app-token.outputs.token || '' }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
         run: |
           set -euo pipefail
           unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
@@ -381,6 +383,7 @@ jobs:
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--check-run --dry-run)
           fi
+          args+=(--report-json "${CONTROL_REPORT}")
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 
       - name: Restore trusted aio-fleet checkout
@@ -417,6 +420,31 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" ]]; then
             exit 1
           fi
+
+      - name: Alert central publish status
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event publish \
+              --report-json "${CONTROL_REPORT}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event publish \
+              --status failure \
+              --summary "Central publish did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
 
       - name: Alert control-plane status
         if: ${{ always() }}
@@ -550,6 +578,8 @@ jobs:
           DOCKERHUB_TOKEN: ${{ matrix.target.publish && secrets.DOCKERHUB_TOKEN || '' }}
           AIO_FLEET_GHCR_TOKEN: ${{ matrix.target.publish && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
           AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ matrix.target.publish && steps.app-token.outputs.token || '' }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
           set -euo pipefail
           unset GITHUB_ENV GITHUB_OUTPUT GITHUB_PATH GITHUB_STEP_SUMMARY
@@ -576,6 +606,7 @@ jobs:
               print(component)
           PY
           )
+          args+=(--report-json "${CONTROL_REPORT}")
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 
       - name: Restore trusted aio-fleet checkout
@@ -612,6 +643,31 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" ]]; then
             exit 1
           fi
+
+      - name: Alert poll-check publish status
+        if: ${{ always() && matrix.target.publish == true }}
+        env:
+          AIO_FLEET_KUMA_PUSH_URL: ${{ secrets.AIO_FLEET_KUMA_PUSH_URL }}
+          AIO_FLEET_ALERT_WEBHOOK_URL: ${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}
+          DETAILS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set +e
+          if [[ -f "${CONTROL_REPORT}" ]]; then
+            python -m aio_fleet alert send \
+              --event publish \
+              --report-json "${CONTROL_REPORT}" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          else
+            python -m aio_fleet alert send \
+              --event publish \
+              --status failure \
+              --summary "Poll publish did not produce a report" \
+              --details-url "${DETAILS_URL}" \
+              --format json
+          fi
+          exit 0
 
       - name: Alert poll-check failure
         if: ${{ always() }}

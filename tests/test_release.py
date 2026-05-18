@@ -7,6 +7,7 @@ from aio_fleet.release import (
     find_release_publish_target_commit,
     latest_changelog_version,
     latest_component_changelog_version,
+    latest_component_release_tag,
     main,
     next_aio_release_version,
     next_semver_release_version,
@@ -60,6 +61,20 @@ def test_aio_next_version_uses_upstream_version_and_revision_tags(
         )
         == "v2.0.0-aio.2"
     )
+
+
+def test_latest_component_release_tag_ignores_namespaced_alpha_tags(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "README.md").write_text("initial\n")
+    _commit(tmp_path, "feat(test): initial")
+    _git(tmp_path, "tag", "0.7.0-aio.1")
+    (tmp_path / "README.md").write_text("alpha\n")
+    _commit(tmp_path, "chore(test): alpha")
+    _git(tmp_path, "tag", "sure-alpha/0.7.1-alpha.7-aio.1")
+
+    assert latest_component_release_tag(tmp_path, "aio") == "0.7.0-aio.1"  # nosec B101
 
 
 def test_semver_next_version_uses_conventional_commit_bump(tmp_path: Path) -> None:

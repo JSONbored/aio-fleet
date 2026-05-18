@@ -10,10 +10,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from aio_fleet.changelog import component_config
 from aio_fleet.checks import check_run_payload, upsert_check_run
 from aio_fleet.github_writer import commit_paths_to_branch
 from aio_fleet.manifest import RepoConfig
@@ -103,6 +105,8 @@ def _write_monitor_results(
             write_arg(result.dockerfile, result.version_key, result.latest_version)
             if result.digest_key and result.latest_digest:
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
+            _reset_registry_revision(repo, result)
+            _update_release_history_changelog(repo, result)
             if result.version_update:
                 update_submodule(repo, config, result)
 
@@ -446,6 +450,80 @@ def write_arg(dockerfile: Path, arg_name: str, value: str) -> None:
     if not changed:
         raise ValueError(f"unable to update ARG {arg_name} in {dockerfile}")
     dockerfile.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _reset_registry_revision(repo: RepoConfig, result: UpstreamMonitorResult) -> None:
+    if not result.version_update:
+        return
+    config = component_config(repo, result.component)
+    revision_arg = str(config.get("registry_revision_arg", "") or "").strip()
+    if revision_arg:
+        write_arg(result.dockerfile, revision_arg, "1")
+
+
+def _update_release_history_changelog(
+    repo: RepoConfig, result: UpstreamMonitorResult
+) -> None:
+    config = component_config(repo, result.component)
+    if str(config.get("release_history", "")).strip() != "github_prerelease":
+        return
+    changelog_name = str(config.get("release_changelog", "") or "").strip()
+    if not changelog_name:
+        return
+    revision_arg = str(config.get("registry_revision_arg", "") or "").strip()
+    revision = read_arg(result.dockerfile, revision_arg) if revision_arg else "1"
+    release_suffix = str(config.get("release_suffix", "aio"))
+    package_version = f"{result.latest_version}-{release_suffix}.{revision}"
+    changelog = repo.path / changelog_name
+    _upsert_alpha_release_section(
+        changelog,
+        version=package_version,
+        result=result,
+    )
+
+
+def _upsert_alpha_release_section(
+    changelog: Path, *, version: str, result: UpstreamMonitorResult
+) -> None:
+    today = datetime.now(UTC).date().isoformat()
+    heading = f"## {version} - {today}"
+    section = "\n".join(
+        [
+            heading,
+            "",
+            "### Build",
+            f"- Track upstream Sure alpha {result.latest_version}.",
+            "- Publish alpha Docker Hub and GHCR tags with a distinct AIO revision tag.",
+            "",
+            "### Alpha Customizations",
+            "- Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.",
+            "- Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.",
+            "- Keep alpha passkey/WebAuthn template controls separate from stable.",
+            "",
+        ]
+    )
+    existing = changelog.read_text() if changelog.exists() else "# Alpha Changelog\n"
+    lines = existing.splitlines()
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.strip().startswith(f"## {version}"):
+            index += 1
+            while index < len(lines) and not lines[index].startswith("## "):
+                index += 1
+            continue
+        output.append(line)
+        index += 1
+    text = "\n".join(output).rstrip()
+    if not text:
+        text = "# Alpha Changelog"
+    insert_at = text.find("\n## ")
+    if insert_at == -1:
+        updated = f"{text.rstrip()}\n\n{section}"
+    else:
+        updated = f"{text[:insert_at].rstrip()}\n\n{section}{text[insert_at:].lstrip()}"
+    changelog.write_text(updated.rstrip() + "\n", encoding="utf-8")
 
 
 def update_submodule(
@@ -1017,10 +1095,7 @@ def create_or_update_upstream_pr(
     branch = upstream_branch(repo, changed)
     title = upstream_title(repo, changed)
     configured_paths = repo.list_value("upstream_commit_paths")
-    commit_paths = sorted(
-        configured_paths
-        or {str(result.dockerfile.relative_to(repo.path)) for result in changed}
-    )
+    commit_paths = sorted(_upstream_commit_paths(repo, changed, configured_paths))
     body = upstream_body(repo, changed, changed_paths=commit_paths)
     if dry_run:
         payload: dict[str, object] = {
@@ -1072,6 +1147,23 @@ def create_or_update_upstream_pr(
         "verified": committed.verified,
         "superseded": superseded,
     }
+
+
+def _upstream_commit_paths(
+    repo: RepoConfig,
+    changed: list[UpstreamMonitorResult],
+    configured_paths: list[str],
+) -> set[str]:
+    paths = set(
+        configured_paths
+        or {str(result.dockerfile.relative_to(repo.path)) for result in changed}
+    )
+    for result in changed:
+        config = component_config(repo, result.component)
+        changelog = str(config.get("release_changelog", "") or "").strip()
+        if changelog:
+            paths.add(changelog)
+    return paths
 
 
 def upstream_branch(repo: RepoConfig, results: list[UpstreamMonitorResult]) -> str:

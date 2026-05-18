@@ -15,12 +15,16 @@ SECRET_ENV_KEYS = {
     "AIO_FLEET_GHCR_TOKEN",
     "AIO_FLEET_ISSUE_TOKEN",
     "AIO_FLEET_KUMA_PUSH_URL",
+    "AIO_FLEET_RELEASE_TOKEN",
     "AIO_FLEET_ALERT_WEBHOOK_URL",
     "AIO_FLEET_UPSTREAM_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
 }
-APP_CODE_SECRET_ENV_KEYS = SECRET_ENV_KEYS - {"AIO_FLEET_GHCR_TOKEN"}
+APP_CODE_SECRET_ENV_KEYS = SECRET_ENV_KEYS - {
+    "AIO_FLEET_GHCR_TOKEN",
+    "AIO_FLEET_RELEASE_TOKEN",
+}
 REGISTRY_PUBLISH_ENV_KEYS = {
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
@@ -132,9 +136,28 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
 
     assert 'if [[ "${PUBLISH}" == "true" ]]' in manual["run"]  # nosec B101
     assert "args+=(--publish)" in manual["run"]  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" in manual["env"]  # nosec B101
+    assert "--report-json" in manual["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
     assert "args+=(--publish)" in poll["run"]  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" in poll["env"]  # nosec B101
+    assert "--report-json" in poll["run"]  # nosec B101
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
+
+
+def test_publish_alert_steps_use_report_json_and_alert_secret() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    manual = _step(workflow["jobs"]["control-plane"], "Alert central publish status")
+    poll = _step(workflow["jobs"]["poll-checks"], "Alert poll-check publish status")
+
+    for step in (manual, poll):
+        assert step["env"]["AIO_FLEET_ALERT_WEBHOOK_URL"] == (  # nosec B101
+            "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}"
+        )
+        assert "--event publish" in step["run"]  # nosec B101
+        assert "--report-json" in step["run"]  # nosec B101
+        assert "--details-url" in step["run"]  # nosec B101
 
 
 def test_registry_credentials_are_not_logged_in_before_app_checks() -> None:
