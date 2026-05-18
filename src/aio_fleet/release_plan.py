@@ -211,7 +211,7 @@ def _registry_only_component_patterns(repo: RepoConfig) -> set[str]:
         if str(config.get("release_policy", "")).strip() != "registry_only":
             continue
         patterns.add(".aio-fleet.yml")
-        for key in ("dockerfile", "upstream_config"):
+        for key in ("dockerfile", "upstream_config", "release_changelog"):
             value = str(config.get(key, "")).strip()
             if value:
                 patterns.add(value)
