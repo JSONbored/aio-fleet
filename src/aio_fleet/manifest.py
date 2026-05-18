@@ -47,6 +47,10 @@ class RepoConfig:
         return self.publish_profile == "signoz-suite"
 
     @property
+    def is_multi_component(self) -> bool:
+        return self.publish_profile in {"multi-component", "signoz-suite"}
+
+    @property
     def extended_integration(self) -> dict[str, Any] | None:
         value = self.raw.get("extended_integration")
         return value if isinstance(value, dict) else None
@@ -134,10 +138,13 @@ def validate_manifest(manifest: FleetManifest) -> None:
             "upstream-aio-track",
             "changelog-version",
             "dify",
+            "multi-component",
             "signoz-suite",
         }:
             raise ManifestError(
                 f"{name} has unsupported publish_profile: {repo.publish_profile}"
             )
-        if repo.publish_profile == "signoz-suite" and "components" not in repo.raw:
-            raise ManifestError(f"{name} signoz-suite profile requires components")
+        if repo.is_multi_component and "components" not in repo.raw:
+            raise ManifestError(
+                f"{name} {repo.publish_profile} profile requires components"
+            )

@@ -2452,7 +2452,7 @@ def cmd_infra_doctor(args: argparse.Namespace) -> int:
         failures.append("OpenTofu CLI is not installed")
     if not (infra_path / ".terraform.lock.hcl").exists():
         failures.append(f"{infra_path}: missing .terraform.lock.hcl")
-    if not (infra_path / ".terraform").exists():
+    if not args.skip_tofu and not (infra_path / ".terraform").exists():
         failures.append(f"{infra_path}: OpenTofu is not initialized; run tofu init")
 
     failures.extend(tracked_artifact_failures(root))
@@ -3322,6 +3322,7 @@ def build_parser() -> argparse.ArgumentParser:
             "upstream-aio-track",
             "changelog-version",
             "dify",
+            "multi-component",
             "signoz-suite",
         ],
     )
@@ -3351,6 +3352,7 @@ def build_parser() -> argparse.ArgumentParser:
             "upstream-aio-track",
             "changelog-version",
             "dify",
+            "multi-component",
             "signoz-suite",
         ],
     )

@@ -62,3 +62,7 @@ repositories:
     required_checks:
       - aio-fleet / required
     required_check_app_id: 3565017
+  nanoclaw-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 3565017

@@ -480,29 +480,36 @@ def _update_release_history_changelog(
         changelog,
         version=package_version,
         result=result,
+        customizations=_string_list(config.get("release_customization_notes", [])),
     )
 
 
 def _upsert_alpha_release_section(
-    changelog: Path, *, version: str, result: UpstreamMonitorResult
+    changelog: Path,
+    *,
+    version: str,
+    result: UpstreamMonitorResult,
+    customizations: list[str],
 ) -> None:
     today = datetime.now(UTC).date().isoformat()
     heading = f"## {version} - {today}"
-    section = "\n".join(
-        [
-            heading,
-            "",
-            "### Build",
-            f"- Track upstream Sure alpha {result.latest_version}.",
-            "- Publish alpha Docker Hub and GHCR tags with a distinct AIO revision tag.",
-            "",
-            "### Alpha Customizations",
-            "- Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.",
-            "- Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.",
-            "- Keep alpha passkey/WebAuthn template controls separate from stable.",
-            "",
-        ]
-    )
+    lines = [
+        heading,
+        "",
+        "### Build",
+        f"- Track upstream {result.name} {result.latest_version}.",
+        "- Publish Docker Hub and GHCR tags with the configured component revision tag.",
+        "",
+    ]
+    if customizations:
+        lines.extend(
+            [
+                "### Component Customizations",
+                *[f"- {item}" for item in customizations],
+                "",
+            ]
+        )
+    section = "\n".join(lines)
     existing = changelog.read_text() if changelog.exists() else "# Alpha Changelog\n"
     lines = existing.splitlines()
     output: list[str] = []
@@ -525,6 +532,14 @@ def _upsert_alpha_release_section(
     else:
         updated = f"{text[:insert_at].rstrip()}\n\n{section}{text[insert_at:].lstrip()}"
     changelog.write_text(updated.rstrip() + "\n", encoding="utf-8")
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return []
 
 
 def update_submodule(

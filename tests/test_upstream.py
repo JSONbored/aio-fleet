@@ -7,6 +7,8 @@ from aio_fleet import upstream
 from aio_fleet.github_writer import BranchCommitResult
 from aio_fleet.manifest import load_manifest
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_upstream_monitor_detects_version_and_digest_update(
     tmp_path: Path, monkeypatch
@@ -302,6 +304,10 @@ repos:
         release_changelog: CHANGELOG.alpha.md
         release_suffix: aio
         registry_revision_arg: AIO_REVISION
+        release_customization_notes:
+          - Preserve the Sure AIO alpha import-limit overlay documented in `docs/alpha-lane.md`.
+          - Keep `SURE_IMPORT_MAX_NDJSON_SIZE_MB` and `SURE_IMPORT_MAX_ROWS` alpha-only.
+          - Keep alpha passkey/WebAuthn template controls separate from stable.
 """)
 
     def fake_http_json(url: str, _headers=None):
@@ -327,7 +333,7 @@ repos:
     assert "ARG AIO_REVISION=1" in text  # nosec B101
     changelog_text = changelog.read_text()
     assert "## 0.7.1-alpha.7-aio.1" in changelog_text  # nosec B101
-    assert "Track upstream Sure alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
+    assert "Track upstream Sure Alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
     assert "SURE_IMPORT_MAX_NDJSON_SIZE_MB" in changelog_text  # nosec B101
     assert "passkey/WebAuthn template controls" in changelog_text  # nosec B101
 
@@ -952,6 +958,99 @@ repos:
     assert action["paths"] == [  # nosec B101
         "CHANGELOG.alpha.md",
         "Dockerfile.alpha",
+    ]
+
+
+def test_nanoclaw_upstream_monitor_updates_aio_and_agent_pins() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    configs = upstream.monitor_configs(repo)
+
+    assert [config["component"] for config in configs] == ["aio", "agent"]  # nosec B101
+    assert all(
+        config["source"] == "github-releases" for config in configs
+    )  # nosec B101
+    assert all(
+        config["repo"] == "nanocoai/nanoclaw" for config in configs
+    )  # nosec B101
+    assert all(config["stable_only"] is True for config in configs)  # nosec B101
+
+
+def test_nanoclaw_upstream_pr_commits_both_component_dockerfiles(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    agent_dir = repo_path / "components" / "nanoclaw-agent"
+    agent_dir.mkdir(parents=True)
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=v2.0.63\n")
+    (agent_dir / "Dockerfile").write_text("ARG UPSTREAM_VERSION=v2.0.63\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  nanoclaw-aio:
+    path: {repo_path}
+    app_slug: nanoclaw-aio
+    image_name: jsonbored/nanoclaw-aio
+    docker_cache_scope: nanoclaw-aio-image
+    pytest_image_tag: nanoclaw-aio:pytest
+    publish_profile: multi-component
+    upstream_commit_paths:
+      - Dockerfile
+      - components/nanoclaw-agent/Dockerfile
+    components:
+      aio:
+        image_name: jsonbored/nanoclaw-aio
+        dockerfile: Dockerfile
+      agent:
+        image_name: jsonbored/nanoclaw-agent
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        context: components/nanoclaw-agent
+""")
+    repo = load_manifest(manifest).repo("nanoclaw-aio")
+    results = [
+        upstream.UpstreamMonitorResult(
+            repo="nanoclaw-aio",
+            component="aio",
+            name="NanoClaw",
+            strategy="pr",
+            source="github-releases",
+            current_version="v2.0.63",
+            latest_version="v2.0.64",
+            current_digest="",
+            latest_digest="",
+            version_update=True,
+            digest_update=False,
+            dockerfile=repo_path / "Dockerfile",
+            version_key="UPSTREAM_VERSION",
+            digest_key="",
+            release_notes_url="https://github.com/nanocoai/nanoclaw/releases",
+        ),
+        upstream.UpstreamMonitorResult(
+            repo="nanoclaw-aio",
+            component="agent",
+            name="NanoClaw Agent",
+            strategy="pr",
+            source="github-releases",
+            current_version="v2.0.63",
+            latest_version="v2.0.64",
+            current_digest="",
+            latest_digest="",
+            version_update=True,
+            digest_update=False,
+            dockerfile=agent_dir / "Dockerfile",
+            version_key="UPSTREAM_VERSION",
+            digest_key="",
+            release_notes_url="https://github.com/nanocoai/nanoclaw/releases",
+        ),
+    ]
+
+    action = upstream.create_or_update_upstream_pr(
+        repo, results, dry_run=True, post_check=False
+    )
+
+    assert action["paths"] == [  # nosec B101
+        "Dockerfile",
+        "components/nanoclaw-agent/Dockerfile",
     ]
 
 

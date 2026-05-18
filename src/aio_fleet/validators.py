@@ -863,8 +863,13 @@ def _dockerfile_runtime_contract_failures(
             f"{repo.name}: {relative_dockerfile} FROM image must be digest-pinned: {image}"
         )
 
-    markers = ["HEALTHCHECK", "curl -fsS", "ENTRYPOINT ["]
-    if relative_dockerfile == Path("Dockerfile"):
+    runtime_supervisor = str(repo.get("runtime_supervisor", "s6") or "s6").strip()
+    markers = ["HEALTHCHECK", "ENTRYPOINT ["]
+    if runtime_supervisor == "tini":
+        markers.append('ENTRYPOINT ["/usr/bin/tini"')
+    else:
+        markers.append("curl -fsS")
+    if relative_dockerfile == Path("Dockerfile") and runtime_supervisor != "tini":
         markers.extend(
             [
                 'ENTRYPOINT ["/init"]',
@@ -905,11 +910,17 @@ def _xml_runtime_contract_failures(
             )
         if target == "/var/run/docker.sock":
             description = (config.attrib.get("Description") or "").lower()
-            if config.attrib.get("Display") != "advanced":
+            docker_socket_required = bool(
+                _template_validation(repo, source).get("docker_socket_required")
+            )
+            if (
+                config.attrib.get("Display") != "advanced"
+                and not docker_socket_required
+            ):
                 failures.append(
                     f"{repo.name}: {source} Docker socket mount must be advanced"
                 )
-            if config.attrib.get("Required") != "false":
+            if config.attrib.get("Required") != "false" and not docker_socket_required:
                 failures.append(
                     f"{repo.name}: {source} Docker socket mount must be optional"
                 )

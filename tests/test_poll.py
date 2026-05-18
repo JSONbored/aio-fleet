@@ -215,6 +215,41 @@ def test_publish_components_required_can_target_alpha_component(
     ) == ["aio"]
 
 
+def test_publish_components_required_targets_generic_multi_component_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path, include_agent_component=True)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["aio"]
+
+    monkeypatch.setattr(
+        poll,
+        "_commit_changed_paths",
+        lambda _repo, _sha: ["components/example-agent/Dockerfile"],
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["agent"]
+
+    monkeypatch.setattr(
+        poll,
+        "_commit_changed_paths",
+        lambda _repo, _sha: ["Dockerfile", "CHANGELOG.md"],
+    )
+
+    assert poll.publish_components_required(  # nosec B101
+        repo, sha="a" * 40, event="push"
+    ) == ["aio", "agent"]
+
+
 def test_poll_gh_maps_app_token_to_gh_token(monkeypatch) -> None:
     captured_env: dict[str, str] = {}
 
@@ -241,12 +276,13 @@ def _write_manifest(
     *,
     checkout_submodules: bool = False,
     include_alpha_component: bool = False,
+    include_agent_component: bool = False,
 ) -> Path:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     checkout_line = "    checkout_submodules: true\n" if checkout_submodules else ""
     manifest = tmp_path / "fleet.yml"
-    components = (
+    alpha_components = (
         """
     components:
       aio:
@@ -266,6 +302,22 @@ def _write_manifest(
         if include_alpha_component
         else ""
     )
+    agent_components = (
+        """
+    publish_profile: multi-component
+    components:
+      aio:
+        image_name: jsonbored/example-aio
+        dockerfile: Dockerfile
+      agent:
+        image_name: jsonbored/example-agent
+        dockerfile: components/example-agent/Dockerfile
+        context: components/example-agent
+        release_changelog: CHANGELOG.md
+"""
+        if include_agent_component
+        else ""
+    )
     manifest.write_text(f"""
 owner: JSONbored
 repos:
@@ -276,6 +328,7 @@ repos:
     docker_cache_scope: example-aio-image
     pytest_image_tag: example-aio:pytest
 {checkout_line.rstrip()}
-{components.rstrip()}
+{alpha_components.rstrip()}
+{agent_components.rstrip()}
 """)
     return manifest

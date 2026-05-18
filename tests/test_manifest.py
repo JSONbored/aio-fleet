@@ -22,6 +22,7 @@ def test_manifest_loads_current_fleet() -> None:
         "infisical-aio",
         "dify-aio",
         "signoz-aio",
+        "nanoclaw-aio",
     }
 
 
@@ -31,6 +32,10 @@ def test_manifest_records_known_fleet_exceptions() -> None:
     assert manifest.repo("mem0-aio").get("checkout_submodules") is True  # nosec B101
     assert manifest.repo("dify-aio").extended_integration is not None  # nosec B101
     assert manifest.repo("signoz-aio").is_signoz_suite  # nosec B101
+    assert manifest.repo("nanoclaw-aio").is_multi_component  # nosec B101
+    assert (
+        manifest.repo("nanoclaw-aio").publish_profile == "multi-component"
+    )  # nosec B101
     assert (  # nosec B101
         manifest.repo("signoz-aio").get("upstream_digest_arg")
         == "UPSTREAM_SIGNOZ_DIGEST"
@@ -52,4 +57,26 @@ repos:
 """)
 
     with pytest.raises(ManifestError, match="unsupported publish_profile"):
+        load_manifest(manifest_path)
+
+
+def test_manifest_requires_components_for_multi_component_profile(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "fleet.yml"
+    manifest_path.write_text("""
+owner: JSONbored
+repos:
+  broken-aio:
+    path: /tmp/broken-aio
+    app_slug: broken-aio
+    image_name: jsonbored/broken-aio
+    docker_cache_scope: broken-aio-image
+    pytest_image_tag: broken-aio:pytest
+    publish_profile: multi-component
+""")
+
+    with pytest.raises(
+        ManifestError, match="multi-component profile requires components"
+    ):
         load_manifest(manifest_path)
