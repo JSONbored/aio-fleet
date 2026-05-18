@@ -247,7 +247,9 @@ def test_release_plan_ignores_registry_only_component_changes(
         "ARG UPSTREAM_VERSION=0.7.1-alpha.2\n"
         "ARG UPSTREAM_IMAGE_DIGEST=sha256:alpha2\n"
     )
+    (repo_path / "CHANGELOG.alpha.md").write_text("## 0.7.1-alpha.2-aio.1\n")
     (repo_path / "README.md").write_text("Alpha lane docs\n")
+    (repo_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
     _git(repo_path, "add", ".")
     _git(repo_path, "commit", "-m", "chore(deps): update sure alpha")
     repo = RepoConfig(
@@ -265,7 +267,8 @@ def test_release_plan_ignores_registry_only_component_changes(
                     "image_name": "jsonbored/sure-aio-alpha",
                     "dockerfile": "Dockerfile.alpha",
                     "release_policy": "registry_only",
-                    "publish_paths": ["README.md", "rootfs-alpha/**"],
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "publish_paths": ["README.md", "pyproject.toml", "rootfs-alpha/**"],
                 },
             },
         },
