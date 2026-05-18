@@ -1959,11 +1959,18 @@ def _publish_github_prerelease(
     config = component_config(repo, component)
     version = _component_release_version(repo, component=component)
     tag = f"{str(config.get('release_tag_prefix', '') or '')}{version}"
-    title_prefix = str(
-        config.get("github_release_title_prefix", "")
-        or repo.get("release_name", repo.name)
-    )
-    title = f"{title_prefix} {version}"
+    release_package_tag = component_registry_release_tag(repo, component)
+    if str(config.get("registry_revision_arg", "") or "").strip() and (
+        release_package_tag != version
+    ):
+        print(
+            f"{repo.name}:{component}: release changelog version {version} does "
+            f"not match registry package tag {release_package_tag or '<missing>'}. "
+            "Update the component revision before publishing.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    title = version
     changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     notes = extract_release_notes(version, changelog, semver=False)
     target = _git_head(repo.path)
@@ -2024,7 +2031,7 @@ def _publish_github_prerelease(
             "version": version,
             "target": target,
             "url": _github_release_url(repo, tag),
-            "release_package_tag": component_registry_release_tag(repo, component),
+            "release_package_tag": release_package_tag,
         }
     result = _run(command, cwd=repo.path, env=env)
     if result.stdout:
@@ -2042,7 +2049,7 @@ def _publish_github_prerelease(
         "version": version,
         "target": target,
         "url": _github_release_url(repo, tag),
-        "release_package_tag": component_registry_release_tag(repo, component),
+        "release_package_tag": release_package_tag,
     }
 
 

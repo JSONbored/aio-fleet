@@ -644,7 +644,6 @@ repos:
         release_suffix: aio
         registry_revision_arg: AIO_REVISION
         github_release_latest: false
-        github_release_title_prefix: Sure AIO Alpha
 """)
     (repo_path / "Dockerfile.alpha").write_text(
         "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=1\n"
@@ -684,6 +683,7 @@ repos:
     assert result == 0  # nosec B101
     output = capsys.readouterr().out
     assert "gh release create sure-alpha/0.7.1-alpha.7-aio.1" in output  # nosec B101
+    assert "--title 0.7.1-alpha.7-aio.1" in output  # nosec B101
     assert "--prerelease --latest=false" in output  # nosec B101
     report = json.loads(report_json.read_text())
     assert report["action"] == "would-create"  # nosec B101
@@ -722,7 +722,6 @@ repos:
         release_suffix: aio
         registry_revision_arg: AIO_REVISION
         github_release_latest: false
-        github_release_title_prefix: Sure AIO Alpha
 """)
     (repo_path / "Dockerfile.alpha").write_text(
         "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=1\n"
@@ -798,7 +797,6 @@ repos:
         release_suffix: aio
         registry_revision_arg: AIO_REVISION
         github_release_latest: false
-        github_release_title_prefix: Sure AIO Alpha
 """)
     (repo_path / "Dockerfile.alpha").write_text(
         "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=1\n"
@@ -844,6 +842,77 @@ repos:
     captured = capsys.readouterr()
     assert "refusing to retarget immutable release" in captured.err  # nosec B101
     assert "Bump the component AIO revision" in captured.err  # nosec B101
+
+
+def test_release_publish_refuses_alpha_registry_release_mismatch(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        upstream_version_key: UPSTREAM_VERSION
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        github_release_latest: false
+""")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=2\n"
+    )
+    (repo_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "UPSTREAM_VERSION"\n'
+    )
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.7-aio.3 - 2026-05-18\n\n"
+        "- alpha release notes\n"
+    )
+
+    def fake_run(command: list[str], **kwargs):
+        del kwargs
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    try:
+        cmd_release_publish(
+            Namespace(
+                manifest=str(manifest),
+                repo="sure-aio",
+                component="sure-alpha",
+                repo_path=None,
+                dry_run=True,
+                report_json=None,
+                format="text",
+            )
+        )
+    except SystemExit as exc:
+        assert exc.code == 1  # nosec B101
+    else:
+        raise AssertionError("expected SystemExit for registry release mismatch")
+
+    captured = capsys.readouterr()
+    assert "release changelog version 0.7.1-alpha.7-aio.3" in captured.err  # nosec B101
+    assert "registry package tag 0.7.1-alpha.7-aio.2" in captured.err  # nosec B101
 
 
 def test_latest_main_ci_requires_external_id_bound_check(
