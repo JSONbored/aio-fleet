@@ -146,6 +146,7 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
     names = [step.name for step in steps]
     assert "build-pytest-image-sure-alpha" in names  # nosec B101
     assert "registry-publish-sure-alpha" in names  # nosec B101
+    assert "github-prerelease-sure-alpha" in names  # nosec B101
     assert "registry-publish-aio" not in names  # nosec B101
     build = steps[names.index("build-pytest-image-sure-alpha")]
     assert (
@@ -160,6 +161,8 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
     }
     publish = steps[names.index("registry-publish-sure-alpha")]
     assert publish.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
+    release = steps[names.index("github-prerelease-sure-alpha")]
+    assert release.command[-2:] == ["--component", "sure-alpha"]  # nosec B101
 
 
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
@@ -200,6 +203,7 @@ def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
 
     monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
     monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
     monkeypatch.setenv("GITHUB_ENV", str(tmp_path / "github-env"))
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
     monkeypatch.setenv("SAFE_ENV", "safe")
@@ -222,6 +226,7 @@ def test_run_steps_scrubs_secret_environment_for_untrusted_steps(
     assert captured_env is not None  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in captured_env  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in captured_env  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" not in captured_env  # nosec B101
     assert "GITHUB_ENV" not in captured_env  # nosec B101
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
     assert captured_env["SAFE_ENV"] == "safe"  # nosec B101
@@ -250,6 +255,7 @@ def test_run_central_trunk_scrubs_secret_environment(
     monkeypatch.setenv("AIO_FLEET_TMPDIR", str(tmp_path / "scratch"))
     monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
     monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
     monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub-token")
     monkeypatch.setenv("GH_TOKEN", "gh-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
@@ -262,6 +268,7 @@ def test_run_central_trunk_scrubs_secret_environment(
     assert captured_env is not None  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in captured_env  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in captured_env  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" not in captured_env  # nosec B101
     assert "DOCKERHUB_TOKEN" not in captured_env  # nosec B101
     assert "GH_TOKEN" not in captured_env  # nosec B101
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101

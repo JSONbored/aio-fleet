@@ -9,6 +9,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+import urllib.parse
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -52,8 +53,13 @@ from aio_fleet.fleet_dashboard import (
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
-from aio_fleet.registry import compute_registry_tags, verify_registry_tags
+from aio_fleet.registry import (
+    component_registry_release_tag,
+    compute_registry_tags,
+    verify_registry_tags,
+)
 from aio_fleet.release import (
+    extract_release_notes,
     find_release_publish_target_commit,
     latest_changelog_version,
     latest_component_changelog_version,
@@ -1010,6 +1016,16 @@ def cmd_control_check(args: argparse.Namespace) -> int:
                 "\n".join(failures) if failures else "aio-fleet central check passed"
             ),
         )
+    if args.report_json:
+        report = _control_check_report(
+            repo,
+            sha=args.sha,
+            event=args.event,
+            publish=args.publish,
+            publish_components=args.publish_component,
+            failures=failures,
+        )
+        Path(args.report_json).write_text(json.dumps(report, indent=2, sort_keys=True))
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
@@ -1718,6 +1734,21 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    config = component_config(repo, args.component)
+    if str(config.get("release_history", "")).strip() == "github_prerelease":
+        report = _publish_github_prerelease(
+            repo, component=args.component, dry_run=args.dry_run
+        )
+        if args.report_json:
+            Path(args.report_json).write_text(
+                json.dumps(report, indent=2, sort_keys=True)
+            )
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            action = report.get("action", "published")
+            print("{repo}:{component}: prerelease={action} {tag}".format(**report))
+        return 0
     latest_version = _component_release_version(repo, component=args.component)
     release_target = find_release_publish_target_commit(repo.path, latest_version)
     notes = _run(
@@ -1759,14 +1790,24 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, file=sys.stderr, end="")
+    if args.report_json:
+        report = {
+            "repo": repo.name,
+            "component": args.component,
+            "status": "success" if result.returncode == 0 else "failure",
+            "tag": latest_version,
+            "target": release_target,
+            "url": _github_release_url(repo, latest_version),
+        }
+        Path(args.report_json).write_text(json.dumps(report, indent=2, sort_keys=True))
     return result.returncode
 
 
 def _component_release_version(repo: RepoConfig, *, component: str = "aio") -> str:
-    changelog = repo.path / "CHANGELOG.md"
+    config = component_config(repo, component)
+    changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     if repo.publish_profile == "template":
         return latest_changelog_version(changelog, semver=True)
-    config = component_config(repo, component)
     upstream_version = read_upstream_version(
         repo.path / str(config.get("dockerfile", "Dockerfile")),
         repo.path / str(config.get("upstream_config", "upstream.toml")),
@@ -1776,6 +1817,159 @@ def _component_release_version(repo: RepoConfig, *, component: str = "aio") -> s
         changelog,
         upstream_version=upstream_version,
         suffix=str(config.get("release_suffix", "aio")),
+    )
+
+
+def _control_check_report(
+    repo: RepoConfig,
+    *,
+    sha: str,
+    event: str,
+    publish: bool,
+    publish_components: list[str],
+    failures: list[str],
+) -> dict[str, object]:
+    selected_components = publish_components or (
+        publish_components_for_report(repo) if publish else []
+    )
+    components: list[dict[str, object]] = []
+    if publish:
+        for component in selected_components:
+            try:
+                tags = compute_registry_tags(repo, sha=sha, component=component)
+                release = _component_release_report(repo, component)
+                components.append(
+                    {
+                        "component": component,
+                        "dockerhub": tags.dockerhub,
+                        "ghcr": tags.ghcr,
+                        "upstream_version": tags.upstream_version,
+                        "release_package_tag": tags.release_package_tag,
+                        "github_release": release,
+                    }
+                )
+            except (Exception, SystemExit) as exc:
+                components.append({"component": component, "error": str(exc)})
+    return {
+        "repo": repo.name,
+        "sha": sha,
+        "event": event,
+        "publish": publish,
+        "status": "failure" if failures else "success",
+        "failures": failures,
+        "components": components,
+    }
+
+
+def publish_components_for_report(repo: RepoConfig) -> list[str]:
+    return publish_components(repo)
+
+
+def _component_release_report(repo: RepoConfig, component: str) -> dict[str, str]:
+    config = component_config(repo, component)
+    if str(config.get("release_history", "")).strip() != "github_prerelease":
+        return {}
+    version = _component_release_version(repo, component=component)
+    tag = f"{str(config.get('release_tag_prefix', '') or '')}{version}"
+    return {
+        "tag": tag,
+        "version": version,
+        "url": _github_release_url(repo, tag),
+        "prerelease": "true",
+        "latest": str(bool(config.get("github_release_latest", True))).lower(),
+    }
+
+
+def _publish_github_prerelease(
+    repo: RepoConfig, *, component: str, dry_run: bool = False
+) -> dict[str, object]:
+    config = component_config(repo, component)
+    version = _component_release_version(repo, component=component)
+    tag = f"{str(config.get('release_tag_prefix', '') or '')}{version}"
+    title_prefix = str(
+        config.get("github_release_title_prefix", "")
+        or repo.get("release_name", repo.name)
+    )
+    title = f"{title_prefix} {version}"
+    changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
+    notes = extract_release_notes(version, changelog, semver=False)
+    target = _git_head(repo.path)
+    env = _github_cli_env()
+    view = _run(
+        ["gh", "release", "view", tag, "--repo", repo.github_repo],
+        cwd=repo.path,
+        env=env,
+    )
+    action = "updated" if view.returncode == 0 else "created"
+    command = [
+        "gh",
+        "release",
+        "edit" if action == "updated" else "create",
+        tag,
+        "--repo",
+        repo.github_repo,
+        "--title",
+        title,
+        "--notes",
+        notes,
+        "--prerelease",
+        "--latest=false",
+    ]
+    if action == "created":
+        command.extend(["--target", target])
+    if dry_run:
+        print(" ".join(shlex.quote(part) for part in command))
+        dry_action = "would-update" if action == "updated" else "would-create"
+        return {
+            "repo": repo.name,
+            "component": component,
+            "status": "success",
+            "action": dry_action,
+            "tag": tag,
+            "version": version,
+            "target": target,
+            "url": _github_release_url(repo, tag),
+            "release_package_tag": component_registry_release_tag(repo, component),
+        }
+    result = _run(command, cwd=repo.path, env=env)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+    return {
+        "repo": repo.name,
+        "component": component,
+        "status": "success",
+        "action": action,
+        "tag": tag,
+        "version": version,
+        "target": target,
+        "url": _github_release_url(repo, tag),
+        "release_package_tag": component_registry_release_tag(repo, component),
+    }
+
+
+def _github_cli_env() -> dict[str, str] | None:
+    token = (
+        os.environ.get("AIO_FLEET_RELEASE_TOKEN")
+        or os.environ.get("AIO_FLEET_CHECK_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if not token:
+        return None
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)
+    return env
+
+
+def _github_release_url(repo: RepoConfig, tag: str) -> str:
+    return (
+        f"https://github.com/{repo.github_repo}/releases/tag/"
+        f"{urllib.parse.quote(tag, safe='')}"
     )
 
 
@@ -2941,6 +3135,7 @@ def build_parser() -> argparse.ArgumentParser:
     control.add_argument("--no-integration", action="store_true")
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
+    control.add_argument("--report-json")
     control.set_defaults(func=cmd_control_check)
 
     registry = sub.add_parser("registry")
@@ -3011,6 +3206,8 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish.add_argument("--component", default="aio")
     release_publish.add_argument("--repo-path")
     release_publish.add_argument("--dry-run", action="store_true")
+    release_publish.add_argument("--report-json")
+    release_publish.add_argument("--format", choices=["text", "json"], default="text")
     release_publish.set_defaults(func=cmd_release_publish)
 
     readiness = sub.add_parser("release-readiness")

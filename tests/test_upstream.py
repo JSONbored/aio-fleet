@@ -256,6 +256,82 @@ repos:
     )  # nosec B101
 
 
+def test_upstream_monitor_write_updates_alpha_release_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    dockerfile = repo_path / "Dockerfile.alpha"
+    dockerfile.write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.6\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:old\n"
+        "ARG AIO_REVISION=7\n"
+    )
+    changelog = repo_path / "CHANGELOG.alpha.md"
+    changelog.write_text("# Alpha Changelog\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    upstream_monitor:
+      - component: sure-alpha
+        name: Sure Alpha
+        source: github-releases
+        repo: we-promise/sure
+        image: we-promise/sure
+        digest_source: ghcr
+        dockerfile: Dockerfile.alpha
+        version_key: UPSTREAM_VERSION
+        version_strip_prefix: v
+        digest_key: UPSTREAM_IMAGE_DIGEST
+        stable_only: false
+        prerelease_channel: alpha
+        strategy: pr
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+""")
+
+    def fake_http_json(url: str, _headers=None):
+        assert "repos/we-promise/sure/releases" in url  # nosec B101
+        return [
+            {"tag_name": "v0.7.1-alpha.7", "prerelease": True},
+            {"tag_name": "v0.7.1-beta.1", "prerelease": True},
+        ]
+
+    monkeypatch.setattr(upstream, "http_json", fake_http_json)
+    monkeypatch.setattr(
+        upstream, "registry_digest_for_version", lambda *_args, **_kwargs: "sha256:new"
+    )
+
+    result = upstream.monitor_repo(
+        load_manifest(manifest).repo("sure-aio"), write=True
+    )[0]
+
+    assert result.latest_version == "0.7.1-alpha.7"  # nosec B101
+    text = dockerfile.read_text()
+    assert "ARG UPSTREAM_VERSION=0.7.1-alpha.7" in text  # nosec B101
+    assert "ARG UPSTREAM_IMAGE_DIGEST=sha256:new" in text  # nosec B101
+    assert "ARG AIO_REVISION=1" in text  # nosec B101
+    changelog_text = changelog.read_text()
+    assert "## 0.7.1-alpha.7-aio.1" in changelog_text  # nosec B101
+    assert "Track upstream Sure alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
+    assert "SURE_IMPORT_MAX_NDJSON_SIZE_MB" in changelog_text  # nosec B101
+    assert "passkey/WebAuthn template controls" in changelog_text  # nosec B101
+
+
 def test_upstream_monitor_write_updates_configured_submodule(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -825,6 +901,58 @@ repos:
     assert seen["require_verified"] is True  # nosec B101
     assert action["verified"] is True  # nosec B101
     assert action["sha"] == "a" * 40  # nosec B101
+
+
+def test_create_upstream_pr_includes_alpha_changelog_path(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=1.1.0\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+""")
+    repo = load_manifest(manifest).repo("sure-aio")
+    result = upstream.UpstreamMonitorResult(
+        repo="sure-aio",
+        component="sure-alpha",
+        name="Sure Alpha",
+        strategy="pr",
+        source="github-releases",
+        current_version="1.0.0",
+        latest_version="1.1.0",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        dockerfile=repo_path / "Dockerfile.alpha",
+        version_key="UPSTREAM_VERSION",
+        digest_key="",
+        release_notes_url="https://github.com/we-promise/sure/releases",
+    )
+
+    action = upstream.create_or_update_upstream_pr(
+        repo, [result], dry_run=True, post_check=False
+    )
+
+    assert action["paths"] == [  # nosec B101
+        "CHANGELOG.alpha.md",
+        "Dockerfile.alpha",
+    ]
 
 
 def test_upstream_body_mentions_source_first_catalog_sync(tmp_path: Path) -> None:

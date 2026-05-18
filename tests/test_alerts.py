@@ -174,10 +174,26 @@ def test_upstream_report_alert_detects_updates_and_actions() -> None:
         },
     )
 
-    assert payload.status == "warning"  # nosec B101
+    assert payload.status == "success"  # nosec B101
     assert payload.dedupe_key == "upstream-monitor:fleet:all"  # nosec B101
-    assert payload.annotations == ["sure-aio:aio 0.7.0 -> 0.7.1"]  # nosec B101
+    assert payload.annotations == [  # nosec B101
+        "sure-aio: upserted-pr  https://github.com/JSONbored/sure-aio/pull/80"
+    ]
     assert payload.details["actions"][0]["action"] == "upserted-pr"  # nosec B101
+    assert payload.details["notify_success"] is True  # nosec B101
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
+
+
+def test_upstream_noop_success_remains_quiet() -> None:
+    payload = alerts.payload_from_report(
+        event="upstream-monitor",
+        status="auto",
+        report={"repos": [{"repo": "sure-aio", "results": [], "actions": []}]},
+    )
+
+    assert payload.status == "success"  # nosec B101
+    assert payload.summary == "Upstream monitor found no updates"  # nosec B101
+    assert alerts.should_send_webhook(payload) is False  # nosec B101
 
 
 def test_upstream_report_alert_classifies_missing_submodule_ref_as_warning() -> None:
@@ -244,3 +260,103 @@ def test_registry_report_alert_detects_missing_tags() -> None:
 
     assert payload.status == "failure"  # nosec B101
     assert "1 missing or failed tag" in payload.summary  # nosec B101
+
+
+def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
+    payload = alerts.payload_from_report(
+        event="publish",
+        status="auto",
+        report={
+            "repo": "sure-aio",
+            "status": "success",
+            "components": [
+                {
+                    "component": "sure-alpha",
+                    "dockerhub": [
+                        "jsonbored/sure-aio-alpha:latest-alpha",
+                        "jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+                        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
+                    ],
+                    "ghcr": [
+                        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
+                        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7",
+                        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
+                    ],
+                    "release_package_tag": "0.7.1-alpha.7-aio.1",
+                    "github_release": {
+                        "url": (
+                            "https://github.com/JSONbored/sure-aio/releases/tag/"
+                            "sure-alpha%2F0.7.1-alpha.7-aio.1"
+                        )
+                    },
+                }
+            ],
+        },
+    )
+
+    assert payload.status == "success"  # nosec B101
+    assert "release history" in payload.summary  # nosec B101
+    assert payload.details["notify_success"] is True  # nosec B101
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
+    fields = payload.details["discord_fields"]
+    values = "\n".join(field["value"] for field in fields)
+    assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values  # nosec B101
+    assert (
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values
+    )  # nosec B101
+    assert "sure-alpha%2F0.7.1-alpha.7-aio.1" in values  # nosec B101
+
+
+def test_publish_failure_alert_keeps_component_context() -> None:
+    payload = alerts.payload_from_report(
+        event="publish",
+        status="auto",
+        report={
+            "repo": "sure-aio",
+            "status": "failure",
+            "failures": ["github-prerelease-sure-alpha: exit 1"],
+            "components": [
+                {
+                    "component": "sure-alpha",
+                    "dockerhub": ["jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1"],
+                    "ghcr": ["ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1"],
+                    "release_package_tag": "0.7.1-alpha.7-aio.1",
+                    "github_release": {
+                        "url": (
+                            "https://github.com/JSONbored/sure-aio/releases/tag/"
+                            "sure-alpha%2F0.7.1-alpha.7-aio.1"
+                        )
+                    },
+                }
+            ],
+        },
+    )
+
+    assert payload.status == "failure"  # nosec B101
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
+    fields = payload.details["discord_fields"]
+    values = "\n".join(field["value"] for field in fields)
+    assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values  # nosec B101
+    assert "github-prerelease-sure-alpha: exit 1" in values  # nosec B101
+
+
+def test_release_publish_success_alert_includes_github_release_url() -> None:
+    payload = alerts.payload_from_report(
+        event="release-publish",
+        status="auto",
+        report={
+            "repo": "sure-aio",
+            "status": "success",
+            "tag": "sure-alpha/0.7.1-alpha.7-aio.1",
+            "target": "a" * 40,
+            "url": (
+                "https://github.com/JSONbored/sure-aio/releases/tag/"
+                "sure-alpha%2F0.7.1-alpha.7-aio.1"
+            ),
+        },
+    )
+
+    assert payload.status == "success"  # nosec B101
+    assert payload.details["notify_success"] is True  # nosec B101
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
+    assert "GitHub release published" in payload.summary  # nosec B101
