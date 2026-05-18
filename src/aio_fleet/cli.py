@@ -57,6 +57,7 @@ from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
+    delete_dockerhub_tags,
     verify_registry_tags,
 )
 from aio_fleet.release import (
@@ -1137,6 +1138,31 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_registry_delete_dockerhub_tags(args: argparse.Namespace) -> int:
+    tags = _tag_list_arg(args.tag_list, args.tag)
+    username = os.environ.get("DOCKERHUB_USERNAME", "")
+    token = os.environ.get("DOCKERHUB_TOKEN", "")
+    try:
+        results = delete_dockerhub_tags(
+            image=args.image,
+            tags=tags,
+            username=username,
+            token=token,
+            required_substring=args.required_substring,
+            dry_run=args.dry_run,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    report = {"image": args.image, "results": results}
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for item in results:
+            print(f"{args.image}:{item['tag']}: {item['state']}")
+    return 0
+
+
 def cmd_registry_publish(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
@@ -1185,6 +1211,14 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
         )
         return 1
     return 0
+
+
+def _tag_list_arg(value: str, repeated: list[str] | None) -> list[str]:
+    tags: list[str] = []
+    for item in repeated or []:
+        tags.extend(part.strip() for part in item.replace(",", "\n").splitlines())
+    tags.extend(part.strip() for part in value.replace(",", "\n").splitlines())
+    return list(dict.fromkeys(tag for tag in tags if tag))
 
 
 def _registry_preserve_tags(repo: RepoConfig, component: str) -> list[str]:
@@ -3263,6 +3297,14 @@ def build_parser() -> argparse.ArgumentParser:
     registry_publish.add_argument("--component", default="aio")
     registry_publish.add_argument("--dry-run", action="store_true")
     registry_publish.set_defaults(func=cmd_registry_publish)
+    registry_delete = registry_sub.add_parser("delete-dockerhub-tags")
+    registry_delete.add_argument("--image", required=True)
+    registry_delete.add_argument("--tag", action="append", default=[])
+    registry_delete.add_argument("--tag-list", default="")
+    registry_delete.add_argument("--required-substring", default="")
+    registry_delete.add_argument("--dry-run", action="store_true")
+    registry_delete.add_argument("--format", choices=["text", "json"], default="text")
+    registry_delete.set_defaults(func=cmd_registry_delete_dockerhub_tags)
 
     upstream = sub.add_parser("upstream")
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)

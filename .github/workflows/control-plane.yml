@@ -22,6 +22,7 @@ on:
           - upstream-monitor
           - fleet-dashboard
           - alert-test
+          - dockerhub-tag-cleanup
       repo:
         description: App repo name for control-check mode
         required: false
@@ -59,6 +60,14 @@ on:
         required: false
         default: true
         type: boolean
+      dockerhub_image:
+        description: Docker Hub image for tag cleanup
+        required: false
+        default: ""
+      dockerhub_tags:
+        description: Comma or newline separated Docker Hub tags to delete
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -169,6 +178,27 @@ jobs:
             --summary "aio-fleet Discord alert test" \
             --details-url "${DETAILS_URL}" \
             --format json
+
+      - name: Delete Docker Hub tags
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dockerhub-tag-cleanup' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_IMAGE: ${{ inputs.dockerhub_image }}
+          DOCKERHUB_TAGS: ${{ inputs.dockerhub_tags }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(
+            registry delete-dockerhub-tags
+            --image "${DOCKERHUB_IMAGE}"
+            --tag-list "${DOCKERHUB_TAGS}"
+            --required-substring alpha
+          )
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python -m aio_fleet "${args[@]}"
 
       - name: Poll active repos
         id: poll

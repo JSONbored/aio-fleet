@@ -127,6 +127,72 @@ def verify_registry_tags(
     return failures
 
 
+def delete_dockerhub_tags(
+    *,
+    image: str,
+    tags: list[str],
+    username: str,
+    token: str,
+    required_substring: str = "",
+    dry_run: bool = False,
+) -> list[dict[str, str]]:
+    parsed = _dockerhub_image_parts(image)
+    if parsed is None:
+        raise ValueError(f"{image}: unsupported Docker Hub image format")
+    namespace, repository = parsed
+    cleaned_tags = _clean_tag_list(tags)
+    if not cleaned_tags:
+        raise ValueError("at least one Docker Hub tag is required")
+
+    required = required_substring.strip()
+    if required:
+        for tag in cleaned_tags:
+            if required not in tag:
+                raise ValueError(
+                    f"{tag}: refusing to delete tag without required substring "
+                    f"{required!r}"
+                )
+
+    if dry_run:
+        return [{"tag": tag, "state": "would-delete"} for tag in cleaned_tags]
+
+    if not username or not token:
+        raise ValueError("DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required")
+
+    auth_token = _dockerhub_login_token(username=username, token=token)
+    results: list[dict[str, str]] = []
+    for tag in cleaned_tags:
+        quoted_tag = urllib.parse.quote(tag, safe="")
+        url = (
+            "https://hub.docker.com/v2/repositories/"
+            f"{namespace}/{repository}/tags/{quoted_tag}/"
+        )
+        request = urllib.request.Request(
+            url, headers={"Authorization": f"JWT {auth_token}"}, method="DELETE"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
+                if response.status in {200, 202, 204}:
+                    results.append({"tag": tag, "state": "deleted"})
+                else:
+                    results.append(
+                        {"tag": tag, "state": f"unexpected:{response.status}"}
+                    )
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                results.append({"tag": tag, "state": "missing"})
+            else:
+                raise RuntimeError(
+                    f"{tag}: Docker Hub delete failed: HTTP {error.code}: "
+                    f"{error.reason}"
+                ) from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(
+                f"{tag}: Docker Hub delete failed: {error.reason}"
+            ) from error
+    return results
+
+
 def _verify_with_docker_imagetools(
     docker: str, tag: str, *, env: Mapping[str, str] | None = None
 ) -> str | None:
@@ -197,6 +263,16 @@ def _dockerhub_tag_parts(tag: str) -> tuple[str, str, str] | None:
     if ":" not in tag:
         return None
     image, tag_name = tag.rsplit(":", 1)
+    parsed = _dockerhub_image_parts(image)
+    if parsed is None:
+        return None
+    namespace, repository = parsed
+    if not tag_name:
+        return None
+    return namespace, repository, tag_name
+
+
+def _dockerhub_image_parts(image: str) -> tuple[str, str] | None:
     parts = image.split("/")
     if parts and parts[0] in {"docker.io", "index.docker.io"}:
         parts = parts[1:]
@@ -206,9 +282,41 @@ def _dockerhub_tag_parts(tag: str) -> tuple[str, str, str] | None:
         namespace, repository = parts
     else:
         return None
-    if not namespace or not repository or not tag_name:
+    if not namespace or not repository or ":" in repository:
         return None
-    return namespace, repository, tag_name
+    return namespace, repository
+
+
+def _clean_tag_list(tags: list[str]) -> list[str]:
+    cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
+    return list(dict.fromkeys(cleaned))
+
+
+def _dockerhub_login_token(*, username: str, token: str) -> str:
+    payload = json.dumps({"username": username, "password": token}).encode()
+    request = urllib.request.Request(
+        "https://hub.docker.com/v2/users/login/",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
+            body = json.load(response)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RuntimeError(
+            f"Docker Hub login returned invalid JSON: {error}"
+        ) from error
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            f"Docker Hub login failed: HTTP {error.code}: {error.reason}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Docker Hub login failed: {error.reason}") from error
+    auth_token = str(body.get("token", "") or "")
+    if not auth_token:
+        raise RuntimeError("Docker Hub login did not return a token")
+    return auth_token
 
 
 def _component_image_name(repo: RepoConfig, component: str) -> str:

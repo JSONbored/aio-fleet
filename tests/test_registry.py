@@ -634,6 +634,69 @@ def test_dockerhub_verification_retries_new_tag_404(monkeypatch) -> None:
     assert sleeps == [2, 4]  # nosec B101
 
 
+def test_delete_dockerhub_tags_deletes_only_guarded_tags(monkeypatch) -> None:
+    deleted_urls: list[str] = []
+
+    class Response:
+        def __init__(self, status: int, body: bytes = b"{}") -> None:
+            self.status = status
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._body
+
+    def fake_urlopen(request, timeout: int):
+        del timeout
+        if request.full_url == "https://hub.docker.com/v2/users/login/":
+            return Response(200, b'{"token":"hub-jwt"}')
+        assert request.get_method() == "DELETE"  # nosec B101
+        assert request.headers["Authorization"] == "JWT hub-jwt"  # nosec B101
+        deleted_urls.append(request.full_url)
+        return Response(204)
+
+    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
+
+    results = registry.delete_dockerhub_tags(
+        image="jsonbored/sure-aio",
+        tags=["latest-alpha", "latest-alpha", "0.7.1-alpha.7-aio.4"],
+        username="jsonbored",
+        token="hub-token",
+        required_substring="alpha",
+    )
+
+    assert results == [  # nosec B101
+        {"tag": "latest-alpha", "state": "deleted"},
+        {"tag": "0.7.1-alpha.7-aio.4", "state": "deleted"},
+    ]
+    assert deleted_urls == [  # nosec B101
+        "https://hub.docker.com/v2/repositories/jsonbored/sure-aio/tags/latest-alpha/",
+        "https://hub.docker.com/v2/repositories/jsonbored/sure-aio/tags/0.7.1-alpha.7-aio.4/",
+    ]
+
+
+def test_delete_dockerhub_tags_refuses_unguarded_tag() -> None:
+    try:
+        registry.delete_dockerhub_tags(
+            image="jsonbored/sure-aio",
+            tags=["latest"],
+            username="jsonbored",
+            token="hub-token",
+            required_substring="alpha",
+        )
+    except ValueError as error:
+        assert "refusing to delete tag without required substring" in str(  # nosec B101
+            error
+        )
+    else:
+        raise AssertionError("expected guarded delete to reject stable tag")
+
+
 def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     seen_commands: list[list[str]] = []
     inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
