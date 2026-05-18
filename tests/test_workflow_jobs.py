@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
+from aio_fleet import workflow_jobs
 from aio_fleet.workflow_jobs import (
     poll_outputs,
+    registry_audit_checkouts,
     render_registry_summary,
     render_upstream_summary,
 )
@@ -112,3 +115,86 @@ def test_registry_summary_renders_missing_tags(tmp_path: Path) -> None:
 
     assert "Registry Audit" in text  # nosec B101
     assert "dify-aio: missing tag" in text  # nosec B101
+
+
+def test_registry_audit_skips_components_not_required_for_current_head(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "fleet.yml"
+    checkout_root = tmp_path / "checkouts"
+    output = tmp_path / "registry-report.json"
+    manifest.write_text("""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: /tmp/sure-aio
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio
+    pytest_image_tag: sure-aio:pytest
+    publish_profile: multi-component
+    components:
+      aio: {}
+      sure-alpha:
+        image_name: jsonbored/sure-aio
+""")
+
+    def fake_checkout_refs(refs, *, token: str, submodules: str):
+        results = []
+        for name, github_repo, path in refs:
+            path.mkdir(parents=True)
+            results.append(
+                {"repo": name, "github_repo": github_repo, "path": str(path)}
+            )
+        return results
+
+    def fake_check_output(*_args, **_kwargs):
+        return "a" * 40
+
+    verify_components: list[str] = []
+
+    def fake_run(args, **_kwargs):
+        component = args[args.index("--component") + 1]
+        verify_components.append(component)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            json.dumps(
+                {
+                    "repos": [
+                        {
+                            "repo": "sure-aio",
+                            "component": component,
+                            "sha": "a" * 40,
+                            "dockerhub": ["jsonbored/sure-aio:latest-alpha"],
+                            "ghcr": ["ghcr.io/jsonbored/sure-aio:latest-alpha"],
+                            "failures": [],
+                        }
+                    ]
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(workflow_jobs.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_jobs,
+        "publish_components_required",
+        lambda *_args, **_kwargs: ["sure-alpha"],
+    )
+
+    report = registry_audit_checkouts(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_path=output,
+        token="token",  # nosec B106
+        github_output=None,
+    )
+
+    assert verify_components == ["sure-alpha"]  # nosec B101
+    assert report["status"] == 0  # nosec B101
+    rows = {(row["component"], row.get("skipped")) for row in report["repos"]}
+    assert ("aio", "not-publish-related") in rows  # nosec B101
+    assert ("sure-alpha", None) in rows  # nosec B101

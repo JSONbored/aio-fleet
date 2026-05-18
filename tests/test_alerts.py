@@ -107,10 +107,14 @@ def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:
 
     body = json.loads(seen[0].data.decode())  # type: ignore[union-attr]
     assert body["allowed_mentions"]["parse"] == []  # nosec B101
-    assert body["content"].startswith("aio-fleet: upstream updates")  # nosec B101
+    assert body["content"] == "aio-fleet: upstream-monitor warning"  # nosec B101
     assert seen[0].headers["User-agent"] == "aio-fleet-alerts/1.0"  # nosec B101
-    assert body["embeds"][0]["fields"][2]["value"] == (  # nosec B101
-        "upstream-monitor:fleet:all"
+    assert body["embeds"][0]["title"] == "upstream updates available"  # nosec B101
+    assert body["embeds"][0]["description"] == (  # nosec B101
+        "- sure-aio:aio 0.7.0 -> 0.7.1"
+    )
+    assert body["embeds"][0]["footer"]["text"] == (  # nosec B101
+        "dedupe=upstream-monitor:fleet:all"
     )
 
 
@@ -260,6 +264,10 @@ def test_registry_report_alert_detects_missing_tags() -> None:
 
     assert payload.status == "failure"  # nosec B101
     assert "1 missing or failed tag" in payload.summary  # nosec B101
+    assert payload.annotations == [  # nosec B101
+        "sure-aio:aio: 1 missing/failed tag(s); e.g. "
+        "jsonbored/sure-aio:latest: tag not found"
+    ]
 
 
 def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
@@ -334,8 +342,34 @@ def test_publish_failure_alert_keeps_component_context() -> None:
     assert alerts.should_send_webhook(payload) is True  # nosec B101
     fields = payload.details["discord_fields"]
     values = "\n".join(field["value"] for field in fields)
-    assert "jsonbored/sure-aio:0.7.1-alpha.7-aio.1" in values  # nosec B101
+    assert "tag: 0.7.1-alpha.7-aio.1" in values  # nosec B101
     assert "github-prerelease-sure-alpha: exit 1" in values  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio" not in values  # nosec B101
+
+
+def test_poll_check_report_alert_includes_target_context() -> None:
+    payload = alerts.payload_from_report(
+        event="poll-check",
+        status="auto",
+        report={
+            "repo": "nanoclaw-aio",
+            "sha": "b" * 40,
+            "source": "pr:27",
+            "event": "pull_request",
+            "status": "failure",
+            "failures": ["trunk: exit 1: Incorrect formatting"],
+        },
+    )
+
+    assert payload.status == "failure"  # nosec B101
+    assert payload.repo == "nanoclaw-aio"  # nosec B101
+    assert payload.dedupe_key == "poll-check:nanoclaw-aio:all"  # nosec B101
+    fields = {
+        field["name"]: field["value"] for field in payload.details["discord_fields"]
+    }
+    assert fields["Source"] == "pr:27"  # nosec B101
+    assert fields["SHA"] == "b" * 12  # nosec B101
+    assert fields["Failed step"] == "trunk"  # nosec B101
 
 
 def test_release_publish_success_alert_includes_github_release_url() -> None:

@@ -675,15 +675,19 @@ def cmd_check_run(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    result = upsert_check_run(
-        repo,
-        sha=args.sha,
-        event=args.event,
-        status=args.status,
-        conclusion=conclusion,
-        summary=args.summary,
-        details_url=args.details_url,
-    )
+    try:
+        result = upsert_check_run(
+            repo,
+            sha=args.sha,
+            event=args.event,
+            status=args.status,
+            conclusion=conclusion,
+            summary=args.summary,
+            details_url=args.details_url,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     print(
         json.dumps(
             {
@@ -1022,6 +1026,7 @@ def cmd_control_check(args: argparse.Namespace) -> int:
             repo,
             sha=args.sha,
             event=args.event,
+            source=args.source,
             publish=args.publish,
             publish_components=args.publish_component,
             failures=failures,
@@ -1891,6 +1896,7 @@ def _control_check_report(
     *,
     sha: str,
     event: str,
+    source: str,
     publish: bool,
     publish_components: list[str],
     failures: list[str],
@@ -1920,6 +1926,7 @@ def _control_check_report(
         "repo": repo.name,
         "sha": sha,
         "event": event,
+        "source": source,
         "publish": publish,
         "status": "failure" if failures else "success",
         "failures": failures,
@@ -3208,6 +3215,7 @@ def build_parser() -> argparse.ArgumentParser:
     control.add_argument("--repo", required=True)
     control.add_argument("--repo-path")
     control.add_argument("--sha", required=True)
+    control.add_argument("--source", default="")
     control.add_argument(
         "--event",
         required=True,

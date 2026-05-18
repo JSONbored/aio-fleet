@@ -299,8 +299,25 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
 
 
 def _failure_detail(stdout: str, stderr: str) -> str:
+    priority_markers = (
+        "error",
+        "failed",
+        "failure",
+        "incorrect",
+        "not formatted",
+        "would reformat",
+        "refusing",
+        "blocked",
+    )
     for output in (stderr, stdout):
         lines = [line.strip() for line in output.splitlines() if line.strip()]
+        priority = [
+            line
+            for line in lines
+            if any(marker in line.lower() for marker in priority_markers)
+        ]
+        if priority:
+            return priority[-1]
         if lines:
             return lines[-1]
     return ""

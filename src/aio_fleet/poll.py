@@ -264,7 +264,13 @@ def github_cli_env() -> dict[str, str] | None:
 
 
 def _github_cli_token() -> str:
-    for key in ("GH_TOKEN", "GITHUB_TOKEN", "APP_TOKEN", "AIO_FLEET_CHECK_TOKEN"):
+    for key in (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "APP_TOKEN",
+        "AIO_FLEET_CHECK_TOKEN",
+        "AIO_FLEET_WORKFLOW_TOKEN",
+    ):
         token = os.environ.get(key, "").strip()
         if token:
             return token

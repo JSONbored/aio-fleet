@@ -97,10 +97,14 @@ def payload_from_report(
     derived_status, derived_summary, annotations, details = summarize_report(
         event, report
     )
+    repo = _report_repo(report)
+    component = _report_component(report)
     return alert_payload(
         event=event,
         status=derived_status if status == "auto" else status,
         summary=summary or derived_summary,
+        repo=repo,
+        component=component,
         details_url=details_url,
         dedupe_key=dedupe_key,
         annotations=annotations,
@@ -212,24 +216,36 @@ def summarize_report(
         return "success", "Upstream monitor found no updates", [], {}
 
     if event == "registry-audit":
-        failures: list[str] = []
+        failures: list[dict[str, str]] = []
         for item in repos:
             if not isinstance(item, dict):
                 continue
             repo = str(item.get("repo", "unknown"))
             component = str(item.get("component", "aio"))
             for failure in item.get("failures", []):
-                failures.append(f"{repo}:{component}: {failure}")
+                failure_text = str(failure).strip()
+                if failure_text:
+                    failures.append(
+                        {
+                            "repo": repo,
+                            "component": component,
+                            "failure": failure_text,
+                        }
+                    )
         if failures:
+            annotations = _registry_failure_annotations(failures)
             return (
                 "failure",
                 f"Registry audit found {len(failures)} missing or failed tag(s)",
-                failures[:10],
-                {"failures": failures},
+                annotations,
+                {
+                    "failures": failures,
+                    "discord_fields": _registry_failure_fields(failures),
+                },
             )
         return "success", "Registry audit passed", [], {}
 
-    if event in {"publish", "release-publish"}:
+    if event in {"publish", "release-publish", "poll-check", "control-check"}:
         failures = [
             str(failure)
             for failure in report.get("failures", [])
@@ -240,14 +256,25 @@ def summarize_report(
         ]
         repo = str(report.get("repo", "fleet"))
         if failures or report.get("status") == "failure":
+            if event in {"poll-check", "control-check"}:
+                summary = f"aio-fleet required check failed for {repo}"
+                details = _control_check_details(report, failures)
+                return "failure", summary, failures[:5], details
             summary = f"Publish failed for {repo}"
             details: dict[str, Any] = {"failures": failures, "components": components}
-            fields = _publish_fields(components)
+            fields = _publish_failure_fields(components)
             if failures:
                 fields.append({"name": "Next action", "value": failures[0]})
             if fields:
                 details["discord_fields"] = fields
             return "failure", summary, failures[:10], details
+        if event in {"poll-check", "control-check"}:
+            return (
+                "success",
+                f"aio-fleet required check passed for {repo}",
+                [],
+                {"notify_success": False},
+            )
         if event == "release-publish" and report.get("tag"):
             tag = str(report.get("tag", ""))
             summary = f"GitHub release published for {repo}: {tag}"
@@ -394,7 +421,7 @@ def _is_discord_webhook(webhook_url: str) -> bool:
 
 
 def _discord_body(payload: AlertPayload) -> dict[str, Any]:
-    description = _text_body(payload).strip()
+    description = _discord_description(payload)
     if len(description) > 3900:
         description = description[:3897] + "..."
     color = {
@@ -404,14 +431,15 @@ def _discord_body(payload: AlertPayload) -> dict[str, Any]:
     }.get(payload.status, 0x57606A)
     embed: dict[str, Any] = {
         "title": payload.summary[:256],
-        "description": description,
         "color": color,
         "fields": [
             {"name": "Event", "value": payload.event[:1024], "inline": True},
             {"name": "Status", "value": payload.status[:1024], "inline": True},
-            {"name": "Dedupe", "value": payload.dedupe_key[:1024], "inline": False},
         ],
+        "footer": {"text": f"dedupe={payload.dedupe_key}"[:2048]},
     }
+    if description:
+        embed["description"] = description
     if payload.repo:
         embed["fields"].append(
             {"name": "Repo", "value": payload.repo[:1024], "inline": True}
@@ -437,10 +465,83 @@ def _discord_body(payload: AlertPayload) -> dict[str, Any]:
             }
         )
     return {
-        "content": f"aio-fleet: {payload.summary}"[:2000],
+        "content": f"aio-fleet: {payload.event} {payload.status}"[:2000],
         "embeds": [embed],
         "allowed_mentions": {"parse": []},
     }
+
+
+def _discord_description(payload: AlertPayload) -> str:
+    lines: list[str] = []
+    if payload.details_url:
+        lines.append(payload.details_url)
+    lines.extend(f"- {annotation}" for annotation in payload.annotations[:5])
+    return "\n".join(lines)
+
+
+def _report_repo(report: dict[str, Any]) -> str:
+    repo = report.get("repo")
+    return str(repo).strip() if repo else ""
+
+
+def _report_component(report: dict[str, Any]) -> str:
+    components = report.get("components", [])
+    if not isinstance(components, list) or len(components) != 1:
+        return ""
+    component = (
+        components[0].get("component") if isinstance(components[0], dict) else ""
+    )
+    return str(component).strip() if component else ""
+
+
+def _control_check_details(
+    report: dict[str, Any], failures: list[str]
+) -> dict[str, Any]:
+    fields: list[dict[str, Any]] = []
+    source = str(report.get("source", "") or "").strip()
+    sha = str(report.get("sha", "") or "").strip()
+    event = str(report.get("event", "") or "").strip()
+    if source:
+        fields.append({"name": "Source", "value": source, "inline": True})
+    if event:
+        fields.append({"name": "Target event", "value": event, "inline": True})
+    if sha:
+        fields.append({"name": "SHA", "value": sha[:12], "inline": True})
+    if failures:
+        step = failures[0].split(":", 1)[0]
+        if step:
+            fields.append({"name": "Failed step", "value": step, "inline": True})
+        fields.append({"name": "Next action", "value": failures[0]})
+    return {"failures": failures, "discord_fields": fields}
+
+
+def _registry_failure_annotations(failures: list[dict[str, str]]) -> list[str]:
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for failure in failures:
+        key = (failure["repo"], failure["component"])
+        grouped.setdefault(key, []).append(failure["failure"])
+    annotations: list[str] = []
+    for (repo, component), group in list(grouped.items())[:5]:
+        annotations.append(
+            f"{repo}:{component}: {len(group)} missing/failed tag(s); e.g. {group[0]}"
+        )
+    return annotations
+
+
+def _registry_failure_fields(failures: list[dict[str, str]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for failure in failures:
+        key = (failure["repo"], failure["component"])
+        grouped.setdefault(key, []).append(failure["failure"])
+    fields: list[dict[str, Any]] = []
+    for (repo, component), group in list(grouped.items())[:5]:
+        fields.append(
+            {
+                "name": f"{repo}:{component}",
+                "value": f"{len(group)} missing/failed tag(s)\n{group[0]}",
+            }
+        )
+    return fields
 
 
 def _action_fields(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -474,6 +575,26 @@ def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
             fields.append({"name": f"{component} GHCR", "value": ghcr})
         if release_url:
             fields.append({"name": f"{component} GitHub release", "value": release_url})
+    return fields
+
+
+def _publish_failure_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for item in components[:3]:
+        component = str(item.get("component", "aio"))
+        lines: list[str] = []
+        package_tag = str(item.get("release_package_tag", "") or "").strip()
+        if package_tag:
+            lines.append(f"tag: {package_tag}")
+        release = item.get("github_release", {})
+        release_url = release.get("url", "") if isinstance(release, dict) else ""
+        if release_url:
+            lines.append(f"release: {release_url}")
+        error = str(item.get("error", "") or "").strip()
+        if error:
+            lines.append(error)
+        if lines:
+            fields.append({"name": component, "value": "\n".join(lines)})
     return fields
 
 
