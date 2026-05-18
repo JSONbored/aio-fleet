@@ -1914,9 +1914,9 @@ def _publish_github_prerelease(
         notes,
         "--prerelease",
         "--latest=false",
+        "--target",
+        target,
     ]
-    if action == "created":
-        command.extend(["--target", target])
     if dry_run:
         print(" ".join(shlex.quote(part) for part in command))
         dry_action = "would-update" if action == "updated" else "would-create"
