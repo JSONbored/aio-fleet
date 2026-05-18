@@ -164,11 +164,13 @@ def delete_dockerhub_tags(
     for tag in cleaned_tags:
         quoted_tag = urllib.parse.quote(tag, safe="")
         url = (
-            "https://hub.docker.com/v2/repositories/"
-            f"{namespace}/{repository}/tags/{quoted_tag}/"
+            "https://hub.docker.com/v2/"
+            f"namespaces/{namespace}/repositories/{repository}/tags/{quoted_tag}"
         )
         request = urllib.request.Request(
-            url, headers={"Authorization": f"JWT {auth_token}"}, method="DELETE"
+            url,
+            headers={"Authorization": f"Bearer {auth_token}"},
+            method="DELETE",
         )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
@@ -293,9 +295,9 @@ def _clean_tag_list(tags: list[str]) -> list[str]:
 
 
 def _dockerhub_login_token(*, username: str, token: str) -> str:
-    payload = json.dumps({"username": username, "password": token}).encode()
+    payload = json.dumps({"identifier": username, "secret": token}).encode()
     request = urllib.request.Request(
-        "https://hub.docker.com/v2/users/login/",
+        "https://hub.docker.com/v2/auth/token",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -313,7 +315,7 @@ def _dockerhub_login_token(*, username: str, token: str) -> str:
         ) from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Docker Hub login failed: {error.reason}") from error
-    auth_token = str(body.get("token", "") or "")
+    auth_token = str(body.get("access_token", "") or body.get("token", "") or "")
     if not auth_token:
         raise RuntimeError("Docker Hub login did not return a token")
     return auth_token
