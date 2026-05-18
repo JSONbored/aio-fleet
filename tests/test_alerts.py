@@ -281,14 +281,12 @@ def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
                 {
                     "component": "sure-alpha",
                     "dockerhub": [
-                        "jsonbored/sure-aio:latest-alpha",
-                        "jsonbored/sure-aio:0.7.1-alpha.7",
-                        "jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
+                        "jsonbored/sure-aio-alpha:latest-alpha",
+                        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
                     ],
                     "ghcr": [
-                        "ghcr.io/jsonbored/sure-aio:latest-alpha",
-                        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7",
-                        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
+                        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
+                        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
                     ],
                     "release_package_tag": "0.7.1-alpha.7-aio.1",
                     "github_release": {
@@ -308,8 +306,10 @@ def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
     assert alerts.should_send_webhook(payload) is True  # nosec B101
     fields = payload.details["discord_fields"]
     values = "\n".join(field["value"] for field in fields)
-    assert "jsonbored/sure-aio:0.7.1-alpha.7-aio.1" in values  # nosec B101
-    assert "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7-aio.1" in values  # nosec B101
+    assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values  # nosec B101
+    assert (
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values
+    )  # nosec B101
     assert "sure-alpha%2F0.7.1-alpha.7-aio.1" in values  # nosec B101
 
 
@@ -324,8 +324,8 @@ def test_publish_failure_alert_keeps_component_context() -> None:
             "components": [
                 {
                     "component": "sure-alpha",
-                    "dockerhub": ["jsonbored/sure-aio:0.7.1-alpha.7-aio.1"],
-                    "ghcr": ["ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7-aio.1"],
+                    "dockerhub": ["jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1"],
+                    "ghcr": ["ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1"],
                     "release_package_tag": "0.7.1-alpha.7-aio.1",
                     "github_release": {
                         "url": (
@@ -344,7 +344,9 @@ def test_publish_failure_alert_keeps_component_context() -> None:
     values = "\n".join(field["value"] for field in fields)
     assert "tag: 0.7.1-alpha.7-aio.1" in values  # nosec B101
     assert "github-prerelease-sure-alpha: exit 1" in values  # nosec B101
-    assert "ghcr.io/jsonbored/sure-aio" not in values  # nosec B101
+    assert (  # nosec B101
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" not in values
+    )
 
 
 def test_poll_check_report_alert_includes_target_context() -> None:

@@ -237,16 +237,12 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
 
     assert tags.release_package_tag == "0.7.1-alpha.7-aio.1"  # nosec B101
     assert tags.dockerhub == [  # nosec B101
-        "jsonbored/sure-aio:latest-alpha",
-        "jsonbored/sure-aio:0.7.1-alpha.7",
-        "jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
-        f"jsonbored/sure-aio:sha-alpha-{sha}",
+        "jsonbored/sure-aio-alpha:latest-alpha",
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
     ]
     assert tags.ghcr == [  # nosec B101
-        "ghcr.io/jsonbored/sure-aio:latest-alpha",
-        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7",
-        "ghcr.io/jsonbored/sure-aio:0.7.1-alpha.7-aio.1",
-        f"ghcr.io/jsonbored/sure-aio:sha-alpha-{sha}",
+        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
     ]
 
 
@@ -273,9 +269,23 @@ def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
 
     assert set(stable.all_tags).isdisjoint(alpha.all_tags)  # nosec B101
     assert "jsonbored/sure-aio:latest" in stable.dockerhub  # nosec B101
-    assert "jsonbored/sure-aio:latest-alpha" in alpha.dockerhub  # nosec B101
+    assert "jsonbored/sure-aio-alpha:latest-alpha" in alpha.dockerhub  # nosec B101
+    assert (
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in alpha.dockerhub
+    )  # nosec B101
     assert f"jsonbored/sure-aio:sha-{sha}" in stable.dockerhub  # nosec B101
-    assert f"jsonbored/sure-aio:sha-alpha-{sha}" in alpha.dockerhub  # nosec B101
+    assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7" not in alpha.dockerhub  # nosec B101
+    assert (
+        f"jsonbored/sure-aio-alpha:sha-alpha-{sha}" not in alpha.dockerhub
+    )  # nosec B101
+    assert len(alpha.dockerhub) == 2  # nosec B101
+    assert len(alpha.ghcr) == 2  # nosec B101
+    assert all(  # nosec B101
+        tag.startswith("jsonbored/sure-aio-alpha:") for tag in alpha.dockerhub
+    )
+    assert all(  # nosec B101
+        tag.startswith("ghcr.io/jsonbored/sure-aio-alpha:") for tag in alpha.ghcr
+    )
 
 
 def test_component_release_tag_allows_other_component_release_followup(
