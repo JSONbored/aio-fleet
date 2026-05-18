@@ -36,6 +36,14 @@ def test_manifest_records_known_fleet_exceptions() -> None:
     assert (
         manifest.repo("nanoclaw-aio").publish_profile == "multi-component"
     )  # nosec B101
+    assert manifest.repo("nanoclaw-aio").raw["validation"][
+        "exact_category_tokens"
+    ] == [  # nosec B101
+        "AI",
+        "Productivity",
+        "Network:Messenger",
+        "Tools:Utilities",
+    ]
     assert (  # nosec B101
         manifest.repo("signoz-aio").get("upstream_digest_arg")
         == "UPSTREAM_SIGNOZ_DIGEST"
