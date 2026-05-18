@@ -236,4 +236,29 @@ repositories = {
     ]
     required_check_app_id = 3565017
   }
+
+  "nanoclaw-aio" = {
+    description = "Telegram-first NanoClaw v2 for Unraid, with persistent appdata and a paired helper agent image for Docker-socket-spawned agent sessions."
+    topics = [
+      "agent",
+      "agents",
+      "ai",
+      "assistant",
+      "automation",
+      "claude",
+      "docker",
+      "homelab",
+      "nanoclaw",
+      "scheduler",
+      "self-hosted",
+      "telegram",
+      "unraid",
+      "unraid-ca",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+    ]
+    required_check_app_id = 3565017
+  }
 }

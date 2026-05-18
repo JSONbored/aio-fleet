@@ -1387,7 +1387,6 @@ def test_infra_doctor_checks_local_policy_without_tofu(
     infra = tmp_path / "infra" / "github"
     infra.mkdir(parents=True)
     (infra / ".terraform.lock.hcl").write_text("# lock\n")
-    (infra / ".terraform").mkdir()
     manifest = tmp_path / "fleet.yml"
     manifest.write_text(f"""
 owner: JSONbored
