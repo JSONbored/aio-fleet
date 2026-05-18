@@ -702,6 +702,49 @@ def test_delete_dockerhub_tags_refuses_unguarded_tag() -> None:
         raise AssertionError("expected guarded delete to reject stable tag")
 
 
+def test_delete_dockerhub_tags_reports_forbidden_permission(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"access_token":"hub-jwt"}'
+
+    def fake_urlopen(request, timeout: int):
+        del timeout
+        if request.full_url == "https://hub.docker.com/v2/auth/token":
+            return Response()
+        raise HTTPError(
+            request.full_url,
+            403,
+            "Forbidden",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
+
+    try:
+        registry.delete_dockerhub_tags(
+            image="jsonbored/sure-aio",
+            tags=["latest-alpha"],
+            username="jsonbored",
+            token="hub-token",
+            required_substring="alpha",
+        )
+    except RuntimeError as error:
+        message = str(error)
+        assert "Docker Hub delete forbidden" in message  # nosec B101
+        assert "lacks tag delete/admin permission" in message  # nosec B101
+    else:
+        raise AssertionError("expected forbidden delete to report token permission")
+
+
 def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     seen_commands: list[list[str]] = []
     inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
