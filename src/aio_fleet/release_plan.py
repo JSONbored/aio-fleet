@@ -105,12 +105,12 @@ def release_plan_for_repo(
             if registry_only
             else _safe_latest_component_tag(repo, component)
         )
-        next_version = (
-            latest_tag if registry_only else _safe_next_component(repo, component)
-        )
+        next_version = _safe_next_component(repo, component)
         registry_only_component_changes = registry_only
         release_due = (
-            False if registry_only else _safe_has_component_changes(repo, component)
+            _has_registry_only_component_changes(repo, component, latest_tag)
+            if registry_only
+            else _safe_has_component_changes(repo, component)
         )
     else:
         latest_tag = _safe_latest_aio_tag(repo)
@@ -294,6 +294,7 @@ def _safe_latest_component_tag(repo: RepoConfig, component: str) -> str:
                 repo.path / str(config.get("upstream_config", "upstream.toml")),
                 suffix=str(config.get("release_suffix", "aio")),
                 version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+                tag_prefix=str(config.get("release_tag_prefix", "") or ""),
             )
             or ""
         )
@@ -310,6 +311,7 @@ def _safe_next_component(repo: RepoConfig, component: str) -> str:
             repo.path / str(config.get("upstream_config", "upstream.toml")),
             suffix=str(config.get("release_suffix", "aio")),
             version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+            tag_prefix=str(config.get("release_tag_prefix", "") or ""),
         )
     except (Exception, SystemExit):
         return ""
@@ -366,18 +368,31 @@ def _only_registry_only_component_changes(repo: RepoConfig) -> bool:
     changed_paths = _changed_paths_since(repo.path, latest_tag)
     if not changed_paths:
         return False
-    return all(
-        any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
-        for path in changed_paths
-    )
+    return all(_matches_release_pattern(path, patterns) for path in changed_paths)
 
 
-def _registry_only_component_patterns(repo: RepoConfig) -> set[str]:
+def _has_registry_only_component_changes(
+    repo: RepoConfig, component: str, latest_tag: str
+) -> bool:
+    patterns = _registry_only_component_patterns(repo, component=component)
+    if not patterns or not latest_tag:
+        return False
+    changed_paths = _changed_paths_since(repo.path, latest_tag)
+    if not changed_paths:
+        return False
+    return any(_matches_release_pattern(path, patterns) for path in changed_paths)
+
+
+def _registry_only_component_patterns(
+    repo: RepoConfig, *, component: str | None = None
+) -> set[str]:
     patterns: set[str] = set()
     components = repo.raw.get("components")
     if not isinstance(components, dict):
         return patterns
     for name, config in components.items():
+        if component is not None and name != component:
+            continue
         if not isinstance(config, dict):
             continue
         if str(config.get("release_policy", "")).strip() != "registry_only":

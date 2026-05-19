@@ -59,13 +59,19 @@ class ReleasePlan:
     cliff_config: str
     component: str = "aio"
     release_suffix: str = "aio"
+    release_tag_prefix: str = ""
 
 
-def render_git_cliff_config(repo: RepoConfig, *, release_suffix: str = "aio") -> str:
+def render_git_cliff_config(
+    repo: RepoConfig, *, release_suffix: str = "aio", release_tag_prefix: str = ""
+) -> str:
     tag_pattern = (
         "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
         if repo.publish_profile == "template"
-        else f"^v?[0-9].*-{re.escape(release_suffix)}\\.[0-9]+$"
+        else (
+            f"^{re.escape(release_tag_prefix)}v?[0-9].*-"
+            f"{re.escape(release_suffix)}\\.[0-9]+$"
+        )
     )
     return f'''[changelog]
 header = """
@@ -118,19 +124,26 @@ commit_parsers = [
 
 
 def write_temp_git_cliff_config(
-    repo: RepoConfig, *, release_suffix: str = "aio"
+    repo: RepoConfig, *, release_suffix: str = "aio", release_tag_prefix: str = ""
 ) -> Path:
     handle = tempfile.NamedTemporaryFile(
         "w", prefix=f"{repo.name}-git-cliff-", suffix=".toml", delete=False
     )
     with handle:
-        handle.write(render_git_cliff_config(repo, release_suffix=release_suffix))
+        handle.write(
+            render_git_cliff_config(
+                repo,
+                release_suffix=release_suffix,
+                release_tag_prefix=release_tag_prefix,
+            )
+        )
     return Path(handle.name)
 
 
 def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePlan:
     config = component_config(repo, component)
     release_suffix = str(config.get("release_suffix", "aio"))
+    release_tag_prefix = str(config.get("release_tag_prefix", "") or "")
     version = _next_version(repo, component=component)
     changelog_path = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     return ReleasePlan(
@@ -139,9 +152,14 @@ def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePl
         xml_paths=[
             repo.path / path for path in _release_xml_sources(repo, component=component)
         ],
-        cliff_config=render_git_cliff_config(repo, release_suffix=release_suffix),
+        cliff_config=render_git_cliff_config(
+            repo,
+            release_suffix=release_suffix,
+            release_tag_prefix=release_tag_prefix,
+        ),
         component=component,
         release_suffix=release_suffix,
+        release_tag_prefix=release_tag_prefix,
     )
 
 
@@ -239,6 +257,7 @@ def _next_version(repo: RepoConfig, *, component: str) -> str:
         repo.path / str(config.get("upstream_config", "upstream.toml")),
         suffix=str(config.get("release_suffix", "aio")),
         version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+        tag_prefix=str(config.get("release_tag_prefix", "") or ""),
     )
 
 

@@ -2384,7 +2384,11 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
     plan = build_release_plan(repo, component=args.component)
-    cliff_config = write_temp_git_cliff_config(repo, release_suffix=plan.release_suffix)
+    cliff_config = write_temp_git_cliff_config(
+        repo,
+        release_suffix=plan.release_suffix,
+        release_tag_prefix=plan.release_tag_prefix,
+    )
     commands = [
         [
             "git",
