@@ -27,6 +27,7 @@ from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
 from aio_fleet.changelog import (
     build_release_plan,
     component_config,
+    normalize_markdown_changelog,
     update_template_changes,
     write_temp_git_cliff_config,
 )
@@ -2321,6 +2322,7 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
             print(result.stderr, file=sys.stderr, end="")
         if result.returncode != 0:
             return result.returncode
+    normalize_markdown_changelog(plan.changelog_path)
     for xml_path in plan.xml_paths:
         update_template_changes(
             version=plan.version,
