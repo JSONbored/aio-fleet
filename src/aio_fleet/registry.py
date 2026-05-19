@@ -140,6 +140,8 @@ def delete_dockerhub_tags(
     if parsed is None:
         raise ValueError(f"{image}: unsupported Docker Hub image format")
     namespace, repository = parsed
+    quoted_namespace = urllib.parse.quote(namespace, safe="")
+    quoted_repository = urllib.parse.quote(repository, safe="")
     cleaned_tags = _clean_tag_list(tags)
     if not cleaned_tags:
         raise ValueError("at least one Docker Hub tag is required")
@@ -165,7 +167,7 @@ def delete_dockerhub_tags(
         quoted_tag = urllib.parse.quote(tag, safe="")
         url = (
             "https://hub.docker.com/v2/"
-            f"namespaces/{namespace}/repositories/{repository}/tags/{quoted_tag}"
+            f"namespaces/{quoted_namespace}/repositories/{quoted_repository}/tags/{quoted_tag}"
         )
         request = urllib.request.Request(
             url,
@@ -238,10 +240,12 @@ def _verify_dockerhub_tag(
     if parsed is None:
         return f"{tag}: unsupported Docker Hub tag format"
     namespace, repository, tag_name = parsed
+    quoted_namespace = urllib.parse.quote(namespace, safe="")
+    quoted_repository = urllib.parse.quote(repository, safe="")
     quoted_tag = urllib.parse.quote(tag_name, safe="")
     url = (
         "https://hub.docker.com/v2/repositories/"
-        f"{namespace}/{repository}/tags/{quoted_tag}"
+        f"{quoted_namespace}/{quoted_repository}/tags/{quoted_tag}"
     )
     last_error = ""
     for attempt in range(1, attempts + 1):
@@ -280,6 +284,9 @@ def _dockerhub_tag_parts(tag: str) -> tuple[str, str, str] | None:
     return namespace, repository, tag_name
 
 
+_DOCKERHUB_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+
+
 def _dockerhub_image_parts(image: str) -> tuple[str, str] | None:
     parts = image.split("/")
     if parts and parts[0] in {"docker.io", "index.docker.io"}:
@@ -291,6 +298,11 @@ def _dockerhub_image_parts(image: str) -> tuple[str, str] | None:
     else:
         return None
     if not namespace or not repository or ":" in repository:
+        return None
+    if (
+        _DOCKERHUB_NAME_PATTERN.fullmatch(namespace) is None
+        or _DOCKERHUB_NAME_PATTERN.fullmatch(repository) is None
+    ):
         return None
     return namespace, repository
 

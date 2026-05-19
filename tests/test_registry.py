@@ -702,6 +702,24 @@ def test_delete_dockerhub_tags_refuses_unguarded_tag() -> None:
         raise AssertionError("expected guarded delete to reject stable tag")
 
 
+
+
+def test_delete_dockerhub_tags_rejects_image_with_url_metacharacters() -> None:
+    for image in ["jsonbored/sure-aio#", "jsonbored/sure-aio?x=1"]:
+        try:
+            registry.delete_dockerhub_tags(
+                image=image,
+                tags=["latest-alpha"],
+                username="jsonbored",
+                token="hub-token",
+                required_substring="alpha",
+                dry_run=True,
+            )
+        except ValueError as error:
+            assert "unsupported Docker Hub image format" in str(error)  # nosec B101
+        else:
+            raise AssertionError(f"expected invalid Docker Hub image to fail: {image}")
+
 def test_delete_dockerhub_tags_reports_forbidden_permission(monkeypatch) -> None:
     class Response:
         status = 200
