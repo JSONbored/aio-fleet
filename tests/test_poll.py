@@ -136,7 +136,7 @@ def test_publish_required_accepts_runtime_and_release_commits(
         )  # nosec B101
 
 
-def test_poll_targets_publish_only_for_publish_related_main_commits(
+def test_poll_targets_publish_main_commits_for_non_template_repos(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest_path = _write_manifest(tmp_path)
@@ -146,15 +146,6 @@ def test_poll_targets_publish_only_for_publish_related_main_commits(
     monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
     monkeypatch.setattr(
         poll, "_commit_changed_paths", lambda _repo, _sha: ["README.md"]
-    )
-
-    targets = poll.poll_targets(manifest)
-
-    assert len(targets) == 1  # nosec B101
-    assert targets[0].publish is False  # nosec B101
-
-    monkeypatch.setattr(
-        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
     )
 
     targets = poll.poll_targets(manifest)
