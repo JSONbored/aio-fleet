@@ -627,7 +627,6 @@ jobs:
             fleet-dashboard-report.json
             release-plan-report.json
             registry-preflight-report.json
-            central-control-check.log
             ${{ runner.temp }}/central-control-report.json
 
   poll-checks:
@@ -1020,5 +1019,4 @@ jobs:
           retention-days: 14
           path: |
             registry-preflight-report.json
-            central-control-check.log
             ${{ runner.temp }}/poll-central-control-report.json

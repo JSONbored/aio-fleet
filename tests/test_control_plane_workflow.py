@@ -258,6 +258,8 @@ def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> No
     assert "release-plan-report.json" in control["with"]["path"]  # nosec B101
     assert "registry-preflight-report.json" in control["with"]["path"]  # nosec B101
     assert "registry-preflight-report.json" in poll["with"]["path"]  # nosec B101
+    assert "central-control-check.log" not in control["with"]["path"]  # nosec B101
+    assert "central-control-check.log" not in poll["with"]["path"]  # nosec B101
 
 
 def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
