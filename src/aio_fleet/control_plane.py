@@ -610,14 +610,9 @@ def run_central_trunk(
 
 
 def _repo_python(repo_path: Path) -> str:
-    for candidate in (
-        repo_path / ".venv-local" / "bin" / "python",
-        repo_path / ".venv-local" / "bin" / "python3",
-        repo_path / ".venv" / "bin" / "python",
-        repo_path / ".venv" / "bin" / "python3",
-    ):
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
+    # App checkouts are untrusted in central checks; never execute a repo-local
+    # virtualenv shim before the policy, test, and publish gates finish.
+    del repo_path
     return sys.executable
 
 
