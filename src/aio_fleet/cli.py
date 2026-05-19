@@ -58,6 +58,8 @@ from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
     delete_dockerhub_tags,
+    dockerhub_auth_preflight_failure,
+    dockerhub_delete_scope_preflight_failure,
     verify_registry_tags,
 )
 from aio_fleet.release import (
@@ -1141,7 +1143,9 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
 def cmd_registry_delete_dockerhub_tags(args: argparse.Namespace) -> int:
     tags = _tag_list_arg(args.tag_list, args.tag)
     username = os.environ.get("DOCKERHUB_USERNAME", "")
-    token = os.environ.get("DOCKERHUB_TOKEN", "")
+    token = os.environ.get("DOCKERHUB_DELETE_TOKEN") or os.environ.get(
+        "DOCKERHUB_TOKEN", ""
+    )
     try:
         results = delete_dockerhub_tags(
             image=args.image,
@@ -1161,6 +1165,199 @@ def cmd_registry_delete_dockerhub_tags(args: argparse.Namespace) -> int:
         for item in results:
             print(f"{args.image}:{item['tag']}: {item['state']}")
     return 0
+
+
+def cmd_registry_preflight(args: argparse.Namespace) -> int:
+    modes = set(args.mode or ["all"])
+    if "all" in modes:
+        modes = {"publish", "cleanup"}
+    checks: list[dict[str, str]] = []
+
+    manifest = load_manifest(Path(args.manifest))
+    repo: RepoConfig | None = None
+    if args.repo:
+        repo = _repo_for_identifier(manifest, args.repo)
+        if args.repo_path:
+            repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    elif args.repo_path:
+        print("--repo-path can only be used with --repo", file=sys.stderr)
+        return 1
+
+    image = args.image
+    if not image and repo is not None:
+        image = str(component_config(repo, args.component).get("image_name") or "")
+        if not image:
+            image = repo.image_name
+
+    if "publish" in modes:
+        checks.extend(_registry_publish_preflight_checks(live_auth=args.live_auth))
+    if "cleanup" in modes:
+        checks.extend(
+            _registry_cleanup_preflight_checks(
+                image=image,
+                live_auth=args.live_auth,
+                check_delete_scope=args.check_delete_scope,
+                allow_publish_token_fallback=args.allow_publish_token_delete_fallback,
+            )
+        )
+
+    report = {
+        "status": "failed"
+        if any(check["status"] == "failed" for check in checks)
+        else "ok",
+        "checks": checks,
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for check in checks:
+            print(f"{check['name']}: {check['status']}: {check['detail']}")
+    return 1 if report["status"] == "failed" else 0
+
+
+def _registry_publish_preflight_checks(*, live_auth: bool) -> list[dict[str, str]]:
+    username = os.environ.get("DOCKERHUB_USERNAME", "")
+    dockerhub_token = os.environ.get("DOCKERHUB_TOKEN", "")
+    ghcr_token = os.environ.get("AIO_FLEET_GHCR_TOKEN", "")
+    missing = [
+        name
+        for name, value in (
+            ("DOCKERHUB_USERNAME", username),
+            ("DOCKERHUB_TOKEN", dockerhub_token),
+            ("AIO_FLEET_GHCR_TOKEN", ghcr_token),
+        )
+        if not value
+    ]
+    checks = [
+        _preflight_check(
+            "publish-credentials",
+            "failed" if missing else "ok",
+            "missing " + ", ".join(missing)
+            if missing
+            else "Docker Hub and GHCR publish credentials are present",
+        )
+    ]
+    if missing:
+        checks.append(
+            _preflight_check(
+                "dockerhub-publish-auth",
+                "skipped",
+                "publish credential gaps must be fixed before live auth",
+            )
+        )
+        return checks
+    if not live_auth:
+        checks.append(
+            _preflight_check(
+                "dockerhub-publish-auth",
+                "skipped",
+                "live Docker Hub auth check disabled",
+            )
+        )
+        return checks
+    failure = dockerhub_auth_preflight_failure(
+        username=username,
+        token=dockerhub_token,
+    )
+    checks.append(
+        _preflight_check(
+            "dockerhub-publish-auth",
+            "failed" if failure else "ok",
+            failure or "Docker Hub token accepted by /v2/auth/token",
+        )
+    )
+    return checks
+
+
+def _registry_cleanup_preflight_checks(
+    *,
+    image: str,
+    live_auth: bool,
+    check_delete_scope: bool,
+    allow_publish_token_fallback: bool,
+) -> list[dict[str, str]]:
+    username = os.environ.get("DOCKERHUB_USERNAME", "")
+    delete_token = os.environ.get("DOCKERHUB_DELETE_TOKEN", "")
+    fallback_token = os.environ.get("DOCKERHUB_TOKEN", "")
+    token = delete_token
+    if not token and allow_publish_token_fallback:
+        token = fallback_token
+    missing = []
+    if not username:
+        missing.append("DOCKERHUB_USERNAME")
+    if not token:
+        missing.append(
+            "DOCKERHUB_DELETE_TOKEN"
+            if not allow_publish_token_fallback
+            else "DOCKERHUB_DELETE_TOKEN or DOCKERHUB_TOKEN"
+        )
+    checks = [
+        _preflight_check(
+            "cleanup-credentials",
+            "failed" if missing else "ok",
+            "missing " + ", ".join(missing)
+            if missing
+            else (
+                "Docker Hub delete credentials are present"
+                if delete_token
+                else "using DOCKERHUB_TOKEN fallback for delete credentials"
+            ),
+        )
+    ]
+    if missing:
+        checks.append(
+            _preflight_check(
+                "dockerhub-cleanup-auth",
+                "skipped",
+                "cleanup credential gaps must be fixed before live auth",
+            )
+        )
+        return checks
+    if not live_auth:
+        checks.append(
+            _preflight_check(
+                "dockerhub-cleanup-auth",
+                "skipped",
+                "live Docker Hub auth check disabled",
+            )
+        )
+        return checks
+    failure = dockerhub_auth_preflight_failure(username=username, token=token)
+    checks.append(
+        _preflight_check(
+            "dockerhub-cleanup-auth",
+            "failed" if failure else "ok",
+            failure or "Docker Hub delete token accepted by /v2/auth/token",
+        )
+    )
+    if not check_delete_scope:
+        return checks
+    if not image:
+        checks.append(
+            _preflight_check(
+                "dockerhub-delete-scope",
+                "failed",
+                "--image or --repo is required for delete-scope probing",
+            )
+        )
+        return checks
+    failure = dockerhub_delete_scope_preflight_failure(
+        image=image,
+        username=username,
+        token=token,
+    )
+    checks.append(
+        _preflight_check(
+            "dockerhub-delete-scope",
+            "failed" if failure else "ok",
+            failure or "Docker Hub delete endpoint accepted a nonexistent-tag probe",
+        )
+    )
+    return checks
+
+
+def _preflight_check(name: str, status: str, detail: str) -> dict[str, str]:
+    return {"name": name, "status": status, "detail": detail}
 
 
 def cmd_registry_publish(args: argparse.Namespace) -> int:
@@ -1851,7 +2048,6 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         if args.format == "json":
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
-            action = report.get("action", "published")
             print("{repo}:{component}: prerelease={action} {tag}".format(**report))
         return 0
     latest_version = _component_release_version(repo, component=args.component)
@@ -3279,6 +3475,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     registry = sub.add_parser("registry")
     registry_sub = registry.add_subparsers(dest="registry_command", required=True)
+    registry_preflight = registry_sub.add_parser("preflight")
+    registry_preflight.add_argument(
+        "--mode",
+        action="append",
+        choices=["all", "publish", "cleanup"],
+        default=[],
+        help="Preflight surface to check; defaults to all.",
+    )
+    registry_preflight.add_argument("--repo")
+    registry_preflight.add_argument("--repo-path")
+    registry_preflight.add_argument("--component", default="aio")
+    registry_preflight.add_argument("--image")
+    registry_preflight.add_argument(
+        "--offline",
+        action="store_false",
+        dest="live_auth",
+        help="Only check local credential presence; skip Docker Hub API calls.",
+    )
+    registry_preflight.add_argument(
+        "--check-delete-scope",
+        action="store_true",
+        help="Probe Docker Hub tag-delete permission using a random nonexistent tag.",
+    )
+    registry_preflight.add_argument(
+        "--allow-publish-token-delete-fallback",
+        action="store_true",
+        help="Allow DOCKERHUB_TOKEN as a legacy cleanup fallback.",
+    )
+    registry_preflight.add_argument(
+        "--format", choices=["text", "json"], default="text"
+    )
+    registry_preflight.set_defaults(func=cmd_registry_preflight, live_auth=True)
     registry_verify = registry_sub.add_parser("verify")
     registry_verify.add_argument("--repo")
     registry_verify.add_argument("--repo-path")

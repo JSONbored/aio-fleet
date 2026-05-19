@@ -139,6 +139,30 @@ python -m aio_fleet release plan --all --format json
 python -m aio_fleet release plan --repo dify-aio --registry --format json
 ```
 
+Before a real publish, run the same repo-local credential preflight used by the
+control-plane workflow:
+
+```bash
+python -m aio_fleet registry preflight --mode publish --format json
+```
+
+For Docker Hub tag cleanup, use a delete-scoped token and verify it before
+attempting cleanup:
+
+```bash
+export DOCKERHUB_DELETE_TOKEN=...
+python -m aio_fleet registry preflight \
+  --mode cleanup \
+  --image jsonbored/sure-aio-alpha \
+  --check-delete-scope \
+  --format json
+```
+
+`DOCKERHUB_TOKEN` is the publish token. `DOCKERHUB_DELETE_TOKEN` is the cleanup
+token and must have Docker Hub tag delete/admin permission. Keeping them
+separate prevents normal publish credentials from silently passing preflight and
+then failing during cleanup.
+
 `release-due` means there are commits since the latest formal release tag.
 `publish-missing` means expected Docker Hub or GHCR tags are absent or
 unreachable. `catalog-sync-needed` means a validated source update is ready for

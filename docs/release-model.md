@@ -55,6 +55,22 @@ from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
 the Docker Hub tag API so post-push checks do not consume manifest-pull quota;
 GHCR verification continues to use `docker buildx imagetools inspect`.
 
+Run the registry preflight before publish or cleanup work that depends on live
+credentials:
+
+```bash
+python -m aio_fleet registry preflight --mode publish --format json
+python -m aio_fleet registry preflight --mode cleanup --image jsonbored/sure-aio-alpha --check-delete-scope --format json
+```
+
+Publish preflight requires `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and
+`AIO_FLEET_GHCR_TOKEN`, then checks the current Docker Hub `/v2/auth/token`
+flow before an expensive build starts. Cleanup preflight requires a separate
+`DOCKERHUB_DELETE_TOKEN`; it should not fall back to the normal publish token
+for real tag cleanup because tag deletion needs Docker Hub delete/admin
+permission. The delete-scope probe targets a random nonexistent tag so it can
+distinguish a missing tag from a token that authenticates but cannot delete.
+
 The `Registry Audit` workflow runs read-only verification for every active repo
 on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
 summary without blocking unrelated control-plane checks; manual runs can set
@@ -77,6 +93,7 @@ python -m aio_fleet alert doctor
 python -m aio_fleet alert test --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
+python -m aio_fleet registry preflight --mode publish --format json
 python -m aio_fleet release publish --repo sure-aio --dry-run
 python -m aio_fleet registry verify --all --format json
 python -m aio_fleet registry verify --repo sure-aio --sha <release-sha>
