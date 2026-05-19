@@ -426,6 +426,15 @@ jobs:
           git clean -ffd -e app-repo/
           python -m pip install --force-reinstall .
 
+      - name: Reset app checkout before prerelease publish
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && steps.central-control-check.outcome == 'success' }}
+        env:
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          git -C app-repo reset --hard "${TARGET_SHA}"
+          git -C app-repo clean -ffd
+
       - name: Publish GitHub prereleases
         id: github-prereleases
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && steps.central-control-check.outcome == 'success' }}
@@ -670,6 +679,15 @@ jobs:
           git reset --hard HEAD
           git clean -ffd -e app-repo/
           python -m pip install --force-reinstall .
+
+      - name: Reset app checkout before prerelease publish
+        if: ${{ matrix.target.publish == true && steps.poll-central-control-check.outcome == 'success' }}
+        env:
+          TARGET_SHA: ${{ matrix.target.sha }}
+        run: |
+          set -euo pipefail
+          git -C app-repo reset --hard "${TARGET_SHA}"
+          git -C app-repo clean -ffd
 
       - name: Publish GitHub prereleases
         id: poll-github-prereleases

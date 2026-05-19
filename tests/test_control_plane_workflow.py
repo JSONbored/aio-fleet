@@ -310,16 +310,25 @@ def test_privileged_completion_restores_trusted_checkout_first() -> None:
         assert "GitHub prerelease publish failed" in complete["run"]  # nosec B101
 
 
-def test_prerelease_publish_keeps_checked_out_app_repo() -> None:
+def test_prerelease_publish_resets_app_checkout_to_reviewed_sha() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    for job_name in ("control-plane", "poll-checks"):
-        job = workflow["jobs"][job_name]
-        restore = _step(job, "Restore trusted aio-fleet checkout")
-        release = _step(job, "Publish GitHub prereleases")
+    manual_job = workflow["jobs"]["control-plane"]
+    poll_job = workflow["jobs"]["poll-checks"]
 
-        assert "git clean -ffd -e app-repo/" in restore["run"]  # nosec B101
-        assert "--repo-path app-repo" in release["run"]  # nosec B101
+    manual_reset = _step(manual_job, "Reset app checkout before prerelease publish")
+    manual_release = _step(manual_job, "Publish GitHub prereleases")
+    poll_reset = _step(poll_job, "Reset app checkout before prerelease publish")
+    poll_release = _step(poll_job, "Publish GitHub prereleases")
+
+    assert "steps.central-control-check.outcome == 'success'" in manual_reset["if"]  # nosec B101
+    assert "steps.poll-central-control-check.outcome == 'success'" in poll_reset["if"]  # nosec B101
+    assert 'git -C app-repo reset --hard "${TARGET_SHA}"' in manual_reset["run"]  # nosec B101
+    assert 'git -C app-repo clean -ffd' in manual_reset["run"]  # nosec B101
+    assert 'git -C app-repo reset --hard "${TARGET_SHA}"' in poll_reset["run"]  # nosec B101
+    assert 'git -C app-repo clean -ffd' in poll_reset["run"]  # nosec B101
+    assert "--repo-path app-repo" in manual_release["run"]  # nosec B101
+    assert "--repo-path app-repo" in poll_release["run"]  # nosec B101
 
 
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:
