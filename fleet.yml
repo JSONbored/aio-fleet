@@ -136,6 +136,7 @@ repos:
           - rootfs-alpha/**
           - patches/sure-alpha/**
           - docs/alpha-lane.md
+          - docs/releases.md
           - tests/**
         pytest_image_tag: sure-aio-alpha:pytest
         pytest_prebuilt_env: AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE
