@@ -63,6 +63,24 @@ def test_aio_next_version_uses_upstream_version_and_revision_tags(
     )
 
 
+def test_aio_next_version_supports_prefixed_component_tags(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=0.7.1-alpha.9\n")
+    (tmp_path / "upstream.toml").write_text("[upstream]\n")
+    _commit(tmp_path, "feat(test): initial")
+    _git(tmp_path, "tag", "sure-alpha/0.7.1-alpha.9-aio.1")
+
+    assert (  # nosec B101
+        next_aio_release_version(
+            tmp_path,
+            tmp_path / "Dockerfile.alpha",
+            tmp_path / "upstream.toml",
+            tag_prefix="sure-alpha/",
+        )
+        == "0.7.1-alpha.9-aio.2"
+    )
+
+
 def test_latest_component_release_tag_ignores_namespaced_alpha_tags(
     tmp_path: Path,
 ) -> None:

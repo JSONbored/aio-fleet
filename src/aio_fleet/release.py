@@ -186,11 +186,15 @@ def latest_aio_release_tag(
     upstream_config: Path | None,
     suffix: str = "aio",
     version_key: str | None = None,
+    tag_prefix: str = "",
 ) -> str | None:
     upstream_version = read_upstream_version(
         dockerfile, upstream_config, version_key=version_key
     )
-    pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
+    pattern = re.compile(
+        rf"^{re.escape(tag_prefix)}{re.escape(upstream_version)}-"
+        rf"{re.escape(suffix)}\.(\d+)$"
+    )
     matches: list[tuple[int, str]] = []
     for tag in git_tags(repo_path):
         match = pattern.match(tag)
@@ -215,11 +219,15 @@ def next_aio_release_version(
     upstream_config: Path | None,
     suffix: str = "aio",
     version_key: str | None = None,
+    tag_prefix: str = "",
 ) -> str:
     upstream_version = read_upstream_version(
         dockerfile, upstream_config, version_key=version_key
     )
-    pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
+    pattern = re.compile(
+        rf"^{re.escape(tag_prefix)}{re.escape(upstream_version)}-"
+        rf"{re.escape(suffix)}\.(\d+)$"
+    )
     revisions = []
     for tag in git_tags(repo_path):
         match = pattern.match(tag)

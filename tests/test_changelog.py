@@ -128,6 +128,51 @@ def test_component_release_plan_uses_component_changelog(
     assert alpha.changelog_path == tmp_path / "CHANGELOG.alpha.md"  # nosec B101
 
 
+def test_component_release_plan_uses_prefixed_component_tags(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=0.7.1-alpha.9\n")
+    (tmp_path / "upstream.toml").write_text("")
+    (tmp_path / "CHANGELOG.alpha.md").write_text("# Alpha\n")
+    (tmp_path / "sure-aio-alpha.xml").write_text(
+        "<Container><Changes>old</Changes></Container>"
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "feat(test): initial")
+    _git(tmp_path, "tag", "sure-alpha/0.7.1-alpha.9-aio.1")
+
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_tag_prefix": "sure-alpha/",
+                    "release_suffix": "aio",
+                    "xml_paths": ["sure-aio-alpha.xml"],
+                }
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+
+    alpha = build_release_plan(repo, component="sure-alpha")
+
+    assert alpha.version == "0.7.1-alpha.9-aio.2"  # nosec B101
+    assert alpha.release_tag_prefix == "sure-alpha/"  # nosec B101
+    assert "^sure\\-alpha/v?[0-9].*-aio\\.[0-9]+" in alpha.cliff_config  # nosec B101
+
+
 def test_component_xml_changes_note_uses_component_changelog(tmp_path: Path) -> None:
     changelog = tmp_path / "CHANGELOG.alpha.md"
     template = tmp_path / "sure-aio-alpha.xml"
