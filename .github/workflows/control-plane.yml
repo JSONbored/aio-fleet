@@ -423,7 +423,7 @@ jobs:
         run: |
           set -euo pipefail
           git reset --hard HEAD
-          git clean -ffd
+          git clean -ffd -e app-repo/
           python -m pip install --force-reinstall .
 
       - name: Publish GitHub prereleases
@@ -668,7 +668,7 @@ jobs:
         run: |
           set -euo pipefail
           git reset --hard HEAD
-          git clean -ffd
+          git clean -ffd -e app-repo/
           python -m pip install --force-reinstall .
 
       - name: Publish GitHub prereleases

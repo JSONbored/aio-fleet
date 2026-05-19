@@ -301,13 +301,25 @@ def test_privileged_completion_restores_trusted_checkout_first() -> None:
 
         assert "AIO_FLEET_CHECK_TOKEN" not in restore.get("env", {})  # nosec B101
         assert "git reset --hard HEAD" in restore["run"]  # nosec B101
-        assert "git clean -ffd" in restore["run"]  # nosec B101
+        assert "git clean -ffd -e app-repo/" in restore["run"]  # nosec B101
         assert (
             "python -m pip install --force-reinstall ." in restore["run"]
         )  # nosec B101
         assert "python -I -m aio_fleet check run" in complete["run"]  # nosec B101
         assert "RELEASE_OUTCOME" in complete["env"]  # nosec B101
         assert "GitHub prerelease publish failed" in complete["run"]  # nosec B101
+
+
+def test_prerelease_publish_keeps_checked_out_app_repo() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        job = workflow["jobs"][job_name]
+        restore = _step(job, "Restore trusted aio-fleet checkout")
+        release = _step(job, "Publish GitHub prereleases")
+
+        assert "git clean -ffd -e app-repo/" in restore["run"]  # nosec B101
+        assert "--repo-path app-repo" in release["run"]  # nosec B101
 
 
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:
