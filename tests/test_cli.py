@@ -218,6 +218,7 @@ def test_workflow_control_report_writes_bootstrap_failure(
             failure=["app-check-permission: bootstrap check-run failed: forbidden"],
             status="failure",
             output=str(output),
+            transaction_id="example-transaction",
             format="json",
         )
     )
@@ -225,7 +226,11 @@ def test_workflow_control_report_writes_bootstrap_failure(
     assert result == 1  # nosec B101
     report = json.loads(output.read_text())
     assert report["status"] == "failure"  # nosec B101
+    assert report["transaction_id"] == "example-transaction"  # nosec B101
     assert report["publish_attestation"]["publish_components"] == ["aio"]  # nosec B101
+    assert (  # nosec B101
+        report["publish_attestation"]["transaction_id"] == "example-transaction"
+    )
     assert "app-check-permission" in report["failure_classes"]  # nosec B101
     assert json.loads(capsys.readouterr().out)["repo"] == "example-aio"  # nosec B101
 
@@ -495,7 +500,7 @@ def test_release_plan_outputs_all_repo_states(
     assert payload["repos"][0]["state"] == "release-due"  # nosec B101
 
 
-def test_release_reconcile_routes_publish_through_control_check(
+def test_release_reconcile_routes_publish_through_transaction(
     tmp_path: Path, capsys
 ) -> None:
     manifest, _repo_path = _write_minimal_manifest(tmp_path)
@@ -509,9 +514,9 @@ def test_release_reconcile_routes_publish_through_control_check(
                         "component": "aio",
                         "state": "publish-missing",
                         "next_action": (
-                            "python -m aio_fleet control-check --repo example-aio "
-                            "--sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
-                            "--event push --publish --publish-component aio"
+                            "python -m aio_fleet release transaction "
+                            "--repo example-aio --component aio "
+                            "--sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run"
                         ),
                     }
                 ]
@@ -540,8 +545,8 @@ def test_release_reconcile_routes_publish_through_control_check(
     payload = json.loads(capsys.readouterr().out)
     assert payload["summary"]["publish"] == 1  # nosec B101
     assert payload["actions"][0]["action"] == "publish"  # nosec B101
-    assert "control-check" in payload["actions"][0]["command"]  # nosec B101
-    assert "--publish-component aio" in payload["actions"][0]["command"]  # nosec B101
+    assert "release transaction" in payload["actions"][0]["command"]  # nosec B101
+    assert "--component aio" in payload["actions"][0]["command"]  # nosec B101
 
 
 def test_security_audit_workflows_reports_findings(tmp_path: Path, capsys) -> None:

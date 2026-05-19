@@ -64,8 +64,8 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
     assert plan["state"] == "publish-missing"  # nosec B101
     assert plan["blockers"] == ["missing or unreachable registry tags"]  # nosec B101
     assert plan["next_action"] == (  # nosec B101
-        "python -m aio_fleet control-check --repo sure-aio "
-        f"--sha {'a' * 40} --event push --publish --publish-component aio"
+        "python -m aio_fleet release transaction --repo sure-aio "
+        f"--component aio --sha {'a' * 40} --dry-run"
     )
 
 
@@ -427,8 +427,8 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     assert plan["component"] == "sure-alpha"  # nosec B101
     assert plan["state"] == "publish-missing"  # nosec B101
     assert plan["next_action"] == (  # nosec B101
-        f"python -m aio_fleet control-check --repo sure-aio --sha {sha} "
-        "--event push --publish --publish-component sure-alpha"
+        f"python -m aio_fleet release transaction --repo sure-aio "
+        f"--component sure-alpha --sha {sha} --dry-run"
     )
     assert plan["operator_commands"]["registry_verify"] == (  # nosec B101
         f"python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
@@ -438,6 +438,9 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     )
     assert plan["operator_commands"]["control_check_publish"] == (  # nosec B101
         f"python -m aio_fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
+    )
+    assert plan["operator_commands"]["release_transaction"] == (  # nosec B101
+        f"python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha {sha} --dry-run"
     )
 
 

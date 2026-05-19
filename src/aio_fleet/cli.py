@@ -78,6 +78,11 @@ from aio_fleet.release_plan import (
     release_plan_for_repo,
     release_plan_rows_for_repo,
 )
+from aio_fleet.release_transaction import (
+    release_transaction_preflight,
+    release_transaction_report,
+    release_transaction_resume_report,
+)
 from aio_fleet.report import (
     fleet_report_json_schema,
     stable_report_json,
@@ -1097,6 +1102,7 @@ def cmd_control_check(args: argparse.Namespace) -> int:
             publish=args.publish,
             publish_components=args.publish_component,
             failures=failures,
+            transaction_id=str(getattr(args, "transaction_id", "") or ""),
         )
         Path(args.report_json).write_text(json.dumps(report, indent=2, sort_keys=True))
     if failures:
@@ -1117,6 +1123,7 @@ def cmd_workflow_control_report(args: argparse.Namespace) -> int:
         publish=args.publish,
         publish_components=args.publish_component,
         failures=failures,
+        transaction_id=str(getattr(args, "transaction_id", "") or ""),
     )
     if args.status:
         report["status"] = args.status
@@ -2171,6 +2178,90 @@ def cmd_release_reconcile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_preflight(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    components = [args.component] if args.component else None
+    report = release_transaction_preflight(
+        repo,
+        components=components,
+        expected_sha=str(args.sha or ""),
+        event=args.event,
+        write=args.write,
+        require_credentials=args.require_credentials,
+        required_checks_passed=args.required_checks_passed,
+        mode=args.mode,
+    )
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        label = repo.name
+        if args.component:
+            label = f"{label}:{args.component}"
+        print(f"{label}: release-preflight={report['status']}")
+        for finding in report["findings"]:
+            print(f"- {finding['message']}")
+        for warning in report["warnings"]:
+            print(f"- warning: {warning['message']}")
+    return 1 if report["status"] == "blocked" else 0
+
+
+def cmd_release_transaction(args: argparse.Namespace) -> int:
+    if getattr(args, "transaction_command", "") == "resume":
+        return cmd_release_transaction_resume(args)
+    if not args.repo:
+        print("--repo is required unless transaction resume is used", file=sys.stderr)
+        return 1
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    components = [args.component] if args.component else None
+    dry_run = args.dry_run or not args.write
+    report = release_transaction_report(
+        repo,
+        components=components,
+        expected_sha=str(args.sha or ""),
+        event=args.event,
+        write=args.write,
+        dry_run=dry_run,
+        transaction_id=str(args.transaction_id or ""),
+        require_credentials=args.require_credentials,
+        required_checks_passed=args.required_checks_passed,
+    )
+    if args.report_json:
+        Path(args.report_json).write_text(stable_report_json(report) + "\n")
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        label = repo.name
+        if args.component:
+            label = f"{label}:{args.component}"
+        print(
+            f"{label}: release-transaction={report['status']} "
+            f"id={report['transaction_id']}"
+        )
+        for finding in report["preflight"]["findings"]:
+            print(f"- {finding['message']}")
+        commands = report.get("operator_commands", {}).get("transaction", [])
+        for command in commands:
+            print(f"- next: {command}")
+    return 1 if report["status"] == "blocked" else 0
+
+
+def cmd_release_transaction_resume(args: argparse.Namespace) -> int:
+    report = release_transaction_resume_report(args.id)
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        print(f"{args.id}: release-transaction={report['status']}")
+        for finding in report["findings"]:
+            print(f"- {finding['message']}")
+    return 1
+
+
 def _release_reconcile_rows(
     args: argparse.Namespace, manifest: FleetManifest
 ) -> list[dict[str, object]]:
@@ -2598,6 +2689,7 @@ def _control_check_report(
     publish: bool,
     publish_components: list[str],
     failures: list[str],
+    transaction_id: str = "",
 ) -> dict[str, object]:
     selected_components = publish_components or (
         publish_components_for_report(repo) if publish else []
@@ -2626,6 +2718,7 @@ def _control_check_report(
         "event": event,
         "source": source,
         "publish": publish,
+        "transaction_id": transaction_id,
         "status": "failure" if failures else "success",
         "failures": failures,
         "failure_classes": _failure_classes(failures),
@@ -2638,6 +2731,7 @@ def _control_check_report(
             "publish_requested": publish,
             "publish_eligible": publish and not failures,
             "publish_components": selected_components,
+            "transaction_id": transaction_id,
         },
         "components": components,
     }
@@ -4038,6 +4132,7 @@ def build_parser() -> argparse.ArgumentParser:
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
     control.add_argument("--report-json")
+    control.add_argument("--transaction-id", default="")
     control.set_defaults(func=cmd_control_check)
 
     registry = sub.add_parser("registry")
@@ -4156,6 +4251,51 @@ def build_parser() -> argparse.ArgumentParser:
     release_reconcile.add_argument("--post-check", action="store_true")
     release_reconcile.add_argument("--format", choices=["text", "json"], default="json")
     release_reconcile.set_defaults(func=cmd_release_reconcile)
+    release_preflight = release_sub.add_parser("preflight")
+    release_preflight.add_argument("--repo", required=True)
+    release_preflight.add_argument("--component")
+    release_preflight.add_argument("--repo-path")
+    release_preflight.add_argument("--sha", default="")
+    release_preflight.add_argument(
+        "--event",
+        choices=["pull_request", "push", "release", "workflow_dispatch"],
+        default="push",
+    )
+    release_preflight.add_argument("--mode", default="transaction")
+    release_preflight.add_argument("--write", action="store_true")
+    release_preflight.add_argument("--require-credentials", action="store_true")
+    release_preflight.add_argument("--required-checks-passed", action="store_true")
+    release_preflight.add_argument("--format", choices=["text", "json"], default="text")
+    release_preflight.set_defaults(func=cmd_release_preflight)
+    release_transaction = release_sub.add_parser("transaction")
+    release_transaction.add_argument("--repo")
+    release_transaction.add_argument("--component")
+    release_transaction.add_argument("--repo-path")
+    release_transaction.add_argument("--sha", default="")
+    release_transaction.add_argument(
+        "--event",
+        choices=["pull_request", "push", "release", "workflow_dispatch"],
+        default="push",
+    )
+    release_transaction.add_argument("--dry-run", action="store_true")
+    release_transaction.add_argument("--write", action="store_true")
+    release_transaction.add_argument("--require-credentials", action="store_true")
+    release_transaction.add_argument("--required-checks-passed", action="store_true")
+    release_transaction.add_argument("--transaction-id", default="")
+    release_transaction.add_argument("--report-json")
+    release_transaction.add_argument(
+        "--format", choices=["text", "json"], default="text"
+    )
+    release_transaction.set_defaults(func=cmd_release_transaction)
+    release_transaction_sub = release_transaction.add_subparsers(
+        dest="transaction_command"
+    )
+    release_transaction_resume = release_transaction_sub.add_parser("resume")
+    release_transaction_resume.add_argument("--id", required=True)
+    release_transaction_resume.add_argument(
+        "--format", choices=["text", "json"], default="text"
+    )
+    release_transaction_resume.set_defaults(func=cmd_release_transaction_resume)
     release_prepare = release_sub.add_parser("prepare")
     release_prepare.add_argument("--repo", required=True)
     release_prepare.add_argument("--component", default="aio")
@@ -4352,6 +4492,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--status", choices=["success", "failure"], default=""
     )
     workflow_control_report.add_argument("--output")
+    workflow_control_report.add_argument("--transaction-id", default="")
     workflow_control_report.add_argument(
         "--format", choices=["text", "json"], default="text"
     )

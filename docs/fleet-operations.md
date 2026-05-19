@@ -156,7 +156,17 @@ validation:
 python -m aio_fleet release plan --all --format json
 python -m aio_fleet release plan --repo dify-aio --registry --format json
 python -m aio_fleet release reconcile --input release-plan-report.json --format json
+python -m aio_fleet release preflight --repo sure-aio --component sure-alpha --mode transaction --format json
+python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha <release-sha> --dry-run
 ```
+
+The transaction command is the release checklist entrypoint. It records the
+expected SHA, components, release-plan state, preflight findings, failure
+classes, and the ordered publish/catalog phases in one JSON report. Write mode
+is blocked unless the repo or component is explicitly allowlisted with
+`release_transaction.autopilot: true` in `fleet.yml`; absence means dry-run and
+operator review only. Write mode also requires a required-check success
+attestation, so an allowlist alone is not enough to merge or publish.
 
 Before a real publish, run the same repo-local credential preflight used by the
 control-plane workflow:
@@ -195,12 +205,12 @@ downstream catalog sync. Normal `main` publishes still happen centrally;
 formal changelog/GitHub Releases remain release-driven.
 
 For component release rows, the dashboard `Next Commands` section should route
-publish work back through the central gate, not direct registry publishing. A
-`publish-missing` or `release-due` alpha row should point at the component
-publish control-check:
+release work through the transaction/preflight entrypoint, not direct registry
+or release publishing. A `publish-missing` or `release-due` alpha row should
+point at the component transaction:
 
 ```bash
-python -m aio_fleet control-check --repo sure-aio --sha <release-sha> --event push --publish --publish-component sure-alpha
+python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha <release-sha> --dry-run
 ```
 
 GitHub prerelease publishing must consume the matching control report or an

@@ -80,6 +80,20 @@ GitHub prerelease publishing is guarded by the same control-check attestation.
 matches the release SHA. The workflow still resets and cleans `app-repo` before
 this step, but the CLI guard is the release-token boundary.
 
+Release transactions are the operator-facing wrapper around planning,
+preflight, publish, and catalog sync. Use them before dispatching a publish:
+
+```bash
+python -m aio_fleet release preflight --repo <repo> --component <component> --mode transaction --format json
+python -m aio_fleet release transaction --repo <repo> --component <component> --sha <release-sha> --dry-run
+```
+
+`--write` mode is intentionally allowlist-only. A repo or component must carry
+`release_transaction.autopilot: true` in `fleet.yml`, and the transaction still
+blocks on checkout drift, missing credentials, missing delete-scope readiness,
+missing required-check attestation, submodule policy mismatches, and release
+metadata drift before any privileged publish step can run.
+
 The `Registry Audit` workflow runs read-only verification for every active repo
 on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
 summary without blocking unrelated control-plane checks; manual runs can set
@@ -102,6 +116,7 @@ python -m aio_fleet alert doctor
 python -m aio_fleet alert test --dry-run
 python -m aio_fleet release status --repo sure-aio
 python -m aio_fleet release prepare --repo sure-aio --dry-run
+python -m aio_fleet release transaction --repo sure-aio --component aio --sha <release-sha> --dry-run
 python -m aio_fleet registry preflight --mode publish --format json
 python -m aio_fleet release publish --repo sure-aio --dry-run
 python -m aio_fleet registry verify --all --format json

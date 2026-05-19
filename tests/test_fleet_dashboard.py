@@ -609,6 +609,9 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
                 "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
                 + "a" * 40
                 + " --event push --publish --publish-component sure-alpha",
+                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+                + "a" * 40
+                + " --dry-run",
             },
         },
         "safety": "ok",
@@ -658,9 +661,9 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
         in body
     )
     assert (  # nosec B101
-        "python -m aio_fleet control-check --repo sure-aio --sha "
+        "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
         + "a" * 40
-        + " --event push --publish --publish-component sure-alpha"
+        + " --dry-run"
         in body
     )
     assert (  # nosec B101
@@ -671,7 +674,7 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
     assert hidden["releases"][0]["component"] == "sure-alpha"  # nosec B101
 
 
-def test_dashboard_next_commands_include_control_check_for_release_due() -> None:
+def test_dashboard_next_commands_include_transaction_for_release_due() -> None:
     row = {
         "repo": "sure-aio",
         "component": "sure-alpha",
@@ -685,6 +688,9 @@ def test_dashboard_next_commands_include_control_check_for_release_due() -> None
                 "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
                 + "b" * 40
                 + " --event push --publish --publish-component sure-alpha",
+                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+                + "b" * 40
+                + " --dry-run",
                 "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
             },
         },
@@ -695,9 +701,9 @@ def test_dashboard_next_commands_include_control_check_for_release_due() -> None
     body = "\n".join(lines)
 
     assert (  # nosec B101
-        "python -m aio_fleet control-check --repo sure-aio --sha "
+        "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
         + "b" * 40
-        + " --event push --publish --publish-component sure-alpha"
+        + " --dry-run"
         in body
     )
     assert (  # nosec B101

@@ -335,6 +335,20 @@ jobs:
           args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
           python -m aio_fleet "${args[@]}" | tee release-plan-report.json
 
+      - name: Generate release transaction queue report
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f release-plan-report.json ]]; then
+            printf '{"status":"ok","actions":[],"summary":{"actions":0,"publish":0,"source_pr":0,"catalog_sync":0}}\n' \
+              | tee release-transaction-report.json
+            exit 0
+          fi
+          python -m aio_fleet release reconcile \
+            --input release-plan-report.json \
+            --format json \
+            | tee release-transaction-report.json
+
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
         env:
@@ -626,6 +640,7 @@ jobs:
             upstream-summary.md
             fleet-dashboard-report.json
             release-plan-report.json
+            release-transaction-report.json
             registry-preflight-report.json
             ${{ runner.temp }}/central-control-report.json
 
