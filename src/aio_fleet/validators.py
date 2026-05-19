@@ -539,7 +539,7 @@ def _sure_template_secret_mask_failures(repo: RepoConfig) -> list[str]:
             str(config.attrib.get("Target", "")): config
             for config in root.findall(".//Config")
         }
-        for target in ("HTTP_PROXY", "HTTPS_PROXY"):
+        for target in ("HTTP_PROXY", "HTTPS_PROXY", "REDIS_URL"):
             config = configs.get(target)
             if config is None:
                 failures.append(f"sure-aio: {source} missing Config Target {target}")
