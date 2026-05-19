@@ -1039,10 +1039,14 @@ repos:
     )
     assert (  # nosec B101
         "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
-        in output
+        not in output
     )
     assert (  # nosec B101
         "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        in output
+    )
+    assert (  # nosec B101
+        f"python -m aio_fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
         in output
     )
 
@@ -1318,7 +1322,9 @@ def test_registry_delete_dockerhub_tags_prefers_delete_token(
 
     assert result == 0  # nosec B101
     assert seen["token"] == "delete-token"  # nosec B101
-    assert "jsonbored/sure-aio:latest-alpha: deleted" in capsys.readouterr().out  # nosec B101
+    assert (
+        "jsonbored/sure-aio:latest-alpha: deleted" in capsys.readouterr().out
+    )  # nosec B101
 
 
 def test_registry_preflight_reports_publish_credential_gaps(

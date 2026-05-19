@@ -70,6 +70,7 @@ from aio_fleet.release import (
     read_upstream_version,
 )
 from aio_fleet.release_plan import (
+    control_check_publish_command,
     release_plan_for_manifest,
     release_plan_for_repo,
     release_plan_rows_for_repo,
@@ -1828,6 +1829,9 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
         "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {sha or '<sha>'} --verbose",
         "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
         "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
+        "control_check_publish": control_check_publish_command(
+            repo, component=component, sha=sha
+        ),
     }
 
     report = {
@@ -1854,7 +1858,7 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
         for warning in warnings:
             print(f"- warning: {warning}")
         print("- next verify: " + operator_commands["registry_verify"])
-        print("- next publish: " + operator_commands["registry_publish"])
+        print("- next publish: " + operator_commands["control_check_publish"])
         print("- next release: " + operator_commands["release_publish"])
     return 1 if findings else 0
 

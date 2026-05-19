@@ -169,6 +169,19 @@ unreachable. `catalog-sync-needed` means a validated source update is ready for
 downstream catalog sync. Normal `main` publishes still happen centrally;
 formal changelog/GitHub Releases remain release-driven.
 
+For component release rows, the dashboard `Next Commands` section should route
+publish work back through the central gate, not direct registry publishing. A
+`publish-missing` or `release-due` alpha row should point at the component
+publish control-check:
+
+```bash
+python -m aio_fleet control-check --repo sure-aio --sha <release-sha> --event push --publish --publish-component sure-alpha
+```
+
+Component template contracts belong in `fleet.yml` under the component
+`validation` block. Use that for lane-specific XML rules such as alpha beta
+markers, alpha-only envs, and forbidden stable paths or image tags.
+
 ## Workflow And Drift Trust
 
 Workflow YAML should stay thin. The hosted workflows now delegate checkout

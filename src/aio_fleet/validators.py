@@ -6,6 +6,7 @@ import shutil
 import subprocess  # nosec B404
 import tomllib
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 from xml.etree.ElementTree import Element, ParseError, tostring  # nosec B405
 
@@ -94,6 +95,21 @@ UNRAID_CATEGORY_ROOTS = {
 UNRAID_CATEGORY_TOKEN = re.compile(
     r"^[A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?:?$"
 )
+CONFIG_REQUIREMENT_ATTRIBUTES = {
+    "name": "Name",
+    "default": "Default",
+    "mode": "Mode",
+    "description": "Description",
+    "type": "Type",
+    "display": "Display",
+    "required": "Required",
+    "mask": "Mask",
+}
+CONFIG_REQUIREMENT_CONTAINS = {
+    "name_contains": "Name",
+    "default_contains": "Default",
+    "description_contains": "Description",
+}
 
 SERVICE_PLACEHOLDER_FILES = [
     "rootfs/etc/services.d/app/run",
@@ -1226,6 +1242,14 @@ def _manifest_declared_template_failures(
             f"{repo.name}: {source} category tokens must be exactly {', '.join(sorted(exact_category_tokens))}"
         )
 
+    failures.extend(
+        _manifest_required_field_value_failures(repo, source, root, validation)
+    )
+    failures.extend(_manifest_text_snippet_failures(repo, source, root, validation))
+    failures.extend(
+        _manifest_config_target_requirement_failures(repo, source, root, validation)
+    )
+
     required_targets = {
         str(target)
         for target in validation.get("required_targets", [])
@@ -1236,25 +1260,157 @@ def _manifest_declared_template_failures(
         for target in validation.get("forbidden_targets", [])
         if str(target).strip()
     }
-    if not required_targets and not forbidden_targets:
-        return failures
+    if required_targets or forbidden_targets:
+        targets = {
+            config.attrib["Target"]
+            for config in root.findall(".//Config")
+            if config.attrib.get("Target")
+        }
+        missing = sorted(required_targets - targets)
+        if missing:
+            failures.append(
+                f"{repo.name}: {source} missing manifest-required Config Target(s): {', '.join(missing)}"
+            )
+        forbidden = sorted(forbidden_targets & targets)
+        if forbidden:
+            failures.append(
+                f"{repo.name}: {source} declares manifest-forbidden Config Target(s): {', '.join(forbidden)}"
+            )
+    return failures
 
-    targets = {
-        config.attrib["Target"]
+
+def _manifest_required_field_value_failures(
+    repo: RepoConfig, source: str, root: Element, validation: dict[str, object]
+) -> list[str]:
+    required_values = validation.get("required_field_values", {})
+    if not required_values:
+        return []
+    if not isinstance(required_values, dict):
+        return [f"{repo.name}: validation.required_field_values must be a mapping"]
+
+    failures: list[str] = []
+    for field, expected in required_values.items():
+        field_name = str(field).strip()
+        if not field_name:
+            continue
+        expected_value = str(expected)
+        actual = (root.findtext(field_name) or "").strip()
+        if actual != expected_value:
+            failures.append(
+                f"{repo.name}: {source} <{field_name}> must be {expected_value}, got {actual or '<empty>'}"
+            )
+    return failures
+
+
+def _manifest_text_snippet_failures(
+    repo: RepoConfig, source: str, root: Element, validation: dict[str, object]
+) -> list[str]:
+    failures: list[str] = []
+    xml_text = tostring(root, encoding="unicode")
+
+    required = _validation_strings(
+        repo,
+        "required_text_snippets",
+        validation.get("required_text_snippets", []),
+        failures,
+    )
+    for snippet in required:
+        if snippet not in xml_text:
+            failures.append(
+                f"{repo.name}: {source} missing manifest-required XML text snippet: {snippet}"
+            )
+
+    forbidden = _validation_strings(
+        repo,
+        "forbidden_text_snippets",
+        validation.get("forbidden_text_snippets", []),
+        failures,
+    )
+    for snippet in forbidden:
+        if snippet in xml_text:
+            failures.append(
+                f"{repo.name}: {source} contains manifest-forbidden XML text snippet: {snippet}"
+            )
+    return failures
+
+
+def _manifest_config_target_requirement_failures(
+    repo: RepoConfig, source: str, root: Element, validation: dict[str, object]
+) -> list[str]:
+    requirements = validation.get("config_target_requirements", {})
+    if not requirements:
+        return []
+    if not isinstance(requirements, dict):
+        return [f"{repo.name}: validation.config_target_requirements must be a mapping"]
+
+    failures: list[str] = []
+    configs = {
+        str(config.attrib["Target"]): config
         for config in root.findall(".//Config")
         if config.attrib.get("Target")
     }
-    missing = sorted(required_targets - targets)
-    if missing:
-        failures.append(
-            f"{repo.name}: {source} missing manifest-required Config Target(s): {', '.join(missing)}"
-        )
-    forbidden = sorted(forbidden_targets & targets)
-    if forbidden:
-        failures.append(
-            f"{repo.name}: {source} declares manifest-forbidden Config Target(s): {', '.join(forbidden)}"
-        )
+    for target, raw_requirement in requirements.items():
+        target_name = str(target).strip()
+        if not target_name:
+            continue
+        if not isinstance(raw_requirement, dict):
+            failures.append(
+                f"{repo.name}: validation.config_target_requirements.{target_name} must be a mapping"
+            )
+            continue
+        config = configs.get(target_name)
+        if config is None:
+            failures.append(
+                f"{repo.name}: {source} missing manifest-required Config Target {target_name}"
+            )
+            continue
+
+        requirement = dict(raw_requirement)
+        for key, attribute in CONFIG_REQUIREMENT_ATTRIBUTES.items():
+            if key not in requirement:
+                continue
+            expected = str(requirement[key])
+            actual = str(config.attrib.get(attribute, "")).strip()
+            if actual != expected:
+                failures.append(
+                    f"{repo.name}: {source} Config Target {target_name} {attribute} must be {expected}, got {actual or '<empty>'}"
+                )
+        for key, attribute in CONFIG_REQUIREMENT_CONTAINS.items():
+            if key not in requirement:
+                continue
+            expected = str(requirement[key])
+            actual = str(config.attrib.get(attribute, ""))
+            if expected not in actual:
+                failures.append(
+                    f"{repo.name}: {source} Config Target {target_name} {attribute} must contain {expected}"
+                )
+        if "value" in requirement:
+            expected = str(requirement["value"])
+            actual = (config.text or "").strip()
+            if actual != expected:
+                failures.append(
+                    f"{repo.name}: {source} Config Target {target_name} value must be {expected}, got {actual or '<empty>'}"
+                )
+        if "value_contains" in requirement:
+            expected = str(requirement["value_contains"])
+            actual = config.text or ""
+            if expected not in actual:
+                failures.append(
+                    f"{repo.name}: {source} Config Target {target_name} value must contain {expected}"
+                )
     return failures
+
+
+def _validation_strings(
+    repo: RepoConfig, key: str, value: Any, failures: list[str]
+) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if value:
+        failures.append(f"{repo.name}: validation.{key} must be a list of strings")
+    return []
 
 
 def _template_validation(repo: RepoConfig, source: str) -> dict[str, object]:
@@ -1291,6 +1447,8 @@ def _merge_validation(
     for key, value in override.items():
         if isinstance(value, list) and isinstance(merged.get(key), list):
             merged[key] = [*merged[key], *value]  # type: ignore[operator]
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}  # type: ignore[operator]
         else:
             merged[key] = value
     return merged

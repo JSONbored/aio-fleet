@@ -139,6 +139,44 @@ repos:
           - tests/**
         pytest_image_tag: sure-aio-alpha:pytest
         pytest_prebuilt_env: AIO_ALPHA_PYTEST_USE_PREBUILT_IMAGE
+        validation:
+          required_targets:
+            - SURE_IMPORT_MAX_NDJSON_SIZE_MB
+            - SURE_IMPORT_MAX_ROWS
+            - WEBAUTHN_RP_ID
+            - WEBAUTHN_ALLOWED_ORIGINS
+          required_field_values:
+            Name: sure-aio-alpha
+            Repository: jsonbored/sure-aio-alpha:latest-alpha
+            Beta: "True"
+          required_text_snippets:
+            - Testing / Unstable
+            - Alpha-only
+            - /mnt/user/appdata/sure-aio-alpha
+            - latest-alpha
+          forbidden_text_snippets:
+            - <Name>sure-aio</Name>
+            - <Repository>jsonbored/sure-aio:latest</Repository>
+            - /mnt/user/appdata/sure-aio/system
+            - /mnt/user/appdata/sure-aio/postgres
+            - /mnt/user/appdata/sure-aio/redis
+          config_target_requirements:
+            SURE_IMPORT_MAX_NDJSON_SIZE_MB:
+              name_contains: "[Alpha]"
+              description_contains: Alpha-only
+              default: "250"
+              value: "250"
+            SURE_IMPORT_MAX_ROWS:
+              name_contains: "[Alpha]"
+              description_contains: Alpha-only
+              default: "1000000"
+              value: "1000000"
+            WEBAUTHN_RP_ID:
+              name_contains: "[Alpha Auth]"
+              description_contains: Alpha-only
+            WEBAUTHN_ALLOWED_ORIGINS:
+              name_contains: "[Alpha Auth]"
+              description_contains: Alpha-only
     validation:
       required_targets:
         - ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY

@@ -539,6 +539,7 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
         "release_detail": {
             "repo": "sure-aio",
             "component": "sure-alpha",
+            "sha": "a" * 40,
             "state": "publish-missing",
             "operator_commands": {
                 "registry_verify": "python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha "
@@ -546,6 +547,9 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
                 + " --verbose",
                 "registry_publish": "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha",
                 "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                + "a" * 40
+                + " --event push --publish --publish-component sure-alpha",
             },
         },
         "safety": "ok",
@@ -595,11 +599,99 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
         in body
     )
     assert (  # nosec B101
-        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        "python -m aio_fleet control-check --repo sure-aio --sha "
+        + "a" * 40
+        + " --event push --publish --publish-component sure-alpha"
         in body
+    )
+    assert (  # nosec B101
+        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        not in body
     )
     hidden = json.loads(_hidden_dashboard_state(body))
     assert hidden["releases"][0]["component"] == "sure-alpha"  # nosec B101
+
+
+def test_dashboard_next_commands_include_control_check_for_release_due() -> None:
+    row = {
+        "repo": "sure-aio",
+        "component": "sure-alpha",
+        "update": False,
+        "release_detail": {
+            "repo": "sure-aio",
+            "component": "sure-alpha",
+            "sha": "b" * 40,
+            "state": "release-due",
+            "operator_commands": {
+                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                + "b" * 40
+                + " --event push --publish --publish-component sure-alpha",
+                "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+            },
+        },
+    }
+    lines: list[str] = []
+
+    fleet_dashboard._render_next_commands(lines, [row], [], [])
+    body = "\n".join(lines)
+
+    assert (  # nosec B101
+        "python -m aio_fleet control-check --repo sure-aio --sha "
+        + "b" * 40
+        + " --event push --publish --publish-component sure-alpha"
+        in body
+    )
+    assert (  # nosec B101
+        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        not in body
+    )
+
+
+def test_dashboard_control_check_publish_requires_actionable_release() -> None:
+    cases = [
+        ("current", "c" * 40),
+        ("catalog-sync-needed", "c" * 40),
+        ("publish-missing", ""),
+        ("release-due", "<sha>"),
+    ]
+    for state, sha in cases:
+        row = {
+            "repo": "sure-aio",
+            "component": "sure-alpha",
+            "update": False,
+            "release_detail": {
+                "repo": "sure-aio",
+                "component": "sure-alpha",
+                "sha": sha,
+                "state": state,
+                "operator_commands": {
+                    "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                    + (sha or "<sha>")
+                    + " --event push --publish --publish-component sure-alpha",
+                    "registry_publish": "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha",
+                    "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+                },
+            },
+        }
+        if state == "publish-missing":
+            row["registry_detail"] = {
+                "repo": "sure-aio",
+                "component": "sure-alpha",
+                "sha": "<sha>",
+                "failures": ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
+            }
+        lines: list[str] = []
+
+        fleet_dashboard._render_next_commands(lines, [row], [], [])
+        body = "\n".join(lines)
+
+        assert (
+            "python -m aio_fleet control-check --repo sure-aio" not in body
+        )  # nosec B101
+        assert (
+            "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+            not in body
+        )  # nosec B101
 
 
 def test_catalog_sync_map_uses_source_catalog_asset_diff(tmp_path: Path) -> None:

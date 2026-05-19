@@ -44,6 +44,7 @@ CHECKED_COMMAND_RE = re.compile(
     r"^-\s+\[[xX]\]\s+(?P<label>.+?)\s*$",
     re.MULTILINE,
 )
+FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 @dataclass(frozen=True)
@@ -1948,8 +1949,30 @@ def _render_next_commands(
     lines.extend(["## Next Commands", ""])
     commands: list[str] = []
     for row in rows:
+        release_publish_handled = False
+        release_detail = row.get("release_detail")
+        if isinstance(release_detail, dict):
+            state = release_detail.get("state")
+            release_publish_handled = state in {"publish-missing", "release-due"}
+            operator_commands = release_detail.get("operator_commands")
+            if isinstance(operator_commands, dict):
+                control_check_publish = _actionable_control_check_publish_command(
+                    release_detail
+                )
+                if state == "publish-missing":
+                    command = operator_commands.get("registry_verify")
+                    if command:
+                        commands.append(str(command))
+                    if control_check_publish:
+                        commands.append(control_check_publish)
+                elif state == "release-due" and control_check_publish:
+                    commands.append(control_check_publish)
         registry_detail = row.get("registry_detail")
-        if isinstance(registry_detail, dict) and registry_detail.get("failures"):
+        if (
+            isinstance(registry_detail, dict)
+            and registry_detail.get("failures")
+            and not release_publish_handled
+        ):
             repo = row.get("repo")
             component = row.get("component", "aio")
             sha = registry_detail.get("sha") or "<sha>"
@@ -1959,19 +1982,6 @@ def _render_next_commands(
             commands.append(
                 f"python -m aio_fleet registry publish --repo {repo} --component {component}"
             )
-        release_detail = row.get("release_detail")
-        if isinstance(release_detail, dict):
-            operator_commands = release_detail.get("operator_commands")
-            if isinstance(operator_commands, dict):
-                if release_detail.get("state") == "publish-missing":
-                    for key in ("registry_verify", "registry_publish"):
-                        command = operator_commands.get(key)
-                        if command:
-                            commands.append(str(command))
-                elif release_detail.get("state") == "release-due":
-                    command = operator_commands.get("release_publish")
-                    if command:
-                        commands.append(str(command))
         if row.get("update") and row.get("strategy") == "notify":
             commands.append(
                 f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"
@@ -2006,6 +2016,27 @@ def _render_next_commands(
     lines.extend(dict.fromkeys(commands))
     lines.append("```")
     lines.append("")
+
+
+def _actionable_control_check_publish_command(release_detail: dict[str, Any]) -> str:
+    state = str(release_detail.get("state", ""))
+    if state not in {"publish-missing", "release-due"}:
+        return ""
+    sha = str(release_detail.get("sha", "")).strip()
+    if not FULL_SHA_RE.fullmatch(sha):
+        return ""
+    operator_commands = release_detail.get("operator_commands")
+    if not isinstance(operator_commands, dict):
+        return ""
+    command = str(operator_commands.get("control_check_publish", "")).strip()
+    if not command or "<sha>" in command:
+        return ""
+    if f"--sha {sha}" not in command:
+        return ""
+    command_parts = command.split()
+    if "--publish" not in command_parts or "--publish-component" not in command_parts:
+        return ""
+    return command
 
 
 def _is_ready_update(row: dict[str, Any]) -> bool:
