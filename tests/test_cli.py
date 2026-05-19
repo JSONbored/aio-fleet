@@ -15,6 +15,7 @@ from aio_fleet.cli import (
     cmd_alert_test,
     cmd_check_run,
     cmd_debt_report,
+    cmd_doctor,
     cmd_export_app_manifest,
     cmd_fleet_dashboard_commands,
     cmd_fleet_dashboard_update,
@@ -33,11 +34,13 @@ from aio_fleet.cli import (
     cmd_release_publish,
     cmd_release_publish_github_prereleases,
     cmd_release_readiness,
+    cmd_release_reconcile,
     cmd_security_audit_workflows,
     cmd_trunk_audit,
     cmd_upstream_assess,
     cmd_upstream_monitor,
     cmd_validate_template_common,
+    cmd_workflow_control_report,
 )
 from aio_fleet.manifest import load_manifest
 from aio_fleet.poll import PollTarget
@@ -151,6 +154,80 @@ def test_check_run_dry_run_outputs_payload(tmp_path: Path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["name"] == "aio-fleet / required"  # nosec B101
     assert payload["conclusion"] == "success"  # nosec B101
+
+
+def test_doctor_outputs_json_failure_classes(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "fleet_doctor_report",
+        lambda *_args, **_kwargs: {
+            "checks": [
+                {
+                    "name": "publish-credentials",
+                    "status": "failed",
+                    "class": "credential-gap",
+                    "detail": "missing DOCKERHUB_TOKEN",
+                }
+            ]
+        },
+    )
+
+    result = cmd_doctor(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            no_local=False,
+            app_checks=False,
+            publish=True,
+            cleanup=False,
+            alerts=False,
+            live_auth=False,
+            check_delete_scope=False,
+            require_alerts=False,
+            no_manifest_checks=True,
+            github=False,
+            policy="unused.yml",
+            check_secrets=False,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["failure_classes"] == ["credential-gap"]  # nosec B101
+
+
+def test_workflow_control_report_writes_bootstrap_failure(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    result = cmd_workflow_control_report(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            sha="a" * 40,
+            event="push",
+            source="main",
+            publish=True,
+            publish_component=["aio"],
+            failure=["app-check-permission: bootstrap check-run failed: forbidden"],
+            status="failure",
+            output=str(output),
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["status"] == "failure"  # nosec B101
+    assert report["publish_attestation"]["publish_components"] == ["aio"]  # nosec B101
+    assert "app-check-permission" in report["failure_classes"]  # nosec B101
+    assert json.loads(capsys.readouterr().out)["repo"] == "example-aio"  # nosec B101
 
 
 def test_alert_doctor_warns_without_required_alerts(capsys) -> None:
@@ -418,6 +495,55 @@ def test_release_plan_outputs_all_repo_states(
     assert payload["repos"][0]["state"] == "release-due"  # nosec B101
 
 
+def test_release_reconcile_routes_publish_through_control_check(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    release_plan = tmp_path / "release-plan.json"
+    release_plan.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "example-aio",
+                        "component": "aio",
+                        "state": "publish-missing",
+                        "next_action": (
+                            "python -m aio_fleet control-check --repo example-aio "
+                            "--sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+                            "--event push --publish --publish-component aio"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    result = cmd_release_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            input=str(release_plan),
+            repo=None,
+            component=None,
+            repo_path=None,
+            all=False,
+            registry=False,
+            create_upstream_prs=False,
+            write=False,
+            dry_run=True,
+            post_check=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["publish"] == 1  # nosec B101
+    assert payload["actions"][0]["action"] == "publish"  # nosec B101
+    assert "control-check" in payload["actions"][0]["command"]  # nosec B101
+    assert "--publish-component aio" in payload["actions"][0]["command"]  # nosec B101
+
+
 def test_security_audit_workflows_reports_findings(tmp_path: Path, capsys) -> None:
     workflow_dir = tmp_path / ".github" / "workflows"
     workflow_dir.mkdir(parents=True)
@@ -442,7 +568,7 @@ jobs:
 
 
 def test_promote_rehab_blocks_legacy_repo(tmp_path: Path, capsys) -> None:
-    rehab_path = tmp_path / "nanoclaw-aio"
+    rehab_path = tmp_path / "legacy-aio"
     rehab_path.mkdir()
     (rehab_path / "cliff.toml").write_text("[changelog]\n")
     active_path = tmp_path / "example-aio"
@@ -452,9 +578,9 @@ def test_promote_rehab_blocks_legacy_repo(tmp_path: Path, capsys) -> None:
 owner: JSONbored
 dashboard:
   rehab_repos:
-    nanoclaw-aio:
+    legacy-aio:
       path: {rehab_path}
-      github_repo: JSONbored/nanoclaw-aio
+      github_repo: JSONbored/legacy-aio
 repos:
   example-aio:
     path: {active_path}
@@ -467,7 +593,7 @@ repos:
     result = cmd_promote_rehab(
         Namespace(
             manifest=str(manifest),
-            repo="nanoclaw-aio",
+            repo="legacy-aio",
             profile="changelog-version",
             dry_run=True,
             format="json",

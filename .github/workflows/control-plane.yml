@@ -139,6 +139,44 @@ jobs:
             --issue-number "${{ github.event.issue.number }}" \
             --format github-output >> "${GITHUB_OUTPUT}"
 
+      - name: Validate publish credentials
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          python -m aio_fleet registry preflight --mode publish --format json \
+            | tee registry-preflight-report.json
+          status=${PIPESTATUS[0]}
+          set -euo pipefail
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --publish
+              --failure "credential-gap: registry publish preflight failed"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+              args+=(--publish-component "${PUBLISH_COMPONENT}")
+            fi
+            python -m aio_fleet "${args[@]}"
+            exit "${status}"
+          fi
+
       - name: Set up QEMU
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -146,16 +184,6 @@ jobs:
       - name: Set up Docker Buildx
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-
-      - name: Validate publish credentials
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          python -m aio_fleet registry preflight --mode publish --format json
 
       - name: Test alert webhook
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}
@@ -294,6 +322,19 @@ jobs:
           fi
           python -m aio_fleet "${args[@]}" | tee fleet-dashboard-report.json
 
+      - name: Generate release plan report
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f fleet-dashboard.manifest.yml ]]; then
+            printf '{"repos":[],"summary":{"repos":0,"release_due":0,"publish_missing":0}}\n' \
+              | tee release-plan-report.json
+            exit 0
+          fi
+          args=(release plan --all --format json)
+          args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          python -m aio_fleet "${args[@]}" | tee release-plan-report.json
+
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
         env:
@@ -349,8 +390,56 @@ jobs:
               handle.write(f"checkout_submodules={checkout_submodules}\n")
           PY
 
+      - name: Start central control check
+        id: start-central-control-check
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_SOURCE: workflow_dispatch
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH: ${{ inputs.publish }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set +e
+          output="$(
+            python -m aio_fleet check run \
+              --repo "${TARGET_REPO}" \
+              --sha "${TARGET_SHA}" \
+              --event "${TARGET_EVENT}" \
+              --status in_progress \
+              --summary "aio-fleet central check started" 2>&1
+          )"
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --failure "app-check-permission: bootstrap check-run failed: ${output}"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ "${PUBLISH}" == "true" ]]; then
+              args+=(--publish)
+            fi
+            if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+              args+=(--publish-component "${PUBLISH_COMPONENT}")
+            fi
+            python -m aio_fleet "${args[@]}"
+            echo "${output}" >&2
+            exit "${status}"
+          fi
+          echo "${output}"
+
       - name: Checkout app repo
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: JSONbored/${{ inputs.repo }}
@@ -361,26 +450,9 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
-      - name: Start central control check
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
-        env:
-          TARGET_REPO: ${{ inputs.repo }}
-          TARGET_SHA: ${{ inputs.sha }}
-          TARGET_SOURCE: workflow_dispatch
-          TARGET_EVENT: ${{ inputs.event }}
-          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          python -m aio_fleet check run \
-            --repo "${TARGET_REPO}" \
-            --sha "${TARGET_SHA}" \
-            --event "${TARGET_EVENT}" \
-            --status in_progress \
-            --summary "aio-fleet central check started"
-
       - name: Run central control check
         id: central-control-check
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
         continue-on-error: true
         env:
           TARGET_REPO: ${{ inputs.repo }}
@@ -461,7 +533,7 @@ jobs:
           python -I -m aio_fleet "${args[@]}"
 
       - name: Complete central control check
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'success' }}
         env:
           TARGET_REPO: ${{ inputs.repo }}
           TARGET_SHA: ${{ inputs.sha }}
@@ -490,6 +562,12 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
+
+      - name: Fail central control check bootstrap
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'failure' }}
+        run: |
+          echo "central control check bootstrap failed before app checkout" >&2
+          exit 1
 
       - name: Alert central publish status
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run }}
@@ -534,6 +612,23 @@ jobs:
             --details-url "${DETAILS_URL}" \
             --format json
           exit 0
+
+      - name: Upload control-plane artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: control-plane-reports-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            poll-targets.json
+            upstream-report.json
+            upstream-summary.md
+            fleet-dashboard-report.json
+            release-plan-report.json
+            registry-preflight-report.json
+            central-control-check.log
+            ${{ runner.temp }}/central-control-report.json
 
   poll-checks:
     name: poll-check (${{ matrix.target.repo }} / ${{ matrix.target.source }})
@@ -587,6 +682,54 @@ jobs:
           echo "::add-mask::${token}"
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
+      - name: Validate publish credentials
+        if: ${{ matrix.target.publish == true }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set +e
+          python -m aio_fleet registry preflight --mode publish --format json \
+            | tee registry-preflight-report.json
+          status=${PIPESTATUS[0]}
+          set -euo pipefail
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --publish
+              --failure "credential-gap: registry publish preflight failed"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            while IFS= read -r component; do
+              if [[ -n "${component}" ]]; then
+                args+=(--publish-component "${component}")
+              fi
+            done < <(python - <<'PY'
+          import json
+          import os
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          for component in json.loads(value):
+              print(component)
+          PY
+          )
+            python -m aio_fleet "${args[@]}"
+            exit "${status}"
+          fi
+
       - name: Set up QEMU
         if: ${{ matrix.target.publish == true }}
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -595,17 +738,65 @@ jobs:
         if: ${{ matrix.target.publish == true }}
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Validate publish credentials
-        if: ${{ matrix.target.publish == true }}
+      - name: Start central control check
+        id: start-poll-central-control-check
+        continue-on-error: true
         env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
-          set -euo pipefail
-          python -m aio_fleet registry preflight --mode publish --format json
+          set +e
+          output="$(
+            python -m aio_fleet check run \
+              --repo "${TARGET_REPO}" \
+              --sha "${TARGET_SHA}" \
+              --event "${TARGET_EVENT}" \
+              --status in_progress \
+              --summary "aio-fleet central check started" 2>&1
+          )"
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            args=(
+              workflow control-report
+              --repo "${TARGET_REPO}"
+              --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}"
+              --source "${TARGET_SOURCE}"
+              --status failure
+              --failure "app-check-permission: bootstrap check-run failed: ${output}"
+              --output "${CONTROL_REPORT}"
+              --format json
+            )
+            if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+              args+=(--publish)
+            fi
+            while IFS= read -r component; do
+              if [[ -n "${component}" ]]; then
+                args+=(--publish-component "${component}")
+              fi
+            done < <(python - <<'PY'
+          import json
+          import os
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          for component in json.loads(value):
+              print(component)
+          PY
+          )
+            python -m aio_fleet "${args[@]}"
+            echo "${output}" >&2
+            exit "${status}"
+          fi
+          echo "${output}"
 
       - name: Checkout app repo
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: JSONbored/${{ matrix.target.repo }}
@@ -616,24 +807,9 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
-      - name: Start central control check
-        env:
-          TARGET_REPO: ${{ matrix.target.repo }}
-          TARGET_SHA: ${{ matrix.target.sha }}
-          TARGET_SOURCE: ${{ matrix.target.source }}
-          TARGET_EVENT: ${{ matrix.target.event }}
-          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          python -m aio_fleet check run \
-            --repo "${TARGET_REPO}" \
-            --sha "${TARGET_SHA}" \
-            --event "${TARGET_EVENT}" \
-            --status in_progress \
-            --summary "aio-fleet central check started"
-
       - name: Run central control check
         id: poll-central-control-check
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' }}
         continue-on-error: true
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
@@ -730,7 +906,7 @@ jobs:
           python -I -m aio_fleet "${args[@]}"
 
       - name: Complete central control check
-        if: ${{ always() }}
+        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'success' }}
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
           TARGET_SHA: ${{ matrix.target.sha }}
@@ -759,6 +935,12 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
+
+      - name: Fail central control check bootstrap
+        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'failure' }}
+        run: |
+          echo "central control check bootstrap failed before app checkout" >&2
+          exit 1
 
       - name: Alert poll-check publish status
         if: ${{ always() && matrix.target.publish == true }}
@@ -828,3 +1010,15 @@ jobs:
             --details-url "${DETAILS_URL}" \
             --format json
           exit 0
+
+      - name: Upload poll-check artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: poll-check-${{ matrix.target.repo }}-${{ matrix.target.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            registry-preflight-report.json
+            central-control-check.log
+            ${{ runner.temp }}/poll-central-control-report.json

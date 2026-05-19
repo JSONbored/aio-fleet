@@ -303,7 +303,7 @@ def test_dashboard_renders_destination_and_rehab_groups(
     active_path.mkdir()
     catalog_path = tmp_path / "awesome-unraid"
     catalog_path.mkdir()
-    rehab_path = tmp_path / "nanoclaw-aio"
+    rehab_path = tmp_path / "legacy-aio"
     rehab_path.mkdir()
     (rehab_path / "cliff.toml").write_text("[changelog]\n")
     manifest = tmp_path / "fleet.yml"
@@ -318,9 +318,9 @@ dashboard:
       role: catalog destination
       catalog_path: {catalog_path}
   rehab_repos:
-    nanoclaw-aio:
+    legacy-aio:
       path: {rehab_path}
-      github_repo: JSONbored/nanoclaw-aio
+      github_repo: JSONbored/legacy-aio
       public: true
       status: rehab
 repos:
@@ -346,7 +346,7 @@ repos:
             "github_repo": github_repo,
             "activity_state": "ok",
             "open_prs": 1 if name == "awesome-unraid" else 0,
-            "open_issues": 2 if name == "nanoclaw-aio" else 0,
+            "open_issues": 2 if name == "legacy-aio" else 0,
             "draft_prs": 0,
             "blocked_prs": 0,
             "clean_prs": 1 if name == "awesome-unraid" else 0,
@@ -376,16 +376,75 @@ repos:
     assert state["summary"]["rehab_repos"] == 1  # nosec B101
     assert set(load_manifest(manifest).repos) == {"example-aio"}  # nosec B101
     assert state["destination_repos"][0]["repo"] == "awesome-unraid"  # nosec B101
-    assert state["rehab_repos"][0]["repo"] == "nanoclaw-aio"  # nosec B101
+    assert state["rehab_repos"][0]["repo"] == "legacy-aio"  # nosec B101
     assert state["rehab_repos"][0]["cleanup_findings"] == 1  # nosec B101
     assert "Destination Repo" in body  # nosec B101
     assert "Rehab / Onboarding" in body  # nosec B101
     assert "- [ ] Rescan dashboard" in body  # nosec B101
     assert "- [ ] Run upstream monitor" in body  # nosec B101
-    assert not any(row["repo"] == "nanoclaw-aio" for row in state["rows"])  # nosec B101
+    assert not any(row["repo"] == "legacy-aio" for row in state["rows"])  # nosec B101
     assert not any(
         row["repo"] == "awesome-unraid" for row in state["rows"]
     )  # nosec B101
+
+
+def test_dashboard_treats_nanoclaw_as_active_repo(tmp_path: Path, monkeypatch) -> None:
+    repo_path = tmp_path / "nanoclaw-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  destination_repos: {{}}
+repos:
+  nanoclaw-aio:
+    path: {repo_path}
+    public: true
+    app_slug: nanoclaw-aio
+    image_name: jsonbored/nanoclaw-aio
+    docker_cache_scope: nanoclaw-aio-image
+    pytest_image_tag: nanoclaw-aio:pytest
+    publish_profile: multi-component
+    components:
+      aio:
+        image_name: jsonbored/nanoclaw-aio
+      agent:
+        image_name: jsonbored/nanoclaw-agent
+        release_policy: registry_only
+""")
+
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="nanoclaw-aio",
+                component="aio",
+                name="NanoClaw",
+                strategy="pr",
+                source="github-releases",
+                current_version="v2.0.63",
+                latest_version="v2.0.63",
+                current_digest="",
+                latest_digest="",
+                version_update=False,
+                digest_update=False,
+                dockerfile=repo_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+            )
+        ],
+    )
+    monkeypatch.setattr(fleet_dashboard, "cleanup_findings", lambda *_args: [])
+
+    state = fleet_dashboard.dashboard_report(
+        load_manifest(manifest), include_activity=False, env={}
+    )["state"]
+
+    assert state["summary"]["active_repos"] == 1  # nosec B101
+    assert state["summary"]["rehab_repos"] == 0  # nosec B101
+    assert state["rows"][0]["repo"] == "nanoclaw-aio"  # nosec B101
+    assert state["rehab_repos"] == []  # nosec B101
 
 
 def test_dashboard_skips_private_active_repo_activity(
