@@ -9,16 +9,23 @@ from typing import Any
 from aio_fleet.control_plane import publish_components
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
-from aio_fleet.registry import compute_registry_tags, verify_registry_tags
+from aio_fleet.registry import (
+    component_registry_release_tag,
+    compute_registry_tags,
+    verify_registry_tags,
+)
 from aio_fleet.release import (
     has_aio_unreleased_changes,
     has_semver_unreleased_changes,
     latest_aio_release_tag,
     latest_changelog_version,
+    latest_component_changelog_version,
     latest_semver_tag,
     next_aio_release_version,
     next_semver_release_version,
+    read_upstream_version,
 )
+from aio_fleet.changelog import component_config
 
 
 def release_plan_for_manifest(
@@ -28,17 +35,44 @@ def release_plan_for_manifest(
     catalog_sync: dict[str, bool] | None = None,
     redact_private: bool = False,
 ) -> list[dict[str, Any]]:
-    return [
-        (
-            _private_release_plan(repo)
-            if redact_private and repo.raw.get("public") is not True
-            else release_plan_for_repo(
+    rows: list[dict[str, Any]] = []
+    for repo in manifest.repos.values():
+        if redact_private and repo.raw.get("public") is not True:
+            rows.append(_private_release_plan(repo))
+            continue
+        rows.extend(
+            release_plan_rows_for_repo(
                 repo,
                 include_registry=include_registry,
                 catalog_sync_needed=bool((catalog_sync or {}).get(repo.name)),
             )
         )
-        for repo in manifest.repos.values()
+    return rows
+
+
+def release_plan_rows_for_repo(
+    repo: RepoConfig,
+    *,
+    include_registry: bool = False,
+    catalog_sync_needed: bool = False,
+) -> list[dict[str, Any]]:
+    if repo.publish_profile == "template":
+        return [
+            release_plan_for_repo(
+                repo,
+                include_registry=include_registry,
+                catalog_sync_needed=catalog_sync_needed,
+                component="template",
+            )
+        ]
+    return [
+        release_plan_for_repo(
+            repo,
+            include_registry=include_registry,
+            catalog_sync_needed=catalog_sync_needed,
+            component=component,
+        )
+        for component in publish_components(repo)
     ]
 
 
@@ -47,12 +81,15 @@ def release_plan_for_repo(
     *,
     include_registry: bool = False,
     catalog_sync_needed: bool = False,
+    component: str = "aio",
 ) -> dict[str, Any]:
     sha = _git_head(repo.path)
     warnings: list[str] = []
     blockers: list[str] = []
     registry_failures: list[str] = []
     registry_tags: dict[str, list[str]] = {"dockerhub": [], "ghcr": []}
+    config = component_config(repo, component)
+    registry_only = str(config.get("release_policy", "")).strip() == "registry_only"
     github_release = _latest_github_release(repo)
     registry_only_component_changes = False
 
@@ -60,6 +97,17 @@ def release_plan_for_repo(
         latest_tag = latest_semver_tag(repo.path)
         next_version = _safe_next_semver(repo)
         release_due = _safe_has_semver_changes(repo)
+    elif component != "aio":
+        latest_tag = (
+            _component_release_tag(repo, component)
+            if registry_only
+            else _safe_latest_component_tag(repo, component)
+        )
+        next_version = latest_tag if registry_only else _safe_next_component(repo, component)
+        registry_only_component_changes = registry_only
+        release_due = (
+            False if registry_only else _safe_has_component_changes(repo, component)
+        )
     else:
         latest_tag = _safe_latest_aio_tag(repo)
         next_version = _safe_next_aio(repo)
@@ -71,15 +119,13 @@ def release_plan_for_repo(
     if _looks_like_sha(target_commit) and sha and not registry_only_component_changes:
         release_due = target_commit != sha
 
-    changelog_version = _safe_changelog_version(repo)
+    changelog_version = _safe_changelog_version(repo, component=component)
 
     if include_registry and repo.publish_profile != "template":
-        for component in publish_components(repo):
-            tags = compute_registry_tags(repo, sha=sha, component=component)
-            registry_tags["dockerhub"].extend(tags.dockerhub)
-            registry_tags["ghcr"].extend(tags.ghcr)
-            failures = verify_registry_tags(tags.all_tags)
-            registry_failures.extend(f"{component}: {failure}" for failure in failures)
+        tags = compute_registry_tags(repo, sha=sha, component=component)
+        registry_tags["dockerhub"].extend(tags.dockerhub)
+        registry_tags["ghcr"].extend(tags.ghcr)
+        registry_failures.extend(verify_registry_tags(tags.all_tags))
         if registry_failures:
             blockers.append("missing or unreachable registry tags")
 
@@ -103,6 +149,7 @@ def release_plan_for_repo(
 
     return {
         "repo": repo.name,
+        "component": component,
         "profile": repo.publish_profile,
         "sha": sha,
         "latest_release_tag": latest_tag or "",
@@ -117,13 +164,17 @@ def release_plan_for_repo(
         "state": state,
         "blockers": blockers,
         "warnings": warnings,
-        "next_action": _next_release_action(repo, state, next_version),
+        "next_action": _next_release_action(
+            repo, state, next_version, component=component
+        ),
+        "operator_commands": _operator_commands(repo, component=component, sha=sha),
     }
 
 
 def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
     return {
         "repo": repo.name,
+        "component": "private",
         "profile": "private-skipped",
         "sha": "",
         "latest_release_tag": "private-skipped",
@@ -139,19 +190,35 @@ def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
         "blockers": [],
         "warnings": ["private-skipped"],
         "next_action": "private-skipped",
+        "operator_commands": {},
     }
 
 
-def _next_release_action(repo: RepoConfig, state: str, next_version: str) -> str:
+def _next_release_action(
+    repo: RepoConfig, state: str, next_version: str, *, component: str = "aio"
+) -> str:
     if state == "current":
         return "none"
     if state == "publish-missing":
-        return f"python -m aio_fleet registry publish --repo {repo.name}"
+        return f"python -m aio_fleet registry publish --repo {repo.name} --component {component}"
     if state == "catalog-sync-needed":
         return f"python -m aio_fleet sync-catalog --repo {repo.name} --catalog-path ../awesome-unraid --dry-run"
     if state == "release-due" and next_version:
-        return f"python -m aio_fleet release prepare --repo {repo.name} --dry-run"
-    return f"python -m aio_fleet release status --repo {repo.name}"
+        return f"python -m aio_fleet release prepare --repo {repo.name} --component {component} --dry-run"
+    return f"python -m aio_fleet release status --repo {repo.name} --component {component}"
+
+
+def _operator_commands(
+    repo: RepoConfig, *, component: str = "aio", sha: str = ""
+) -> dict[str, str]:
+    if repo.publish_profile == "template":
+        return {}
+    label_sha = sha if sha else "<sha>"
+    return {
+        "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {label_sha} --verbose",
+        "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
+        "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
+    }
 
 
 def _safe_latest_aio_tag(repo: RepoConfig) -> str:
@@ -164,6 +231,55 @@ def _safe_latest_aio_tag(repo: RepoConfig) -> str:
         )
     except (Exception, SystemExit):
         return ""
+
+
+def _component_release_tag(repo: RepoConfig, component: str) -> str:
+    try:
+        release_tag = component_registry_release_tag(repo, component)
+        prefix = str(component_config(repo, component).get("release_tag_prefix", ""))
+        return f"{prefix}{release_tag}" if release_tag and prefix else release_tag
+    except (Exception, SystemExit):
+        return ""
+
+
+def _safe_latest_component_tag(repo: RepoConfig, component: str) -> str:
+    try:
+        config = component_config(repo, component)
+        return (
+            latest_aio_release_tag(
+                repo.path,
+                repo.path / str(config.get("dockerfile", "Dockerfile")),
+                repo.path / str(config.get("upstream_config", "upstream.toml")),
+                suffix=str(config.get("release_suffix", "aio")),
+                version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+            )
+            or ""
+        )
+    except (Exception, SystemExit):
+        return ""
+
+
+def _safe_next_component(repo: RepoConfig, component: str) -> str:
+    try:
+        config = component_config(repo, component)
+        return next_aio_release_version(
+            repo.path,
+            repo.path / str(config.get("dockerfile", "Dockerfile")),
+            repo.path / str(config.get("upstream_config", "upstream.toml")),
+            suffix=str(config.get("release_suffix", "aio")),
+            version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+        )
+    except (Exception, SystemExit):
+        return ""
+
+
+def _safe_has_component_changes(repo: RepoConfig, component: str) -> bool:
+    try:
+        config = component_config(repo, component)
+        suffix = str(config.get("release_suffix", "aio"))
+        return has_aio_unreleased_changes(repo.path, suffix=suffix)
+    except (Exception, SystemExit):
+        return False
 
 
 def _safe_next_aio(repo: RepoConfig) -> str:
@@ -262,13 +378,28 @@ def _safe_has_semver_changes(repo: RepoConfig) -> bool:
         return False
 
 
-def _safe_changelog_version(repo: RepoConfig) -> str:
+def _safe_changelog_version(repo: RepoConfig, *, component: str = "aio") -> str:
     try:
+        config = component_config(repo, component)
+        changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
         return latest_changelog_version(
-            repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
+            changelog, semver=repo.publish_profile == "template"
         )
     except (Exception, SystemExit):
-        return ""
+        try:
+            config = component_config(repo, component)
+            upstream_version = read_upstream_version(
+                repo.path / str(config.get("dockerfile", "Dockerfile")),
+                repo.path / str(config.get("upstream_config", "upstream.toml")),
+                version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+            )
+            return latest_component_changelog_version(
+                repo.path / str(config.get("release_changelog", "CHANGELOG.md")),
+                upstream_version=upstream_version,
+                suffix=str(config.get("release_suffix", "aio")),
+            )
+        except (Exception, SystemExit):
+            return ""
 
 
 def _latest_github_release(repo: RepoConfig) -> dict[str, str]:

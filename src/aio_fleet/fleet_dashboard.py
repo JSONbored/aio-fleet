@@ -685,6 +685,7 @@ def _redacted_active_row(row: dict[str, Any]) -> dict[str, Any]:
 def _redacted_release_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "repo": str(row.get("repo", "")),
+        "component": "private",
         "profile": "private-skipped",
         "sha": "",
         "latest_release_tag": "private-skipped",
@@ -700,6 +701,7 @@ def _redacted_release_row(row: dict[str, Any]) -> dict[str, Any]:
         "blockers": [],
         "warnings": ["private-skipped"],
         "next_action": "private-skipped",
+        "operator_commands": {},
     }
 
 
@@ -1063,21 +1065,27 @@ def _apply_release_states(
     release_rows: list[dict[str, Any]],
     registry_rows: list[dict[str, Any]],
 ) -> None:
-    release_by_repo = {str(row.get("repo")): row for row in release_rows}
+    release_by_key = {
+        (str(row.get("repo")), str(row.get("component", "aio"))): row
+        for row in release_rows
+    }
     registry_by_key = {
         (str(row.get("repo")), str(row.get("component", "aio"))): row
         for row in registry_rows
     }
     for row in active_rows:
         repo = str(row.get("repo", ""))
-        release = release_by_repo.get(repo)
+        component = str(row.get("component", "aio"))
+        release = release_by_key.get((repo, component)) or release_by_key.get(
+            (repo, "aio")
+        )
         if release:
             row["release"] = release.get("state", row.get("release", "unknown"))
             if release.get("state") == "private-skipped":
                 row.pop("release_detail", None)
             else:
                 row["release_detail"] = release
-        registry = registry_by_key.get((repo, str(row.get("component", "aio"))))
+        registry = registry_by_key.get((repo, component))
         if registry:
             row["registry"] = _registry_label(registry)
             if registry.get("state") == "private-skipped":
@@ -1843,8 +1851,8 @@ def _render_release_section(lines: list[str], rows: list[dict[str, Any]]) -> Non
         return
     lines.extend(
         [
-            "| Repo | State | Latest Tag | GitHub Release | Next Version | Next |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| Repo | Component | State | Latest Tag | GitHub Release | Next Version | Next |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for row in rows:
@@ -1858,8 +1866,9 @@ def _render_release_section(lines: list[str], rows: list[dict[str, Any]]) -> Non
                 or ""
             )
         lines.append(
-            "| {repo} | {state} | {latest_release_tag} | {github_release} | {next_version} | {next_action} |".format(
+            "| {repo} | {component} | {state} | {latest_release_tag} | {github_release} | {next_version} | {next_action} |".format(
                 repo=_cell(row.get("repo", "")),
+                component=_cell(row.get("component", "aio")),
                 state=_cell(row.get("state", "")),
                 latest_release_tag=_cell(row.get("latest_release_tag", "")),
                 github_release=_cell(release_label),
@@ -1939,6 +1948,30 @@ def _render_next_commands(
     lines.extend(["## Next Commands", ""])
     commands: list[str] = []
     for row in rows:
+        registry_detail = row.get("registry_detail")
+        if isinstance(registry_detail, dict) and registry_detail.get("failures"):
+            repo = row.get("repo")
+            component = row.get("component", "aio")
+            sha = registry_detail.get("sha") or "<sha>"
+            commands.append(
+                f"python -m aio_fleet registry verify --repo {repo} --component {component} --sha {sha} --verbose"
+            )
+            commands.append(
+                f"python -m aio_fleet registry publish --repo {repo} --component {component}"
+            )
+        release_detail = row.get("release_detail")
+        if isinstance(release_detail, dict):
+            operator_commands = release_detail.get("operator_commands")
+            if isinstance(operator_commands, dict):
+                if release_detail.get("state") == "publish-missing":
+                    for key in ("registry_verify", "registry_publish"):
+                        command = operator_commands.get(key)
+                        if command:
+                            commands.append(str(command))
+                elif release_detail.get("state") == "release-due":
+                    command = operator_commands.get("release_publish")
+                    if command:
+                        commands.append(str(command))
         if row.get("update") and row.get("strategy") == "notify":
             commands.append(
                 f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"

@@ -517,6 +517,91 @@ repos:
     assert "private blocker" not in hidden  # nosec B101
 
 
+def test_dashboard_next_commands_include_component_registry_actions() -> None:
+    row = {
+        "repo": "sure-aio",
+        "component": "sure-alpha",
+        "current": "0.7.1-alpha.7",
+        "latest": "0.7.1-alpha.7",
+        "strategy": "pr",
+        "update": False,
+        "pr": "",
+        "check": "not-needed",
+        "signed": "not-needed",
+        "registry": "failed:1",
+        "registry_detail": {
+            "repo": "sure-aio",
+            "component": "sure-alpha",
+            "sha": "a" * 40,
+            "failures": ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
+        },
+        "release": "publish-missing",
+        "release_detail": {
+            "repo": "sure-aio",
+            "component": "sure-alpha",
+            "state": "publish-missing",
+            "operator_commands": {
+                "registry_verify": "python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha "
+                + "a" * 40
+                + " --verbose",
+                "registry_publish": "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha",
+                "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+            },
+        },
+        "safety": "ok",
+        "safety_confidence": "",
+        "config_delta": "none",
+        "template_impact": "no-xml-change",
+        "runtime_smoke": "not-configured",
+        "safety_signals": [],
+        "safety_warnings": [],
+        "safety_failures": [],
+        "next_action": "none",
+    }
+    registry_rows = [row["registry_detail"]]
+    release_rows = [row["release_detail"]]
+    summary = fleet_dashboard.dashboard_summary(
+        active_rows=[row],
+        activity_rows=[],
+        destination_rows=[],
+        rehab_rows=[],
+        registry_rows=registry_rows,
+        release_rows=release_rows,
+        cleanup_rows=[],
+        workflow={"state": "success"},
+        warnings=[],
+    )
+    body = fleet_dashboard.render_dashboard(
+        {
+            "generated_at": "2026-05-18T00:00:00+00:00",
+            "issue_repo": "JSONbored/aio-fleet",
+            "warnings": [],
+            "summary": summary,
+            "rows": [row],
+            "activity": [],
+            "destination_repos": [],
+            "rehab_repos": [],
+            "registry": registry_rows,
+            "releases": release_rows,
+            "cleanup": [],
+            "workflow": {"state": "success"},
+        }
+    )
+
+    assert (  # nosec B101
+        "python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha "
+        + "a" * 40
+        + " --verbose"
+        in body
+    )
+    assert (  # nosec B101
+        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        in body
+    )
+    hidden = json.loads(_hidden_dashboard_state(body))
+    assert hidden["releases"][0]["component"] == "sure-alpha"  # nosec B101
+
+
 def test_catalog_sync_map_uses_source_catalog_asset_diff(tmp_path: Path) -> None:
     source_path = tmp_path / "sure-aio"
     catalog_path = tmp_path / "awesome-unraid"

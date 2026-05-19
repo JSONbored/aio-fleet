@@ -9,9 +9,12 @@ from pathlib import Path
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.release import next_aio_release_version, next_semver_release_version
 
-GENERATED_NOTE = (
-    "- Generated from CHANGELOG.md during release preparation. Do not edit manually."
-)
+def generated_note(changelog: Path | str = "CHANGELOG.md") -> str:
+    name = changelog.name if isinstance(changelog, Path) else str(changelog)
+    return f"- Generated from {name} during release preparation. Do not edit manually."
+
+
+GENERATED_NOTE = generated_note()
 
 
 @dataclass(frozen=True)
@@ -92,9 +95,10 @@ def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePl
     config = component_config(repo, component)
     release_suffix = str(config.get("release_suffix", "aio"))
     version = _next_version(repo, component=component)
+    changelog_path = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     return ReleasePlan(
         version=version,
-        changelog_path=repo.path / "CHANGELOG.md",
+        changelog_path=changelog_path,
         xml_paths=[
             repo.path / path for path in _release_xml_sources(repo, component=component)
         ],
@@ -150,7 +154,7 @@ def extract_release_notes(version: str, changelog: Path) -> str:
 
 
 def build_changes_body(version: str, notes: str, changelog: Path) -> str:
-    lines = [release_heading(version, changelog), GENERATED_NOTE]
+    lines = [release_heading(version, changelog), generated_note(changelog)]
     for line in notes.splitlines():
         stripped = line.strip()
         if not stripped:
