@@ -53,6 +53,12 @@ def compute_registry_tags(
     version_tags_allowed = _version_tags_allowed(
         repo, component=component, release_package_tag=release_package_tag
     )
+    upstream_version_tag_allowed = _upstream_version_tag_allowed(
+        repo,
+        component=component,
+        release_package_tag=release_package_tag,
+        version_tags_allowed=version_tags_allowed,
+    )
     include_upstream_version_tag = _component_bool(
         repo, component, "include_upstream_version_tag", True
     )
@@ -68,7 +74,11 @@ def compute_registry_tags(
         ghcr_tags.extend(
             f"{ghcr_image}:{tag}" for tag in _component_floating_tags(repo, component)
         )
-    if version_tags_allowed and include_upstream_version_tag and upstream_version:
+    if (
+        upstream_version_tag_allowed
+        and include_upstream_version_tag
+        and upstream_version
+    ):
         dockerhub_tags.append(f"{dockerhub_image}:{upstream_version}")
         ghcr_tags.append(f"{ghcr_image}:{upstream_version}")
     if version_tags_allowed and release_package_tag:
@@ -109,6 +119,22 @@ def _version_tags_allowed(
     if str(config.get("release_policy", "")).strip() == "registry_only":
         return bool(release_package_tag)
     if repo.publish_profile == "upstream-aio-track":
+        return bool(release_package_tag)
+    return True
+
+
+def _upstream_version_tag_allowed(
+    repo: RepoConfig,
+    *,
+    component: str,
+    release_package_tag: str,
+    version_tags_allowed: bool,
+) -> bool:
+    if not version_tags_allowed:
+        return False
+    config = component_config(repo, component)
+    release_suffix = str(config.get("release_suffix", "") or "").strip()
+    if release_suffix:
         return bool(release_package_tag)
     return True
 
