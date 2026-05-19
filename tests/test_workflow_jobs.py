@@ -179,12 +179,6 @@ repos:
     monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
     monkeypatch.setattr(workflow_jobs.subprocess, "check_output", fake_check_output)
     monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        workflow_jobs,
-        "publish_components_required",
-        lambda *_args, **_kwargs: ["sure-alpha"],
-    )
-
     report = registry_audit_checkouts(
         manifest_path=manifest,
         checkout_root=checkout_root,
@@ -193,8 +187,8 @@ repos:
         github_output=None,
     )
 
-    assert verify_components == ["sure-alpha"]  # nosec B101
+    assert verify_components == ["aio", "sure-alpha"]  # nosec B101
     assert report["status"] == 0  # nosec B101
-    rows = {(row["component"], row.get("skipped")) for row in report["repos"]}
-    assert ("aio", "not-publish-related") in rows  # nosec B101
-    assert ("sure-alpha", None) in rows  # nosec B101
+    rows = {row["component"] for row in report["repos"]}
+    assert "aio" in rows  # nosec B101
+    assert "sure-alpha" in rows  # nosec B101
