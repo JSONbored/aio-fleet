@@ -17,6 +17,7 @@ from aio_fleet.release import (
     find_release_target_commit,
     git,
     git_is_ancestor,
+    latest_changelog_version,
     latest_component_changelog_version,
     read_upstream_version,
 )
@@ -394,12 +395,16 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     if not upstream_version:
         return ""
     release_suffix = str(config.get("release_suffix", "aio"))
+    changelog_path = repo.path / "CHANGELOG.md"
     try:
-        changelog_version = latest_component_changelog_version(
-            repo.path / "CHANGELOG.md",
-            upstream_version=upstream_version,
-            suffix=release_suffix,
-        )
+        if repo.publish_profile == "changelog-version":
+            changelog_version = latest_changelog_version(changelog_path)
+        else:
+            changelog_version = latest_component_changelog_version(
+                changelog_path,
+                upstream_version=upstream_version,
+                suffix=release_suffix,
+            )
     except (Exception, SystemExit):
         return ""
     try:

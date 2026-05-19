@@ -774,3 +774,26 @@ def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
         ]
     ]
     assert seen_envs == [inspect_env]  # nosec B101
+
+def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("khoj-aio")
+    sha = "f" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "1.0.0"
+    )
+    monkeypatch.setattr(
+        registry,
+        "latest_component_changelog_version",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit(1)),
+    )
+    monkeypatch.setattr(
+        registry, "latest_changelog_version", lambda *_args, **_kwargs: "app-2024.05"
+    )
+    monkeypatch.setattr(registry, "find_release_target_commit", lambda *_args, **_kwargs: sha)
+
+    tags = registry.compute_registry_tags(repo, sha=sha)
+
+    assert tags.release_package_tag == "app-2024.05"  # nosec B101
+    assert "jsonbored/khoj-aio:app-2024.05" in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/khoj-aio:app-2024.05" in tags.ghcr  # nosec B101
