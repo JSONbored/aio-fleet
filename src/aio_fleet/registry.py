@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import shutil
@@ -13,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from aio_fleet.changelog import component_config
+from aio_fleet.cleanup import RETIRED_SHARED_PATHS
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.release import (
     find_release_target_commit,
@@ -511,6 +513,7 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
 _RELEASE_FORMAT_SUBJECT = re.compile(
     r"^chore\(release\): format .+ changelog(?: \(#\d+\))?$"
 )
+_RELEASE_CLEANUP_SUBJECT = re.compile(r"^chore\(cleanup\): .+(?: \(#\d+\))?$")
 
 
 def _release_tag_sha_allowed(
@@ -543,6 +546,10 @@ def _release_tag_sha_allowed(
     ]
     if not subject_lines:
         return False
+    if _cleanup_followup_allowed(
+        repo, subject_lines=subject_lines, paths=changed_paths
+    ):
+        return True
     if all(_RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines):
         return changed_paths == ["CHANGELOG.md"]
     allowed_paths = _component_release_followup_paths(repo, component)
@@ -552,6 +559,30 @@ def _release_tag_sha_allowed(
         )
         for subject in subject_lines
     )
+
+
+def _cleanup_followup_allowed(
+    repo: RepoConfig, *, subject_lines: list[str], paths: list[str]
+) -> bool:
+    if not paths or not subject_lines:
+        return False
+    if not all(_RELEASE_CLEANUP_SUBJECT.match(subject) for subject in subject_lines):
+        return False
+    patterns = set(repo.list_value("non_release_paths"))
+    patterns.update(RETIRED_SHARED_PATHS)
+    return bool(patterns) and all(
+        _matches_release_pattern(path, patterns) for path in paths
+    )
+
+
+def _matches_release_pattern(path: str, patterns: set[str]) -> bool:
+    for pattern in patterns:
+        normalized = pattern.rstrip("/")
+        if path == normalized or path.startswith(f"{normalized}/"):
+            return True
+        if fnmatch.fnmatch(path, pattern):
+            return True
+    return False
 
 
 def _component_release_followup_paths(repo: RepoConfig, component: str) -> set[str]:
