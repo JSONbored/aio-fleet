@@ -214,11 +214,11 @@ def _next_release_action(
     if state == "current":
         return "none"
     if state == "publish-missing":
-        return control_check_publish_command(repo, component=component, sha=sha)
+        return release_transaction_command(repo, component=component, sha=sha)
     if state == "catalog-sync-needed":
         return f"python -m aio_fleet sync-catalog --repo {repo.name} --catalog-path ../awesome-unraid --dry-run"
     if state == "release-due" and next_version:
-        return f"python -m aio_fleet release prepare --repo {repo.name} --component {component} --dry-run"
+        return release_transaction_command(repo, component=component, sha=sha)
     return (
         f"python -m aio_fleet release status --repo {repo.name} --component {component}"
     )
@@ -237,6 +237,9 @@ def _operator_commands(
         "control_check_publish": control_check_publish_command(
             repo, component=component, sha=sha
         ),
+        "release_transaction": release_transaction_command(
+            repo, component=component, sha=sha
+        ),
     }
 
 
@@ -247,6 +250,16 @@ def control_check_publish_command(
     return (
         f"python -m aio_fleet control-check --repo {repo.name} --sha {label_sha} "
         f"--event push --publish --publish-component {component}"
+    )
+
+
+def release_transaction_command(
+    repo: RepoConfig, *, component: str = "aio", sha: str = ""
+) -> str:
+    label_sha = sha if sha else "<sha>"
+    return (
+        f"python -m aio_fleet release transaction --repo {repo.name} "
+        f"--component {component} --sha {label_sha} --dry-run"
     )
 
 

@@ -80,6 +80,7 @@ python -m aio_fleet validate-repo --repo <repo> --repo-path ../<repo>
 python -m aio_fleet cleanup-repo --repo <repo> --verify
 python -m aio_fleet cleanup-repo --repo <repo> --fix --verify
 python -m aio_fleet control-check --repo <repo> --sha <commit-sha> --event pull_request --dry-run
+python -m aio_fleet release preflight --repo <repo> --sha <commit-sha> --mode transaction --format json
 python -m aio_fleet upstream monitor --repo <repo> --dry-run
 python -m aio_fleet registry verify --repo <repo> --sha <commit-sha> --dry-run --verbose
 python -m aio_fleet sync-catalog --repo <repo> --catalog-path ../awesome-unraid --dry-run

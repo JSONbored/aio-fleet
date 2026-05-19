@@ -2028,6 +2028,19 @@ def _actionable_control_check_publish_command(release_detail: dict[str, Any]) ->
     operator_commands = release_detail.get("operator_commands")
     if not isinstance(operator_commands, dict):
         return ""
+    command = str(operator_commands.get("release_transaction", "")).strip()
+    if command:
+        if "<sha>" in command:
+            return ""
+        if f"--sha {sha}" not in command:
+            return ""
+        command_parts = command.split()
+        if "release" not in command_parts or "transaction" not in command_parts:
+            return ""
+        if "--dry-run" not in command_parts and "--write" not in command_parts:
+            return ""
+        return command
+
     command = str(operator_commands.get("control_check_publish", "")).strip()
     if not command or "<sha>" in command:
         return ""
