@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -202,6 +203,68 @@ def delete_dockerhub_tags(
                 f"{tag}: Docker Hub delete failed: {error.reason}"
             ) from error
     return results
+
+
+def dockerhub_auth_preflight_failure(*, username: str, token: str) -> str | None:
+    if not username or not token:
+        return "DOCKERHUB_USERNAME and Docker Hub token are required"
+    try:
+        _dockerhub_login_token(username=username, token=token)
+    except RuntimeError as exc:
+        return str(exc)
+    return None
+
+
+def dockerhub_delete_scope_preflight_failure(
+    *,
+    image: str,
+    username: str,
+    token: str,
+    probe_tag: str | None = None,
+) -> str | None:
+    parsed = _dockerhub_image_parts(image)
+    if parsed is None:
+        return f"{image}: unsupported Docker Hub image format"
+    if not username or not token:
+        return "DOCKERHUB_USERNAME and DOCKERHUB_DELETE_TOKEN are required"
+
+    namespace, repository = parsed
+    tag = probe_tag or f"aio-fleet-preflight-missing-{uuid.uuid4().hex}"
+    try:
+        auth_token = _dockerhub_login_token(username=username, token=token)
+    except RuntimeError as exc:
+        return str(exc)
+    request = urllib.request.Request(
+        _dockerhub_tag_delete_url(namespace, repository, tag),
+        headers={"Authorization": f"Bearer {auth_token}"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310
+            if response.status in {200, 202, 204, 404}:
+                return None
+            return f"{image}: Docker Hub delete probe returned HTTP {response.status}"
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        if error.code == 403:
+            return (
+                f"{image}: Docker Hub delete forbidden; "
+                "DOCKERHUB_DELETE_TOKEN must have tag delete/admin permission"
+            )
+        return f"{image}: Docker Hub delete probe failed: HTTP {error.code}: {error.reason}"
+    except urllib.error.URLError as error:
+        return f"{image}: Docker Hub delete probe failed: {error.reason}"
+
+
+def _dockerhub_tag_delete_url(namespace: str, repository: str, tag: str) -> str:
+    quoted_namespace = urllib.parse.quote(namespace, safe="")
+    quoted_repository = urllib.parse.quote(repository, safe="")
+    quoted_tag = urllib.parse.quote(tag, safe="")
+    return (
+        "https://hub.docker.com/v2/"
+        f"namespaces/{quoted_namespace}/repositories/{quoted_repository}/tags/{quoted_tag}"
+    )
 
 
 def _verify_with_docker_imagetools(

@@ -155,14 +155,7 @@ jobs:
           AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required for central publish." >&2
-            exit 1
-          fi
-          if [[ -z "${AIO_FLEET_GHCR_TOKEN}" ]]; then
-            echo "AIO_FLEET_GHCR_TOKEN is required for central GHCR publish." >&2
-            exit 1
-          fi
+          python -m aio_fleet registry preflight --mode publish --format json
 
       - name: Test alert webhook
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'alert-test' }}
@@ -183,12 +176,19 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dockerhub-tag-cleanup' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_DELETE_TOKEN || secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_DELETE_TOKEN: ${{ secrets.DOCKERHUB_DELETE_TOKEN }}
           DOCKERHUB_IMAGE: ${{ inputs.dockerhub_image }}
           DOCKERHUB_TAGS: ${{ inputs.dockerhub_tags }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          if [[ "${DRY_RUN}" != "true" ]]; then
+            python -m aio_fleet registry preflight \
+              --mode cleanup \
+              --image "${DOCKERHUB_IMAGE}" \
+              --check-delete-scope \
+              --format json
+          fi
           args=(
             registry delete-dockerhub-tags
             --image "${DOCKERHUB_IMAGE}"
@@ -589,14 +589,7 @@ jobs:
           AIO_FLEET_GHCR_TOKEN: ${{ secrets.AIO_FLEET_GHCR_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required for central publish." >&2
-            exit 1
-          fi
-          if [[ -z "${AIO_FLEET_GHCR_TOKEN}" ]]; then
-            echo "AIO_FLEET_GHCR_TOKEN is required for central GHCR publish." >&2
-            exit 1
-          fi
+          python -m aio_fleet registry preflight --mode publish --format json
 
       - name: Checkout app repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

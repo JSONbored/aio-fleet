@@ -763,6 +763,76 @@ def test_delete_dockerhub_tags_reports_forbidden_permission(monkeypatch) -> None
         raise AssertionError("expected forbidden delete to report token permission")
 
 
+def test_dockerhub_auth_preflight_uses_current_token_api(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"access_token":"hub-jwt"}'
+
+    def fake_urlopen(request, timeout: int):
+        del timeout
+        assert request.full_url == "https://hub.docker.com/v2/auth/token"  # nosec B101
+        assert json.loads(request.data.decode()) == {  # nosec B101
+            "identifier": "jsonbored",
+            "secret": "hub-token",
+        }
+        return Response()
+
+    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
+
+    failure = registry.dockerhub_auth_preflight_failure(
+        username="jsonbored",
+        token="hub-token",
+    )
+
+    assert failure is None  # nosec B101
+
+
+def test_dockerhub_delete_scope_preflight_reports_forbidden(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"access_token":"hub-jwt"}'
+
+    def fake_urlopen(request, timeout: int):
+        del timeout
+        if request.full_url == "https://hub.docker.com/v2/auth/token":
+            return Response()
+        assert request.full_url == (  # nosec B101
+            "https://hub.docker.com/v2/namespaces/jsonbored/"
+            "repositories/sure-aio-alpha/tags/missing-probe"
+        )
+        assert request.get_method() == "DELETE"  # nosec B101
+        raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
+
+    monkeypatch.setattr(registry.urllib.request, "urlopen", fake_urlopen)
+
+    failure = registry.dockerhub_delete_scope_preflight_failure(
+        image="jsonbored/sure-aio-alpha",
+        username="jsonbored",
+        token="delete-token",
+        probe_tag="missing-probe",
+    )
+
+    assert failure is not None  # nosec B101
+    assert "DOCKERHUB_DELETE_TOKEN" in failure  # nosec B101
+    assert "delete/admin permission" in failure  # nosec B101
+
+
 def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     seen_commands: list[list[str]] = []
     inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}

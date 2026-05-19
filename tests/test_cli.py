@@ -23,6 +23,7 @@ from aio_fleet.cli import (
     cmd_fleet_report_validate,
     cmd_infra_doctor,
     cmd_registry_delete_dockerhub_tags,
+    cmd_registry_preflight,
     cmd_onboard_repo,
     cmd_poll,
     cmd_promote_rehab,
@@ -1215,6 +1216,167 @@ def test_registry_delete_dockerhub_tags_dry_run_without_credentials(
         "jsonbored/sure-aio:latest-alpha: would-delete",
         "jsonbored/sure-aio:0.7.1-alpha.7-aio.4: would-delete",
     ]
+
+
+def test_registry_delete_dockerhub_tags_prefers_delete_token(
+    monkeypatch, capsys
+) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_delete(**kwargs):
+        seen["token"] = kwargs["token"]
+        return [{"tag": "latest-alpha", "state": "deleted"}]
+
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "publish-token")
+    monkeypatch.setenv("DOCKERHUB_DELETE_TOKEN", "delete-token")
+    monkeypatch.setattr(cli, "delete_dockerhub_tags", fake_delete)
+
+    result = cmd_registry_delete_dockerhub_tags(
+        Namespace(
+            image="jsonbored/sure-aio",
+            tag=["latest-alpha"],
+            tag_list="",
+            required_substring="alpha",
+            dry_run=False,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert seen["token"] == "delete-token"  # nosec B101
+    assert "jsonbored/sure-aio:latest-alpha: deleted" in capsys.readouterr().out  # nosec B101
+
+
+def test_registry_preflight_reports_publish_credential_gaps(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.delenv("DOCKERHUB_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["publish"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image=None,
+            live_auth=False,
+            check_delete_scope=False,
+            allow_publish_token_delete_fallback=False,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "failed"  # nosec B101
+    assert "DOCKERHUB_USERNAME" in report["checks"][0]["detail"]  # nosec B101
+    assert "AIO_FLEET_GHCR_TOKEN" in report["checks"][0]["detail"]  # nosec B101
+
+
+def test_registry_preflight_checks_live_dockerhub_auth(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    seen: dict[str, str] = {}
+
+    def fake_auth(*, username: str, token: str) -> str | None:
+        seen["username"] = username
+        seen["token"] = token
+        return None
+
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "publish-token")
+    monkeypatch.setenv("AIO_FLEET_GHCR_TOKEN", "ghcr-token")
+    monkeypatch.setattr(cli, "dockerhub_auth_preflight_failure", fake_auth)
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["publish"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image=None,
+            live_auth=True,
+            check_delete_scope=False,
+            allow_publish_token_delete_fallback=False,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert seen == {"username": "jsonbored", "token": "publish-token"}  # nosec B101
+    assert "dockerhub-publish-auth: ok" in capsys.readouterr().out  # nosec B101
+
+
+def test_registry_preflight_cleanup_requires_delete_token(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "publish-token")
+    monkeypatch.delenv("DOCKERHUB_DELETE_TOKEN", raising=False)
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["cleanup"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image="jsonbored/sure-aio-alpha",
+            live_auth=False,
+            check_delete_scope=False,
+            allow_publish_token_delete_fallback=False,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["checks"][0]["name"] == "cleanup-credentials"  # nosec B101
+    assert "DOCKERHUB_DELETE_TOKEN" in report["checks"][0]["detail"]  # nosec B101
+
+
+def test_registry_preflight_delete_scope_reports_forbidden(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_DELETE_TOKEN", "delete-token")
+    monkeypatch.setattr(cli, "dockerhub_auth_preflight_failure", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        cli,
+        "dockerhub_delete_scope_preflight_failure",
+        lambda **_kwargs: "jsonbored/sure-aio-alpha: Docker Hub delete forbidden",
+    )
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["cleanup"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image="jsonbored/sure-aio-alpha",
+            live_auth=True,
+            check_delete_scope=True,
+            allow_publish_token_delete_fallback=False,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["checks"][-1]["name"] == "dockerhub-delete-scope"  # nosec B101
+    assert report["checks"][-1]["status"] == "failed"  # nosec B101
+    assert "delete forbidden" in report["checks"][-1]["detail"]  # nosec B101
 
 
 def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(

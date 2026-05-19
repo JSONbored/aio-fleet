@@ -123,9 +123,11 @@ def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
     assert cleanup["env"]["DOCKERHUB_USERNAME"] == (  # nosec B101
         "${{ secrets.DOCKERHUB_USERNAME }}"
     )
-    assert cleanup["env"]["DOCKERHUB_TOKEN"] == (  # nosec B101
-        "${{ secrets.DOCKERHUB_DELETE_TOKEN || secrets.DOCKERHUB_TOKEN }}"
+    assert cleanup["env"]["DOCKERHUB_DELETE_TOKEN"] == (  # nosec B101
+        "${{ secrets.DOCKERHUB_DELETE_TOKEN }}"
     )
+    assert "registry preflight" in cleanup["run"]  # nosec B101
+    assert "--check-delete-scope" in cleanup["run"]  # nosec B101
     assert "registry delete-dockerhub-tags" in cleanup["run"]  # nosec B101
     assert "--required-substring" in cleanup["run"]  # nosec B101
     assert "--required-substring alpha" in cleanup["run"]  # nosec B101
@@ -157,12 +159,20 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     manual = _step(workflow["jobs"]["control-plane"], "Run central control check")
+    manual_preflight = _step(
+        workflow["jobs"]["control-plane"], "Validate publish credentials"
+    )
     poll = _step(workflow["jobs"]["poll-checks"], "Run central control check")
+    poll_preflight = _step(
+        workflow["jobs"]["poll-checks"], "Validate publish credentials"
+    )
 
+    assert "registry preflight --mode publish" in manual_preflight["run"]  # nosec B101
     assert 'if [[ "${PUBLISH}" == "true" ]]' in manual["run"]  # nosec B101
     assert "args+=(--publish --no-github-prereleases)" in manual["run"]  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in manual["env"]  # nosec B101
     assert "--report-json" in manual["run"]  # nosec B101
+    assert "registry preflight --mode publish" in poll_preflight["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
     assert "args+=(--publish --no-github-prereleases)" in poll["run"]  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in poll["env"]  # nosec B101
