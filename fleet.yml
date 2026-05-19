@@ -1171,7 +1171,6 @@ repos:
           - latest
         upstream_version_key: UPSTREAM_VERSION
     validation:
-      docker_socket_required: true
       required_targets:
         - /appdata
         - /var/run/docker.sock

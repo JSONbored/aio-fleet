@@ -910,17 +910,11 @@ def _xml_runtime_contract_failures(
             )
         if target == "/var/run/docker.sock":
             description = (config.attrib.get("Description") or "").lower()
-            docker_socket_required = bool(
-                _template_validation(repo, source).get("docker_socket_required")
-            )
-            if (
-                config.attrib.get("Display") != "advanced"
-                and not docker_socket_required
-            ):
+            if config.attrib.get("Display") != "advanced":
                 failures.append(
                     f"{repo.name}: {source} Docker socket mount must be advanced"
                 )
-            if config.attrib.get("Required") != "false" and not docker_socket_required:
+            if config.attrib.get("Required") != "false":
                 failures.append(
                     f"{repo.name}: {source} Docker socket mount must be optional"
                 )

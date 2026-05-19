@@ -624,3 +624,27 @@ def test_catalog_quality_audit_reports_catalog_presentation_drift(
         "fuller CA-facing setup guidance" in finding for finding in findings
     )  # nosec B101
     assert any("not a valid PNG" in finding for finding in findings)  # nosec B101
+
+def test_runtime_contract_rejects_required_non_advanced_docker_socket_even_with_manifest_flag(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "FROM ubuntu@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        'ENTRYPOINT ["/init"]\n'
+        "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=300000\n"
+        "S6_BEHAVIOUR_IF_STAGE2_FAILS=2\n"
+        'VOLUME ["/appdata"]\n'
+        "HEALTHCHECK CMD curl -fsS http://localhost:3000/ || exit 1\n"
+    )
+    (tmp_path / "example-aio.xml").write_text("""<?xml version=\"1.0\"?>
+<Container version=\"2\">
+  <Config Name=\"Docker Socket\" Type=\"Path\" Target=\"/var/run/docker.sock\" Display=\"always\" Required=\"true\" Description=\"Docker socket security control access warning\">/var/run/docker.sock</Config>
+</Container>
+""")
+
+    failures = runtime_contract_failures(
+        _repo(tmp_path, validation={"docker_socket_required": True})
+    )
+
+    assert any("Docker socket mount must be advanced" in failure for failure in failures)  # nosec B101
+    assert any("Docker socket mount must be optional" in failure for failure in failures)  # nosec B101
