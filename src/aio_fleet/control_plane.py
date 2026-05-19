@@ -114,6 +114,8 @@ def central_check_steps(
         ),
     ]
     install = _install_test_dependencies_step(repo.path)
+    if registry_publish_enabled:
+        steps.append(_registry_publish_preflight_step(manifest_args))
     if install is not None:
         steps.append(Step(**{**install.__dict__, "inherit_secrets": False}))
     generator = str(repo.get("generator_check_command", "") or "").strip()
@@ -233,6 +235,25 @@ def central_check_steps(
 
 def _trusted_aio_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _registry_publish_preflight_step(manifest_args: list[str]) -> Step:
+    return Step(
+        "registry-publish-preflight",
+        [
+            sys.executable,
+            "-m",
+            "aio_fleet.cli",
+            *manifest_args,
+            "registry",
+            "preflight",
+            "--mode",
+            "publish",
+            "--format",
+            "json",
+        ],
+        _trusted_aio_root(),
+    )
 
 
 def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:

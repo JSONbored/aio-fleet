@@ -150,9 +150,13 @@ def test_app_code_checkouts_disable_submodules_for_pull_requests() -> None:
     poll = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
 
     assert "checkout_submodules" in manual["with"]["submodules"]  # nosec B101
-    assert "inputs.event != 'pull_request'" in manual["with"]["submodules"]  # nosec B101
+    assert (
+        "inputs.event != 'pull_request'" in manual["with"]["submodules"]
+    )  # nosec B101
     assert "checkout_submodules" in poll["with"]["submodules"]  # nosec B101
-    assert "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]  # nosec B101
+    assert (
+        "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
+    )  # nosec B101
 
 
 def test_control_check_steps_gate_publish_explicitly() -> None:
@@ -202,6 +206,25 @@ def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
     )  # nosec B101
     assert "publish-github-prereleases" in manual_release["run"]  # nosec B101
     assert "publish-github-prereleases" in poll_release["run"]  # nosec B101
+    assert "--expected-sha" in manual_release["run"]  # nosec B101
+    assert "--expected-sha" in poll_release["run"]  # nosec B101
+    assert manual_release["env"]["TARGET_SHA"] == "${{ inputs.sha }}"  # nosec B101
+    assert poll_release["env"]["TARGET_SHA"] == "${{ matrix.target.sha }}"  # nosec B101
+
+
+def test_publish_workflow_concurrency_is_component_and_sha_scoped() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    top_level = workflow["concurrency"]
+    poll = workflow["jobs"]["poll-checks"]["concurrency"]
+
+    assert top_level["cancel-in-progress"] is False  # nosec B101
+    assert "inputs.sha" in top_level["group"]  # nosec B101
+    assert "inputs.publish_component" in top_level["group"]  # nosec B101
+    assert poll["cancel-in-progress"] is False  # nosec B101
+    assert "matrix.target.repo" in poll["group"]  # nosec B101
+    assert "matrix.target.sha" in poll["group"]  # nosec B101
+    assert "matrix.target.publish_components" in poll["group"]  # nosec B101
 
 
 def test_publish_alert_steps_use_report_json_and_alert_secret() -> None:
@@ -310,16 +333,35 @@ def test_privileged_completion_restores_trusted_checkout_first() -> None:
         assert "GitHub prerelease publish failed" in complete["run"]  # nosec B101
 
 
-def test_prerelease_publish_keeps_checked_out_app_repo() -> None:
+def test_prerelease_publish_resets_app_checkout_to_reviewed_sha() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    for job_name in ("control-plane", "poll-checks"):
-        job = workflow["jobs"][job_name]
-        restore = _step(job, "Restore trusted aio-fleet checkout")
-        release = _step(job, "Publish GitHub prereleases")
+    manual_job = workflow["jobs"]["control-plane"]
+    poll_job = workflow["jobs"]["poll-checks"]
 
-        assert "git clean -ffd -e app-repo/" in restore["run"]  # nosec B101
-        assert "--repo-path app-repo" in release["run"]  # nosec B101
+    manual_reset = _step(manual_job, "Reset app checkout before prerelease publish")
+    manual_release = _step(manual_job, "Publish GitHub prereleases")
+    poll_reset = _step(poll_job, "Reset app checkout before prerelease publish")
+    poll_release = _step(poll_job, "Publish GitHub prereleases")
+
+    assert (
+        "steps.central-control-check.outcome == 'success'" in manual_reset["if"]
+    )  # nosec B101
+    assert (
+        "steps.poll-central-control-check.outcome == 'success'" in poll_reset["if"]
+    )  # nosec B101
+    assert (
+        'git -C app-repo reset --hard "${TARGET_SHA}"' in manual_reset["run"]
+    )  # nosec B101
+    assert "git -C app-repo clean -ffd" in manual_reset["run"]  # nosec B101
+    assert (
+        'git -C app-repo reset --hard "${TARGET_SHA}"' in poll_reset["run"]
+    )  # nosec B101
+    assert "git -C app-repo clean -ffd" in poll_reset["run"]  # nosec B101
+    assert "--repo-path app-repo" in manual_release["run"]  # nosec B101
+    assert "--repo-path app-repo" in poll_release["run"]  # nosec B101
+    assert '--expected-sha "${TARGET_SHA}"' in manual_release["run"]  # nosec B101
+    assert '--expected-sha "${TARGET_SHA}"' in poll_release["run"]  # nosec B101
 
 
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:

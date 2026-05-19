@@ -321,6 +321,7 @@ def test_publish_failure_alert_keeps_component_context() -> None:
             "repo": "sure-aio",
             "status": "failure",
             "failures": ["github-prerelease-sure-alpha: exit 1"],
+            "failure_classes": ["prerelease-mismatch"],
             "components": [
                 {
                     "component": "sure-alpha",
@@ -344,6 +345,7 @@ def test_publish_failure_alert_keeps_component_context() -> None:
     values = "\n".join(field["value"] for field in fields)
     assert "tag: 0.7.1-alpha.7-aio.1" in values  # nosec B101
     assert "github-prerelease-sure-alpha: exit 1" in values  # nosec B101
+    assert "prerelease-mismatch" in values  # nosec B101
     assert (  # nosec B101
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" not in values
     )
@@ -360,6 +362,7 @@ def test_poll_check_report_alert_includes_target_context() -> None:
             "event": "pull_request",
             "status": "failure",
             "failures": ["trunk: exit 1: Incorrect formatting"],
+            "failure_classes": ["checkout-mismatch"],
         },
     )
 
@@ -372,6 +375,7 @@ def test_poll_check_report_alert_includes_target_context() -> None:
     assert fields["Source"] == "pr:27"  # nosec B101
     assert fields["SHA"] == "b" * 12  # nosec B101
     assert fields["Failed step"] == "trunk"  # nosec B101
+    assert fields["Failure class"] == "checkout-mismatch"  # nosec B101
 
 
 def test_release_publish_success_alert_includes_github_release_url() -> None:

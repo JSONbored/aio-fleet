@@ -6,6 +6,7 @@ import subprocess  # nosec B404
 from pathlib import Path
 from typing import Any
 
+from aio_fleet.changelog import component_config
 from aio_fleet.control_plane import publish_components
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
@@ -25,7 +26,6 @@ from aio_fleet.release import (
     next_semver_release_version,
     read_upstream_version,
 )
-from aio_fleet.changelog import component_config
 
 
 def release_plan_for_manifest(
@@ -103,7 +103,9 @@ def release_plan_for_repo(
             if registry_only
             else _safe_latest_component_tag(repo, component)
         )
-        next_version = latest_tag if registry_only else _safe_next_component(repo, component)
+        next_version = (
+            latest_tag if registry_only else _safe_next_component(repo, component)
+        )
         registry_only_component_changes = registry_only
         release_due = (
             False if registry_only else _safe_has_component_changes(repo, component)
@@ -165,7 +167,7 @@ def release_plan_for_repo(
         "blockers": blockers,
         "warnings": warnings,
         "next_action": _next_release_action(
-            repo, state, next_version, component=component
+            repo, state, next_version, component=component, sha=sha
         ),
         "operator_commands": _operator_commands(repo, component=component, sha=sha),
     }
@@ -195,17 +197,24 @@ def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
 
 
 def _next_release_action(
-    repo: RepoConfig, state: str, next_version: str, *, component: str = "aio"
+    repo: RepoConfig,
+    state: str,
+    next_version: str,
+    *,
+    component: str = "aio",
+    sha: str = "",
 ) -> str:
     if state == "current":
         return "none"
     if state == "publish-missing":
-        return f"python -m aio_fleet registry publish --repo {repo.name} --component {component}"
+        return control_check_publish_command(repo, component=component, sha=sha)
     if state == "catalog-sync-needed":
         return f"python -m aio_fleet sync-catalog --repo {repo.name} --catalog-path ../awesome-unraid --dry-run"
     if state == "release-due" and next_version:
         return f"python -m aio_fleet release prepare --repo {repo.name} --component {component} --dry-run"
-    return f"python -m aio_fleet release status --repo {repo.name} --component {component}"
+    return (
+        f"python -m aio_fleet release status --repo {repo.name} --component {component}"
+    )
 
 
 def _operator_commands(

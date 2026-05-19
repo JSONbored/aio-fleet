@@ -75,9 +75,19 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     )
 
     names = [step.name for step in steps]
+    assert "registry-publish-preflight" in names  # nosec B101
     assert "build-pytest-image" in names  # nosec B101
     assert "integration-tests" in names  # nosec B101
     assert names[-2:] == ["trunk", "registry-publish"]  # nosec B101
+    preflight = steps[names.index("registry-publish-preflight")]
+    assert preflight.cwd == ROOT  # nosec B101
+    assert preflight.inherit_secrets is True  # nosec B101
+    assert preflight.command[-4:] == [  # nosec B101
+        "--mode",
+        "publish",
+        "--format",
+        "json",
+    ]
     build = steps[names.index("build-pytest-image")]
     assert build.stream_output is True  # nosec B101
     assert build.timeout_seconds == 1800  # nosec B101
@@ -152,7 +162,13 @@ def test_central_check_steps_publish_signoz_components() -> None:
 
     steps = central_check_steps(repo, event="workflow_dispatch", publish=True)
 
-    publish_steps = [step for step in steps if step.name.startswith("registry-publish")]
+    publish_steps = [
+        step
+        for step in steps
+        if step.name.startswith("registry-publish-")
+        and step.name != "registry-publish-preflight"
+    ]
+    assert "registry-publish-preflight" in [step.name for step in steps]  # nosec B101
     assert [step.name for step in publish_steps] == [  # nosec B101
         "registry-publish-aio",
         "registry-publish-agent",
@@ -172,6 +188,7 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
 
     names = [step.name for step in steps]
     assert "build-pytest-image-sure-alpha" in names  # nosec B101
+    assert "registry-publish-preflight" in names  # nosec B101
     assert "registry-publish-sure-alpha" in names  # nosec B101
     assert "github-prerelease-sure-alpha" in names  # nosec B101
     assert "registry-publish-aio" not in names  # nosec B101

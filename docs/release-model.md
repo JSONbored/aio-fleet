@@ -54,6 +54,9 @@ control-plane validation and publish rules apply.
 from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
 the Docker Hub tag API so post-push checks do not consume manifest-pull quota;
 GHCR verification continues to use `docker buildx imagetools inspect`.
+`registry publish` verifies the expected tag set first and skips the push when
+all tags are already present; pass `--force` only for intentional republish
+work.
 
 Run the registry preflight before publish or cleanup work that depends on live
 credentials:
@@ -70,6 +73,12 @@ flow before an expensive build starts. Cleanup preflight requires a separate
 for real tag cleanup because tag deletion needs Docker Hub delete/admin
 permission. The delete-scope probe targets a random nonexistent tag so it can
 distinguish a missing tag from a token that authenticates but cannot delete.
+
+GitHub prerelease publishing is guarded by the same control-check attestation.
+`publish-github-prereleases` requires a matching control report or
+`--expected-sha`, refuses dirty app checkouts, and fails if app `HEAD` no longer
+matches the release SHA. The workflow still resets and cleans `app-repo` before
+this step, but the CLI guard is the release-token boundary.
 
 The `Registry Audit` workflow runs read-only verification for every active repo
 on a schedule. Scheduled runs report missing Docker Hub or GHCR tags in the job
