@@ -41,9 +41,7 @@ def poll_targets(
                             sha=sha,
                             event="pull_request",
                             source=f"pr:{number}",
-                            checkout_submodules=bool(
-                                repo.raw.get("checkout_submodules")
-                            ),
+                            checkout_submodules=False,
                             publish=False,
                         )
                     )
