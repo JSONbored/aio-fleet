@@ -371,14 +371,12 @@ jobs:
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          if ! python -m aio_fleet check run \
+          python -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \
             --status in_progress \
-            --summary "aio-fleet central check started"; then
-            echo "::warning::Unable to create app repo check run; continuing with central control check"
-          fi
+            --summary "aio-fleet central check started"
 
       - name: Run central control check
         id: central-control-check
@@ -471,15 +469,13 @@ jobs:
             conclusion=failure
             summary="aio-fleet GitHub prerelease publish failed"
           fi
-          if ! python -I -m aio_fleet check run \
+          python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \
             --status completed \
             --conclusion "${conclusion}" \
-            --summary "${summary}"; then
-            echo "::warning::Unable to update app repo check run"
-          fi
+            --summary "${summary}"
           if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
@@ -622,14 +618,12 @@ jobs:
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          if ! python -m aio_fleet check run \
+          python -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \
             --status in_progress \
-            --summary "aio-fleet central check started"; then
-            echo "::warning::Unable to create app repo check run; continuing with central control check"
-          fi
+            --summary "aio-fleet central check started"
 
       - name: Run central control check
         id: poll-central-control-check
@@ -737,15 +731,13 @@ jobs:
             conclusion=failure
             summary="aio-fleet GitHub prerelease publish failed"
           fi
-          if ! python -I -m aio_fleet check run \
+          python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
             --sha "${TARGET_SHA}" \
             --event "${TARGET_EVENT}" \
             --status completed \
             --conclusion "${conclusion}" \
-            --summary "${summary}"; then
-            echo "::warning::Unable to update app repo check run"
-          fi
+            --summary "${summary}"
           if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
