@@ -64,6 +64,8 @@ TRACKED_ARTIFACT_PATTERNS = [
 ]
 
 CHANGELOG_HEADING = re.compile(r"^### \d{4}-\d{2}-\d{2}$")
+
+
 def _generated_changelog_bullet(changelog: str = "CHANGELOG.md") -> str:
     return f"- Generated from {changelog} during release preparation. Do not edit manually."
 
@@ -346,10 +348,230 @@ def repo_policy_failures(repo: RepoConfig, manifest: FleetManifest) -> list[str]
         *template_metadata_failures(repo, manifest),
         *runtime_contract_failures(repo),
         *publish_platform_failures(repo),
+        *release_hardening_failures(repo),
         *repo_local_workflow_failures(repo),
         *pinned_action_failures(repo.path),
         *tracked_artifact_failures(repo.path),
     ]
+
+
+def release_hardening_failures(repo: RepoConfig) -> list[str]:
+    return [
+        *_floating_dependency_update_failures(repo),
+        *_mem0_release_hardening_failures(repo),
+        *_sure_release_hardening_failures(repo),
+    ]
+
+
+def _floating_dependency_update_failures(repo: RepoConfig) -> list[str]:
+    failures: list[str] = []
+    forbidden = {
+        "bundle update": "must not run floating Bundler updates during image builds",
+        "bundle config set frozen false": "must not disable Bundler frozen mode during image builds",
+    }
+    for dockerfile in _publish_dockerfiles(repo):
+        if not dockerfile.exists():
+            continue
+        text = dockerfile.read_text()
+        rel = dockerfile.relative_to(repo.path)
+        for needle, message in forbidden.items():
+            if needle in text:
+                failures.append(f"{repo.name}: {rel} {message}: {needle}")
+    return failures
+
+
+def _mem0_release_hardening_failures(repo: RepoConfig) -> list[str]:
+    if repo.name != "mem0-aio":
+        return []
+
+    failures: list[str] = []
+    dockerfile = repo.path / "Dockerfile"
+    normalizer = repo.path / "docker" / "normalize-apt-sources.sh"
+    gitmodules = repo.path / ".gitmodules"
+    app_manifest = repo.path / ".aio-fleet.yml"
+
+    if not normalizer.exists():
+        failures.append(
+            f"{repo.name}: docker/normalize-apt-sources.sh is required for APT source normalization"
+        )
+    else:
+        normalizer_text = normalizer.read_text()
+        for required in [
+            "http://archive\\.ubuntu\\.com/ubuntu/",
+            "http://security\\.ubuntu\\.com/ubuntu/",
+            "http://ports\\.ubuntu\\.com/ubuntu-ports/",
+            "plaintext apt source remained",
+            "insecure apt source option is not allowed",
+        ]:
+            if required not in normalizer_text:
+                failures.append(
+                    f"{repo.name}: docker/normalize-apt-sources.sh missing required guard: {required}"
+                )
+
+    if dockerfile.exists():
+        text = dockerfile.read_text()
+        if " AS runtime-base" not in text or "FROM runtime-base AS runtime" not in text:
+            failures.append(
+                f"{repo.name}: Dockerfile must expose a runtime-base APT validation stage"
+            )
+        if "COPY docker/normalize-apt-sources.sh" not in text:
+            failures.append(
+                f"{repo.name}: Dockerfile must copy docker/normalize-apt-sources.sh before apt-get update"
+            )
+        if "/usr/local/bin/normalize-apt-sources" not in text:
+            failures.append(
+                f"{repo.name}: Dockerfile must run normalize-apt-sources before apt-get update"
+            )
+        for plaintext_allow in [
+            "http://archive.ubuntu.com/ubuntu/|",
+            "http://security.ubuntu.com/ubuntu/|",
+            "http://ports.ubuntu.com/ubuntu-ports/|",
+        ]:
+            if plaintext_allow in text:
+                failures.append(
+                    f"{repo.name}: Dockerfile must not allow plaintext APT source {plaintext_allow.rstrip('|')}"
+                )
+
+    if gitmodules.exists():
+        text = gitmodules.read_text()
+        if "url = https://github.com/mem0ai/mem0" not in text:
+            failures.append(
+                f"{repo.name}: openmemory submodule must use https://github.com/mem0ai/mem0"
+            )
+        if "url = https://github.com/JSONbored/mem0" in text:
+            failures.append(
+                f"{repo.name}: openmemory submodule must not use the JSONbored/mem0 fork"
+            )
+    if app_manifest.exists() and "submodule_ref_template" in app_manifest.read_text():
+        failures.append(
+            f"{repo.name}: .aio-fleet.yml must not target mutable OpenMemory fork branch templates"
+        )
+
+    return failures
+
+
+def _sure_release_hardening_failures(repo: RepoConfig) -> list[str]:
+    if repo.name != "sure-aio":
+        return []
+
+    failures: list[str] = []
+    components = repo.raw.get("components")
+    if not isinstance(components, dict) or "aio" not in components:
+        failures.append("sure-aio: components must include stable aio package")
+    if not isinstance(components, dict) or "sure-alpha" not in components:
+        failures.append("sure-aio: components must include sure-alpha package")
+    elif isinstance(components.get("sure-alpha"), dict):
+        alpha = components["sure-alpha"]
+        if alpha.get("dockerfile") != "Dockerfile.alpha":
+            failures.append(
+                "sure-aio: sure-alpha component must publish Dockerfile.alpha"
+            )
+        if "sure-aio-alpha.xml" not in alpha.get("xml_paths", []):
+            failures.append(
+                "sure-aio: sure-alpha component must validate sure-aio-alpha.xml"
+            )
+
+    failures.extend(_sure_template_secret_mask_failures(repo))
+
+    session_patch = (
+        repo.path
+        / "rootfs"
+        / "rails"
+        / "config"
+        / "initializers"
+        / "sure_aio_external_assistant_session_key.rb"
+    )
+    if not session_patch.exists():
+        failures.append(
+            "sure-aio: missing external assistant per-chat session key initializer"
+        )
+    else:
+        text = session_patch.read_text()
+        for required in [
+            "SureAioExternalAssistantSessionKey",
+            'ENV["EXTERNAL_ASSISTANT_SESSION_KEY"].to_s.strip',
+            "sure-chat:",
+            "chat&.id",
+        ]:
+            if required not in text:
+                failures.append(
+                    f"sure-aio: external assistant session initializer missing {required}"
+                )
+
+    init_db = repo.path / "rootfs" / "etc" / "s6-overlay" / "s6-rc.d" / "init-db"
+    if init_db.exists() and any(path.is_file() for path in init_db.rglob("*")):
+        failures.append("sure-aio: rootfs must not ship stale init-db service files")
+
+    web_run = repo.path / "rootfs" / "etc" / "s6-overlay" / "s6-rc.d" / "web" / "run"
+    web_dep = (
+        repo.path
+        / "rootfs"
+        / "etc"
+        / "s6-overlay"
+        / "s6-rc.d"
+        / "web"
+        / "dependencies.d"
+        / "postgres"
+    )
+    if not web_dep.exists():
+        failures.append("sure-aio: web service must depend on postgres")
+    if web_run.exists():
+        text = web_run.read_text()
+        if 'PGPASSWORD="${POSTGRES_PASSWORD}" psql' not in text:
+            failures.append(
+                "sure-aio: web service must wait for authenticated psql access"
+            )
+        if '-d "${POSTGRES_DB}"' not in text:
+            failures.append("sure-aio: web service must wait on the target database")
+
+    return failures
+
+
+def _sure_template_secret_mask_failures(repo: RepoConfig) -> list[str]:
+    failures: list[str] = []
+    for source, _target in _catalog_xml_assets(repo):
+        if source not in {"sure-aio.xml", "sure-aio-alpha.xml"}:
+            continue
+        root = _parse_xml(repo, source, failures)
+        if root is None:
+            continue
+        configs = {
+            str(config.attrib.get("Target", "")): config
+            for config in root.findall(".//Config")
+        }
+        for target in ("HTTP_PROXY", "HTTPS_PROXY"):
+            config = configs.get(target)
+            if config is None:
+                failures.append(f"sure-aio: {source} missing Config Target {target}")
+            elif config.attrib.get("Mask") != "true":
+                failures.append(
+                    f"sure-aio: {source} Config Target {target} must be masked"
+                )
+        no_proxy = configs.get("NO_PROXY")
+        if no_proxy is None:
+            failures.append(f"sure-aio: {source} missing Config Target NO_PROXY")
+        elif no_proxy.attrib.get("Mask") != "false":
+            failures.append(
+                f"sure-aio: {source} Config Target NO_PROXY must remain unmasked"
+            )
+        session = configs.get("EXTERNAL_ASSISTANT_SESSION_KEY")
+        if session is None:
+            failures.append(
+                f"sure-aio: {source} missing Config Target EXTERNAL_ASSISTANT_SESSION_KEY"
+            )
+        else:
+            default = (session.attrib.get("Default") or "").strip()
+            value = (session.text or "").strip()
+            description = session.attrib.get("Description") or ""
+            if default or value:
+                failures.append(
+                    f"sure-aio: {source} EXTERNAL_ASSISTANT_SESSION_KEY default must be blank"
+                )
+            if "isolated per-chat" not in description:
+                failures.append(
+                    f"sure-aio: {source} EXTERNAL_ASSISTANT_SESSION_KEY must document isolated per-chat default behavior"
+                )
+    return failures
 
 
 def runtime_contract_failures(repo: RepoConfig) -> list[str]:
@@ -863,29 +1085,39 @@ def _dockerfile_runtime_contract_failures(
 ) -> list[str]:
     failures: list[str] = []
     arg_defaults = _dockerfile_arg_defaults(text)
-    from_lines = [
-        line.split()[1]
+    from_instructions = [
+        line.split()
         for line in text.splitlines()
         if line.startswith("FROM ") and len(line.split()) > 1
     ]
-    if not from_lines:
+    if not from_instructions:
         failures.append(f"{repo.name}: {relative_dockerfile} must declare FROM")
-    for image in from_lines:
-        digest_arg = re.search(r"@\$\{([^}]+)\}", image)
-        if "@sha256:" in image:
-            continue
-        if digest_arg:
-            digest_default = arg_defaults.get(digest_arg.group(1), "")
-            if digest_default.startswith("sha256:") or "@sha256:" in digest_default:
-                continue
-        elif any(
-            "@sha256:" in arg_defaults.get(name, "")
-            for name in re.findall(r"\$\{([^}]+)\}", image)
-        ):
-            continue
-        failures.append(
-            f"{repo.name}: {relative_dockerfile} FROM image must be digest-pinned: {image}"
-        )
+    stage_aliases: set[str] = set()
+    for parts in from_instructions:
+        image = parts[1]
+        if image not in stage_aliases:
+            digest_arg = re.search(r"@\$\{([^}]+)\}", image)
+            if "@sha256:" in image:
+                pass
+            elif digest_arg:
+                digest_default = arg_defaults.get(digest_arg.group(1), "")
+                if not (
+                    digest_default.startswith("sha256:") or "@sha256:" in digest_default
+                ):
+                    failures.append(
+                        f"{repo.name}: {relative_dockerfile} FROM image must be digest-pinned: {image}"
+                    )
+            elif any(
+                "@sha256:" in arg_defaults.get(name, "")
+                for name in re.findall(r"\$\{([^}]+)\}", image)
+            ):
+                pass
+            else:
+                failures.append(
+                    f"{repo.name}: {relative_dockerfile} FROM image must be digest-pinned: {image}"
+                )
+        if len(parts) >= 4 and parts[2].lower() == "as":
+            stage_aliases.add(parts[3])
 
     runtime_supervisor = str(repo.get("runtime_supervisor", "s6") or "s6").strip()
     markers = ["HEALTHCHECK", "ENTRYPOINT ["]

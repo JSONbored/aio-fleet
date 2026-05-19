@@ -9,6 +9,7 @@ from aio_fleet.validators import (
     derived_repo_failures,
     pinned_action_failures,
     publish_platform_failures,
+    release_hardening_failures,
     repo_local_workflow_failures,
     runtime_contract_failures,
     template_metadata_failures,
@@ -21,20 +22,20 @@ class _Manifest:
     repos: dict[str, RepoConfig] = {}
 
 
-def _repo(tmp_path: Path, **overrides: object) -> RepoConfig:
+def _repo(tmp_path: Path, name: str = "example-aio", **overrides: object) -> RepoConfig:
     raw = {
         "path": str(tmp_path),
-        "app_slug": "example-aio",
-        "image_name": "jsonbored/example-aio",
-        "docker_cache_scope": "example-aio-image",
-        "pytest_image_tag": "example-aio:pytest",
+        "app_slug": name,
+        "image_name": f"jsonbored/{name}",
+        "docker_cache_scope": f"{name}-image",
+        "pytest_image_tag": f"{name}:pytest",
         "publish_profile": "changelog-version",
         "publish_platforms": "linux/amd64,linux/arm64",
         "public": True,
-        "catalog_assets": [{"source": "example-aio.xml", "target": "example-aio.xml"}],
+        "catalog_assets": [{"source": f"{name}.xml", "target": f"{name}.xml"}],
     }
     raw.update(overrides)
-    return RepoConfig(name="example-aio", raw=raw, defaults={}, owner="JSONbored")
+    return RepoConfig(name=name, raw=raw, defaults={}, owner="JSONbored")
 
 
 def _write_minimal_derived_repo(tmp_path: Path) -> None:
@@ -150,6 +151,178 @@ def test_app_repo_local_workflows_are_rejected(tmp_path: Path) -> None:
     assert repo_local_workflow_failures(_repo(tmp_path)) == [  # nosec B101
         "example-aio: .github/workflows is disabled; app repos are checked by aio-fleet / required"
     ]
+
+
+def test_release_hardening_rejects_floating_bundle_updates(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "RUN bundle config set frozen false && bundle update --conservative rack\n"
+    )
+
+    failures = release_hardening_failures(_repo(tmp_path))
+
+    assert (  # nosec B101
+        "example-aio: Dockerfile must not run floating Bundler updates during image builds: bundle update"
+        in failures
+    )
+    assert (  # nosec B101
+        "example-aio: Dockerfile must not disable Bundler frozen mode during image builds: bundle config set frozen false"
+        in failures
+    )
+
+
+def test_release_hardening_accepts_mem0_apt_and_openmemory_policy(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "\n".join(
+            [
+                "FROM ubuntu:26.04 AS runtime-base",
+                "COPY docker/normalize-apt-sources.sh /usr/local/bin/normalize-apt-sources",
+                "RUN /usr/local/bin/normalize-apt-sources && apt-get update",
+                "FROM runtime-base AS runtime",
+            ]
+        )
+    )
+    (tmp_path / "docker").mkdir()
+    (tmp_path / "docker/normalize-apt-sources.sh").write_text(
+        "\n".join(
+            [
+                "http://archive\\.ubuntu\\.com/ubuntu/",
+                "http://security\\.ubuntu\\.com/ubuntu/",
+                "http://ports\\.ubuntu\\.com/ubuntu-ports/",
+                "plaintext apt source remained",
+                "insecure apt source option is not allowed",
+            ]
+        )
+    )
+    (tmp_path / ".gitmodules").write_text("url = https://github.com/mem0ai/mem0\n")
+    (tmp_path / ".aio-fleet.yml").write_text("repo: mem0-aio\n")
+
+    failures = release_hardening_failures(_repo(tmp_path, name="mem0-aio"))
+
+    assert failures == []  # nosec B101
+
+
+def test_release_hardening_rejects_mem0_mutable_fork_policy(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "FROM ubuntu:26.04\n"
+        'RUN case "$uri" in http://archive.ubuntu.com/ubuntu/|https://archive.ubuntu.com/ubuntu/) ;; esac && apt-get update\n'
+    )
+    (tmp_path / ".gitmodules").write_text("url = https://github.com/JSONbored/mem0\n")
+    (tmp_path / ".aio-fleet.yml").write_text(
+        "submodule_ref_template: codex/openmemory-{version}-aio\n"
+    )
+
+    failures = release_hardening_failures(_repo(tmp_path, name="mem0-aio"))
+
+    assert (  # nosec B101
+        "mem0-aio: Dockerfile must expose a runtime-base APT validation stage"
+        in failures
+    )
+    assert (  # nosec B101
+        "mem0-aio: openmemory submodule must not use the JSONbored/mem0 fork"
+        in failures
+    )
+    assert (  # nosec B101
+        "mem0-aio: .aio-fleet.yml must not target mutable OpenMemory fork branch templates"
+        in failures
+    )
+
+
+def _write_sure_hardening_fixture(
+    tmp_path: Path,
+    *,
+    proxy_mask: str = "true",
+    session_default: str = "",
+) -> None:
+    for path in ("Dockerfile", "Dockerfile.alpha"):
+        (tmp_path / path).write_text("RUN bundle check\n")
+    for path in ("sure-aio.xml", "sure-aio-alpha.xml"):
+        (tmp_path / path).write_text(f"""<?xml version="1.0"?>
+<Container version="2">
+  <Config Name="HTTP Proxy" Target="HTTP_PROXY" Mask="{proxy_mask}"/>
+  <Config Name="HTTPS Proxy" Target="HTTPS_PROXY" Mask="{proxy_mask}"/>
+  <Config Name="No Proxy" Target="NO_PROXY" Mask="false"/>
+  <Config Name="Session Key" Target="EXTERNAL_ASSISTANT_SESSION_KEY" Default="{session_default}" Description="isolated per-chat remote state">{session_default}</Config>
+</Container>
+""")
+    session = (
+        tmp_path
+        / "rootfs/rails/config/initializers/sure_aio_external_assistant_session_key.rb"
+    )
+    session.parent.mkdir(parents=True)
+    session.write_text(
+        "SureAioExternalAssistantSessionKey\n"
+        'ENV["EXTERNAL_ASSISTANT_SESSION_KEY"].to_s.strip\n'
+        "sure-chat:\n"
+        "chat&.id\n"
+    )
+    web_dep = tmp_path / "rootfs/etc/s6-overlay/s6-rc.d/web/dependencies.d/postgres"
+    web_dep.parent.mkdir(parents=True)
+    web_dep.write_text("")
+    web_run = tmp_path / "rootfs/etc/s6-overlay/s6-rc.d/web/run"
+    web_run.write_text('PGPASSWORD="${POSTGRES_PASSWORD}" psql -d "${POSTGRES_DB}"\n')
+
+
+def test_release_hardening_accepts_sure_stable_and_alpha_policy(
+    tmp_path: Path,
+) -> None:
+    _write_sure_hardening_fixture(tmp_path)
+    repo = _repo(
+        tmp_path,
+        name="sure-aio",
+        catalog_assets=[
+            {"source": "sure-aio.xml", "target": "sure-aio.xml"},
+            {"source": "sure-aio-alpha.xml", "target": "sure-aio-alpha.xml"},
+        ],
+        components={
+            "aio": {"dockerfile": "Dockerfile", "xml_paths": ["sure-aio.xml"]},
+            "sure-alpha": {
+                "dockerfile": "Dockerfile.alpha",
+                "xml_paths": ["sure-aio-alpha.xml"],
+            },
+        },
+    )
+
+    failures = release_hardening_failures(repo)
+
+    assert failures == []  # nosec B101
+
+
+def test_release_hardening_rejects_sure_secret_and_component_drift(
+    tmp_path: Path,
+) -> None:
+    _write_sure_hardening_fixture(
+        tmp_path, proxy_mask="false", session_default="agent:main:main"
+    )
+    repo = _repo(
+        tmp_path,
+        name="sure-aio",
+        catalog_assets=[
+            {"source": "sure-aio.xml", "target": "sure-aio.xml"},
+            {"source": "sure-aio-alpha.xml", "target": "sure-aio-alpha.xml"},
+        ],
+        components={"aio": {"dockerfile": "Dockerfile", "xml_paths": ["sure-aio.xml"]}},
+    )
+
+    failures = release_hardening_failures(repo)
+
+    assert (
+        "sure-aio: components must include sure-alpha package" in failures
+    )  # nosec B101
+    assert (  # nosec B101
+        "sure-aio: sure-aio.xml Config Target HTTP_PROXY must be masked" in failures
+    )
+    assert (  # nosec B101
+        "sure-aio: sure-aio-alpha.xml Config Target HTTPS_PROXY must be masked"
+        in failures
+    )
+    assert (  # nosec B101
+        "sure-aio: sure-aio.xml EXTERNAL_ASSISTANT_SESSION_KEY default must be blank"
+        in failures
+    )
 
 
 def test_derived_repo_validation_accepts_minimal_repo(tmp_path: Path) -> None:
