@@ -31,6 +31,7 @@ from aio_fleet.cli import (
     cmd_registry_verify,
     cmd_release_plan,
     cmd_release_publish,
+    cmd_release_readiness,
     cmd_security_audit_workflows,
     cmd_trunk_audit,
     cmd_upstream_assess,
@@ -972,6 +973,78 @@ def test_release_version_catches_changelog_system_exit(
     )
 
     assert cli._release_version(repo) == ""  # nosec B101
+
+
+def test_release_readiness_outputs_component_operator_commands(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        release_changelog: CHANGELOG.alpha.md
+        floating_tags:
+          - latest-alpha
+""")
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha\n\n## 0.7.1-alpha.7-aio.6 - 2026-05-18\n\n- alpha\n"
+    )
+    sha = "d" * 40
+
+    def fake_run(command: list[str], cwd: Path | None = None) -> SimpleNamespace:
+        del cwd
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["git", "rev-list"]:
+            return SimpleNamespace(returncode=0, stdout="0 0\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.setattr(cli, "_open_prs", lambda _repo: "0")
+    monkeypatch.setattr(cli, "load_policy", lambda _path: {"repositories": []})
+    monkeypatch.setattr(cli, "_latest_main_ci", lambda _repo: {"state": "success"})
+    monkeypatch.setattr(cli, "_image_status", lambda _repo, *, component="aio": "ok")
+    monkeypatch.setattr(cli, "_git_head", lambda _path: sha)
+
+    result = cmd_release_readiness(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component="sure-alpha",
+            catalog_path=None,
+            policy="unused.yml",
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "sure-aio:sure-alpha: release-readiness=ready" in output  # nosec B101
+    assert (  # nosec B101
+        f"python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
+        in output
+    )
+    assert (  # nosec B101
+        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        in output
+    )
+    assert (  # nosec B101
+        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        in output
+    )
 
 
 def test_debt_report_text_prints_publish_state_once(

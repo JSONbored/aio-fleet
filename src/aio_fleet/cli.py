@@ -69,7 +69,11 @@ from aio_fleet.release import (
     latest_component_changelog_version,
     read_upstream_version,
 )
-from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
+from aio_fleet.release_plan import (
+    release_plan_for_manifest,
+    release_plan_for_repo,
+    release_plan_rows_for_repo,
+)
 from aio_fleet.report import (
     fleet_report_json_schema,
     stable_report_json,
@@ -1759,14 +1763,16 @@ def _run_generator_for_write(repo: RepoConfig) -> None:
 def cmd_release_readiness(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
+    component = str(getattr(args, "component", "aio") or "aio")
     catalog_path = Path(args.catalog_path).resolve() if args.catalog_path else None
     policy_path = Path(args.policy)
     findings: list[str] = []
     warnings: list[str] = []
+    label = repo.name if component == "aio" else f"{repo.name}:{component}"
 
     status = _run(["git", "status", "--short"], cwd=repo.path)
     if status.stdout.strip():
-        findings.append(f"{repo.name}: worktree is dirty")
+        findings.append(f"{label}: worktree is dirty")
 
     drift = _run(
         ["git", "rev-list", "--left-right", "--count", "HEAD...origin/main"],
@@ -1776,13 +1782,13 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
     if drift.returncode == 0:
         ahead, behind = (drift.stdout.strip().split() + ["0", "0"])[:2]
         if behind != "0":
-            findings.append(f"{repo.name}: branch is behind origin/main by {behind}")
+            findings.append(f"{label}: branch is behind origin/main by {behind}")
     else:
-        warnings.append(f"{repo.name}: unable to inspect branch drift")
+        warnings.append(f"{label}: unable to inspect branch drift")
 
     open_prs = _open_prs(repo)
     if open_prs not in {"0", "not-run", "unknown"}:
-        findings.append(f"{repo.name}: has {open_prs} open PR(s)")
+        findings.append(f"{label}: has {open_prs} open PR(s)")
 
     try:
         policy_repos = set(load_policy(policy_path)["repositories"])
@@ -1795,7 +1801,7 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
         else:
             warnings.append(f"{repo.name}: github policy is manual")
     except Exception as exc:
-        warnings.append(f"{repo.name}: unable to validate GitHub policy: {exc}")
+        warnings.append(f"{label}: unable to validate GitHub policy: {exc}")
 
     if catalog_path:
         catalog_failures = [
@@ -1807,18 +1813,26 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
 
     latest_ci = _latest_main_ci(repo)
     if latest_ci["state"] != "success":
-        findings.append(f"{repo.name}: latest main CI is {latest_ci['state']}")
+        findings.append(f"{label}: latest main CI is {latest_ci['state']}")
 
-    release_version = _release_version(repo)
+    release_version = _release_version(repo, component=component)
     if not release_version:
-        findings.append(f"{repo.name}: unable to read latest changelog version")
+        findings.append(f"{label}: unable to read latest changelog version")
 
-    image_status = _image_status(repo)
+    image_status = _image_status(repo, component=component)
     if image_status != "ok":
-        warnings.append(f"{repo.name}: image publish status is {image_status}")
+        warnings.append(f"{label}: image publish status is {image_status}")
+
+    sha = _git_head(repo.path)
+    operator_commands = {
+        "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {sha or '<sha>'} --verbose",
+        "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
+        "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
+    }
 
     report = {
         "repo": repo.name,
+        "component": component,
         "ahead": ahead,
         "behind": behind,
         "open_prs": open_prs,
@@ -1827,17 +1841,21 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
         "image_status": image_status,
         "findings": findings,
         "warnings": warnings,
+        "operator_commands": operator_commands,
         "ready": not findings,
     }
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         state = "ready" if not findings else "blocked"
-        print(f"{repo.name}: release-readiness={state}")
+        print(f"{label}: release-readiness={state}")
         for finding in findings:
             print(f"- {finding}")
         for warning in warnings:
             print(f"- warning: {warning}")
+        print("- next verify: " + operator_commands["registry_verify"])
+        print("- next publish: " + operator_commands["registry_publish"])
+        print("- next release: " + operator_commands["release_publish"])
     return 1 if findings else 0
 
 
@@ -1896,21 +1914,30 @@ def _latest_main_ci(repo: RepoConfig) -> dict[str, str]:
     }
 
 
-def _release_version(repo: RepoConfig) -> str:
+def _release_version(repo: RepoConfig, *, component: str = "aio") -> str:
     try:
+        config = component_config(repo, component)
+        changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
         return latest_changelog_version(
-            repo.path / "CHANGELOG.md", semver=repo.publish_profile == "template"
+            changelog, semver=repo.publish_profile == "template"
         )
     except (Exception, SystemExit):
         return ""
 
 
-def _image_status(repo: RepoConfig) -> str:
+def _image_status(repo: RepoConfig, *, component: str = "aio") -> str:
     docker = shutil.which("docker")
     if docker is None:
         return "unknown:no-docker"
+    image_name = str(component_config(repo, component).get("image_name", repo.image_name))
+    floating_tags = component_config(repo, component).get("floating_tags", ["latest"])
+    tag = (
+        str(floating_tags[0])
+        if isinstance(floating_tags, list) and floating_tags
+        else "latest"
+    )
     result = _run(
-        [docker, "manifest", "inspect", f"{repo.image_name}:latest"],
+        [docker, "manifest", "inspect", f"{image_name}:{tag}"],
         cwd=repo.path,
     )
     return "ok" if result.returncode == 0 else "unknown:latest-not-inspected"
@@ -1957,7 +1984,14 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
         repo = _repo_for_identifier(manifest, args.repo)
         if args.repo_path:
             repo = _repo_with_path(repo, Path(args.repo_path).resolve())
-        plans = [release_plan_for_repo(repo, include_registry=args.registry)]
+        if args.component:
+            plans = [
+                release_plan_for_repo(
+                    repo, include_registry=args.registry, component=args.component
+                )
+            ]
+        else:
+            plans = release_plan_rows_for_repo(repo, include_registry=args.registry)
     report = {
         "repos": plans,
         "summary": {
@@ -1979,9 +2013,14 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
         print(stable_report_json(report))
     else:
         for plan in plans:
+            label = (
+                plan["repo"]
+                if plan.get("component", "aio") == "aio"
+                else f"{plan['repo']}:{plan.get('component', 'aio')}"
+            )
             print(
-                "{repo}: release={state} next={next_version} action={next_action}".format(
-                    **plan
+                "{label}: release={state} next={next_version} action={next_action}".format(
+                    label=label, **plan
                 )
             )
     return 1 if report["summary"]["publish_missing"] else 0
@@ -3613,6 +3652,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_status.set_defaults(func=cmd_release_status)
     release_plan = release_sub.add_parser("plan")
     release_plan.add_argument("--repo")
+    release_plan.add_argument("--component")
     release_plan.add_argument("--repo-path")
     release_plan.add_argument("--all", action="store_true")
     release_plan.add_argument("--registry", action="store_true")
@@ -3644,6 +3684,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     readiness = sub.add_parser("release-readiness")
     readiness.add_argument("--repo", required=True)
+    readiness.add_argument("--component", default="aio")
     readiness.add_argument("--catalog-path")
     readiness.add_argument("--policy", default="infra/github/github-policy.yml")
     readiness.add_argument("--format", choices=["text", "json"], default="text")

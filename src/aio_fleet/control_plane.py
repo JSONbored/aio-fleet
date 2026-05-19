@@ -611,6 +611,8 @@ def run_central_trunk(
 
 def _repo_python(repo_path: Path) -> str:
     for candidate in (
+        repo_path / ".venv-local" / "bin" / "python",
+        repo_path / ".venv-local" / "bin" / "python3",
         repo_path / ".venv" / "bin" / "python",
         repo_path / ".venv" / "bin" / "python3",
     ):
@@ -625,7 +627,7 @@ def _install_test_dependencies_step(repo_path: Path) -> Step | None:
         return Step(
             "install-test-deps",
             [
-                sys.executable,
+                _repo_python(repo_path),
                 "-m",
                 "pip",
                 "install",

@@ -8,7 +8,10 @@ from types import SimpleNamespace
 
 from aio_fleet import release_plan as release_plan_module
 from aio_fleet.manifest import RepoConfig, load_manifest
-from aio_fleet.release_plan import release_plan_for_manifest, release_plan_for_repo
+from aio_fleet.release_plan import (
+    release_plan_for_manifest,
+    release_plan_for_repo,
+)
 
 
 def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) -> None:
@@ -36,7 +39,8 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
         "aio_fleet.release_plan._safe_has_aio_changes", lambda _repo: False
     )
     monkeypatch.setattr(
-        "aio_fleet.release_plan._safe_changelog_version", lambda _repo: "0.7.0-aio.1"
+        "aio_fleet.release_plan._safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.0-aio.1",
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan._latest_github_release",
@@ -59,6 +63,9 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
 
     assert plan["state"] == "publish-missing"  # nosec B101
     assert plan["blockers"] == ["missing or unreachable registry tags"]  # nosec B101
+    assert plan["next_action"] == (  # nosec B101
+        "python -m aio_fleet registry publish --repo sure-aio --component aio"
+    )
 
 
 def test_release_plan_classifies_catalog_sync_needed(
@@ -88,7 +95,8 @@ def test_release_plan_classifies_catalog_sync_needed(
         "aio_fleet.release_plan._safe_has_aio_changes", lambda _repo: False
     )
     monkeypatch.setattr(
-        "aio_fleet.release_plan._safe_changelog_version", lambda _repo: "1.14.0-aio.2"
+        "aio_fleet.release_plan._safe_changelog_version",
+        lambda _repo, *, component="aio": "1.14.0-aio.2",
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan._latest_github_release",
@@ -282,13 +290,139 @@ def test_release_plan_ignores_registry_only_component_changes(
     )
     monkeypatch.setattr(release_plan_module, "_safe_next_aio", lambda _repo: "")
     monkeypatch.setattr(
-        release_plan_module, "_safe_changelog_version", lambda _repo: "0.7.0-aio.1"
+        release_plan_module,
+        "_safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.0-aio.1",
     )
 
     plan = release_plan_for_repo(repo)
 
     assert plan["release_due"] is False  # nosec B101
     assert plan["state"] == "current"  # nosec B101
+
+
+def test_release_plan_outputs_component_specific_alpha_publish_action(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "aio": {"image_name": "jsonbored/sure-aio"},
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_policy": "registry_only",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_tag_prefix": "sure-alpha/",
+                    "release_suffix": "aio",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    sha = "c" * 40
+    monkeypatch.setattr(release_plan_module, "_git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {"state": "ok", "tag": "sure-alpha/0.7.1-alpha.7-aio.6"},
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_component_release_tag",
+        lambda _repo, _component: "sure-alpha/0.7.1-alpha.7-aio.6",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_changelog_version",
+        lambda _repo, *, component="aio": (
+            "0.7.1-alpha.7-aio.6" if component == "sure-alpha" else "0.7.0-aio.1"
+        ),
+    )
+
+    def fake_tags(_repo: RepoConfig, *, sha: str, component: str):
+        assert component == "sure-alpha"  # nosec B101
+        return SimpleNamespace(
+            dockerhub=["jsonbored/sure-aio-alpha:latest-alpha"],
+            ghcr=["ghcr.io/jsonbored/sure-aio-alpha:latest-alpha"],
+            all_tags=["jsonbored/sure-aio-alpha:latest-alpha"],
+        )
+
+    monkeypatch.setattr(release_plan_module, "compute_registry_tags", fake_tags)
+    monkeypatch.setattr(
+        release_plan_module,
+        "verify_registry_tags",
+        lambda _tags: ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
+    )
+
+    plan = release_plan_for_repo(
+        repo, include_registry=True, component="sure-alpha"
+    )
+
+    assert plan["repo"] == "sure-aio"  # nosec B101
+    assert plan["component"] == "sure-alpha"  # nosec B101
+    assert plan["state"] == "publish-missing"  # nosec B101
+    assert plan["next_action"] == (  # nosec B101
+        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+    )
+    assert plan["operator_commands"]["registry_verify"] == (  # nosec B101
+        f"python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
+    )
+    assert plan["operator_commands"]["release_publish"] == (  # nosec B101
+        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+    )
+
+
+def test_release_plan_manifest_expands_public_components(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    manifest_path = tmp_path / "fleet.yml"
+    manifest_path.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    publish_profile: upstream-aio-track
+    components:
+      aio:
+        image_name: jsonbored/sure-aio
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        release_policy: registry_only
+""")
+
+    monkeypatch.setattr(
+        release_plan_module,
+        "release_plan_for_repo",
+        lambda repo, **kwargs: {
+            "repo": repo.name,
+            "component": kwargs.get("component", "aio"),
+            "state": "current",
+            "next_action": "none",
+        },
+    )
+
+    rows = release_plan_for_manifest(load_manifest(manifest_path))
+
+    assert [(row["repo"], row["component"]) for row in rows] == [  # nosec B101
+        ("sure-aio", "aio"),
+        ("sure-aio", "sure-alpha"),
+    ]
 
 
 def _git(path: Path, *args: str) -> None:

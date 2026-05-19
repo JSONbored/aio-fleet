@@ -59,10 +59,14 @@ TRACKED_ARTIFACT_PATTERNS = [
 ]
 
 CHANGELOG_HEADING = re.compile(r"^### \d{4}-\d{2}-\d{2}$")
+def _generated_changelog_bullet(changelog: str = "CHANGELOG.md") -> str:
+    return f"- Generated from {changelog} during release preparation. Do not edit manually."
+
+
 GENERATED_CHANGELOG_NOTE = (
     "Generated from CHANGELOG.md during release preparation. Do not edit manually."
 )
-GENERATED_CHANGELOG_BULLET = f"- {GENERATED_CHANGELOG_NOTE}"
+GENERATED_CHANGELOG_BULLET = _generated_changelog_bullet()
 LEGACY_CHANGELOG_MARKERS = (
     "[b]Latest release[/b]",
     "GitHub Releases",
@@ -1116,9 +1120,10 @@ def _generated_changes_failures(
             f"{repo.name}: {source} <Changes> must include a date heading, generated note, and at least one bullet"
         )
         return failures
-    if lines[1] != GENERATED_CHANGELOG_BULLET:
+    expected_bullet = _expected_generated_changelog_bullet(repo, source)
+    if lines[1] != expected_bullet:
         failures.append(
-            f"{repo.name}: {source} <Changes> second line must be '{GENERATED_CHANGELOG_BULLET}'"
+            f"{repo.name}: {source} <Changes> second line must be '{expected_bullet}'"
         )
     invalid_lines = [line for line in lines[1:] if not line.startswith("- ")]
     if invalid_lines:
@@ -1126,6 +1131,30 @@ def _generated_changes_failures(
             f"{repo.name}: {source} <Changes> must use bullet lines after the heading; found {invalid_lines[0]!r}"
         )
     return failures
+
+
+def _expected_generated_changelog_bullet(repo: RepoConfig, source: str) -> str:
+    components = repo.raw.get("components", {})
+    if not isinstance(components, dict):
+        return GENERATED_CHANGELOG_BULLET
+
+    for component in components.values():
+        if not isinstance(component, dict):
+            continue
+        xml_paths = component.get("xml_paths", [])
+        if isinstance(xml_paths, str):
+            component_xml_paths = {xml_paths}
+        elif isinstance(xml_paths, list):
+            component_xml_paths = {str(item) for item in xml_paths}
+        else:
+            component_xml_paths = set()
+        if source not in component_xml_paths:
+            continue
+
+        changelog = str(component.get("release_changelog", "CHANGELOG.md")).strip()
+        return _generated_changelog_bullet(changelog or "CHANGELOG.md")
+
+    return GENERATED_CHANGELOG_BULLET
 
 
 def _pipe_default_failures(repo: RepoConfig, source: str, config: Element) -> list[str]:

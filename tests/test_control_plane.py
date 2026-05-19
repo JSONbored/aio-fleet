@@ -40,6 +40,33 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
     assert steps[2].command[-1].endswith("[app-tests]")  # nosec B101
 
 
+def test_central_check_steps_install_deps_into_repo_test_python(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("sure-aio"), tmp_path)
+    (tmp_path / "tests").mkdir()
+    local_python = tmp_path / ".venv-local" / "bin" / "python"
+    legacy_python = tmp_path / ".venv" / "bin" / "python"
+    local_python.parent.mkdir(parents=True)
+    legacy_python.parent.mkdir(parents=True)
+    local_python.write_text("#!/bin/sh\n")
+    legacy_python.write_text("#!/bin/sh\n")
+    local_python.chmod(0o755)
+    legacy_python.chmod(0o755)
+
+    steps = central_check_steps(repo, event="pull_request", include_trunk=False)
+
+    install = [step for step in steps if step.name == "install-test-deps"][0]
+    integration = [step for step in steps if step.name == "integration-tests"][0]
+    assert install.command[:4] == [  # nosec B101
+        str(local_python),
+        "-m",
+        "pip",
+        "install",
+    ]
+    assert integration.command[0] == str(local_python)  # nosec B101
+
+
 def test_central_check_steps_for_push_include_integration_trunk_and_publish() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
 

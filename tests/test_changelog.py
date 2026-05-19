@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess  # nosec B404
 from pathlib import Path
 
-from aio_fleet.changelog import build_release_plan
+from aio_fleet.changelog import build_release_plan, update_template_changes
 from aio_fleet.manifest import RepoConfig
 
 
@@ -76,3 +76,67 @@ def test_component_release_plan_uses_component_xml_and_suffix(tmp_path: Path) ->
     assert agent.version == "0.151.0-agent.1"  # nosec B101
     assert agent.xml_paths == [tmp_path / "signoz-agent.xml"]  # nosec B101
     assert ".*-agent\\.[0-9]+" in agent.cliff_config  # nosec B101
+
+
+def test_component_release_plan_uses_component_changelog(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=0.7.1-alpha.7\n")
+    (tmp_path / "upstream.toml").write_text("")
+    (tmp_path / "CHANGELOG.md").write_text("# Stable\n")
+    (tmp_path / "CHANGELOG.alpha.md").write_text("# Alpha\n")
+    (tmp_path / "sure-aio-alpha.xml").write_text(
+        "<Container><Changes>old</Changes></Container>"
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "feat(test): initial")
+
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_suffix": "aio",
+                    "xml_paths": ["sure-aio-alpha.xml"],
+                }
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+
+    alpha = build_release_plan(repo, component="sure-alpha")
+
+    assert alpha.changelog_path == tmp_path / "CHANGELOG.alpha.md"  # nosec B101
+
+
+def test_component_xml_changes_note_uses_component_changelog(tmp_path: Path) -> None:
+    changelog = tmp_path / "CHANGELOG.alpha.md"
+    template = tmp_path / "sure-aio-alpha.xml"
+    changelog.write_text(
+        "# Alpha\n\n"
+        "## 0.7.1-alpha.7-aio.6 - 2026-05-18\n\n"
+        "### Alpha Customizations\n\n"
+        "- Add strict alpha import preflight.\n"
+    )
+    template.write_text("<Container><Changes>old</Changes></Container>\n")
+
+    update_template_changes(
+        version="0.7.1-alpha.7-aio.6",
+        changelog=changelog,
+        template=template,
+    )
+
+    text = template.read_text()
+    assert "Generated from CHANGELOG.alpha.md" in text  # nosec B101
+    assert "Generated from CHANGELOG.md" not in text  # nosec B101

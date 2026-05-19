@@ -323,6 +323,45 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
     )
 
 
+def test_template_metadata_validation_allows_component_changelog_note(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio-alpha.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio-alpha</Name>
+  <Repository>jsonbored/example-aio-alpha:latest-alpha</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio-alpha</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example alpha.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Changes>### 2026-05-18
+- Generated from CHANGELOG.alpha.md during release preparation. Do not edit manually.
+- Alpha release.</Changes>
+</Container>
+""")
+    repo = _repo(
+        tmp_path,
+        image_name="jsonbored/example-aio",
+        catalog_assets=[
+            {"source": "example-aio-alpha.xml", "target": "example-aio-alpha.xml"}
+        ],
+        components={
+            "alpha": {
+                "image_name": "jsonbored/example-aio-alpha",
+                "release_changelog": "CHANGELOG.alpha.md",
+                "xml_paths": ["example-aio-alpha.xml"],
+            }
+        },
+    )
+
+    failures = template_metadata_failures(repo, _Manifest())  # type: ignore[arg-type]
+
+    assert not any("second line must be" in failure for failure in failures)  # nosec B101
+
+
 def test_template_metadata_validation_applies_manifest_declared_targets(
     tmp_path: Path,
 ) -> None:
