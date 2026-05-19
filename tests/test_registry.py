@@ -379,6 +379,7 @@ def test_component_release_tag_rejects_other_component_runtime_followup(
 
     assert tags.release_package_tag == ""  # nosec B101
     assert "jsonbored/signoz-aio:v0.124.0-aio.1" not in tags.dockerhub  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0" not in tags.dockerhub  # nosec B101
 
 
 def test_component_release_tag_allows_centralized_cleanup_followup(
@@ -476,6 +477,7 @@ def test_component_release_tag_rejects_cleanup_subject_with_runtime_changes(
 
     assert tags.release_package_tag == ""  # nosec B101
     assert "jsonbored/nanoclaw-aio:v2.0.64-aio.3" not in tags.dockerhub  # nosec B101
+    assert "jsonbored/nanoclaw-aio:v2.0.64" not in tags.dockerhub  # nosec B101
 
 
 def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> None:
@@ -484,7 +486,9 @@ def test_signoz_agent_publish_command_uses_component_context(monkeypatch) -> Non
     monkeypatch.setattr(
         registry, "_read_component_upstream_version", lambda *_: "0.151.0"
     )
-    monkeypatch.setattr(registry, "_release_package_tag", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        registry, "_release_package_tag", lambda *_args, **_kwargs: "0.151.0-agent.1"
+    )
 
     command = registry_publish_command(repo, sha="c" * 40, component="agent")
 
