@@ -23,7 +23,6 @@ SECRET_ENV_KEYS = {
 }
 APP_CODE_SECRET_ENV_KEYS = SECRET_ENV_KEYS - {
     "AIO_FLEET_GHCR_TOKEN",
-    "AIO_FLEET_RELEASE_TOKEN",
 }
 REGISTRY_PUBLISH_ENV_KEYS = {
     "DOCKERHUB_USERNAME",
@@ -161,14 +160,38 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     poll = _step(workflow["jobs"]["poll-checks"], "Run central control check")
 
     assert 'if [[ "${PUBLISH}" == "true" ]]' in manual["run"]  # nosec B101
-    assert "args+=(--publish)" in manual["run"]  # nosec B101
-    assert "AIO_FLEET_RELEASE_TOKEN" in manual["env"]  # nosec B101
+    assert "args+=(--publish --no-github-prereleases)" in manual["run"]  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" not in manual["env"]  # nosec B101
     assert "--report-json" in manual["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
-    assert "args+=(--publish)" in poll["run"]  # nosec B101
-    assert "AIO_FLEET_RELEASE_TOKEN" in poll["env"]  # nosec B101
+    assert "args+=(--publish --no-github-prereleases)" in poll["run"]  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" not in poll["env"]  # nosec B101
     assert "--report-json" in poll["run"]  # nosec B101
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
+
+
+def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    manual_run = _step(workflow["jobs"]["control-plane"], "Run central control check")
+    manual_release = _step(
+        workflow["jobs"]["control-plane"], "Publish GitHub prereleases"
+    )
+    poll_run = _step(workflow["jobs"]["poll-checks"], "Run central control check")
+    poll_release = _step(workflow["jobs"]["poll-checks"], "Publish GitHub prereleases")
+
+    assert "AIO_FLEET_RELEASE_TOKEN" not in manual_run.get("env", {})  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" not in poll_run.get("env", {})  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" in manual_release["env"]  # nosec B101
+    assert "AIO_FLEET_RELEASE_TOKEN" in poll_release["env"]  # nosec B101
+    assert (
+        "steps.central-control-check.outcome == 'success'" in manual_release["if"]
+    )  # nosec B101
+    assert (
+        "steps.poll-central-control-check.outcome == 'success'" in poll_release["if"]
+    )  # nosec B101
+    assert "publish-github-prereleases" in manual_release["run"]  # nosec B101
+    assert "publish-github-prereleases" in poll_release["run"]  # nosec B101
 
 
 def test_publish_alert_steps_use_report_json_and_alert_secret() -> None:
@@ -273,6 +296,8 @@ def test_privileged_completion_restores_trusted_checkout_first() -> None:
             "python -m pip install --force-reinstall ." in restore["run"]
         )  # nosec B101
         assert "python -I -m aio_fleet check run" in complete["run"]  # nosec B101
+        assert "RELEASE_OUTCOME" in complete["env"]  # nosec B101
+        assert "GitHub prerelease publish failed" in complete["run"]  # nosec B101
 
 
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:

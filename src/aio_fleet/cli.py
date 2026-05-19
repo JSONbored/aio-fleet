@@ -982,6 +982,7 @@ def cmd_control_check(args: argparse.Namespace) -> int:
         publish_component_names=args.publish_component,
         include_trunk=not args.no_trunk,
         include_integration=not args.no_integration,
+        include_github_prereleases=not args.no_github_prereleases,
     )
     if args.check_run:
         status = "completed" if args.dry_run else "in_progress"
@@ -1834,6 +1835,52 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_publish_github_prereleases(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    if args.repo_path:
+        repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    components = args.component or publish_components(repo)
+    failures: list[str] = []
+    published = 0
+    for component in components:
+        config = component_config(repo, component)
+        if str(config.get("release_history", "")).strip() != "github_prerelease":
+            continue
+        try:
+            report = _publish_github_prerelease(
+                repo, component=component, dry_run=args.dry_run
+            )
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            failures.append(f"github-prerelease-{component}: exit {code}")
+            continue
+        published += 1
+        print("{repo}:{component}: prerelease={action} {tag}".format(**report))
+    if args.control_report_json and failures:
+        _append_control_report_failures(Path(args.control_report_json), failures)
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    if published == 0:
+        print(f"{repo.name}: no GitHub prereleases to publish")
+    return 0
+
+
+def _append_control_report_failures(path: Path, failures: list[str]) -> None:
+    try:
+        report = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    existing = report.get("failures")
+    if not isinstance(existing, list):
+        existing = []
+    existing.extend(failures)
+    report["failures"] = existing
+    report["status"] = "failure"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True))
+
+
 def cmd_release_publish(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
@@ -1851,7 +1898,6 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         if args.format == "json":
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
-            action = report.get("action", "published")
             print("{repo}:{component}: prerelease={action} {tag}".format(**report))
         return 0
     latest_version = _component_release_version(repo, component=args.component)
@@ -3272,6 +3318,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     control.add_argument("--no-trunk", action="store_true")
     control.add_argument("--no-integration", action="store_true")
+    control.add_argument("--no-github-prereleases", action="store_true")
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
     control.add_argument("--report-json")
@@ -3356,6 +3403,15 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish.add_argument("--report-json")
     release_publish.add_argument("--format", choices=["text", "json"], default="text")
     release_publish.set_defaults(func=cmd_release_publish)
+    release_publish_prereleases = release_sub.add_parser("publish-github-prereleases")
+    release_publish_prereleases.add_argument("--repo", required=True)
+    release_publish_prereleases.add_argument("--component", action="append", default=[])
+    release_publish_prereleases.add_argument("--repo-path")
+    release_publish_prereleases.add_argument("--dry-run", action="store_true")
+    release_publish_prereleases.add_argument("--control-report-json")
+    release_publish_prereleases.set_defaults(
+        func=cmd_release_publish_github_prereleases
+    )
 
     readiness = sub.add_parser("release-readiness")
     readiness.add_argument("--repo", required=True)
