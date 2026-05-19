@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from aio_fleet.changelog import component_config
+from aio_fleet.cleanup import RETIRED_SHARED_PATHS
 from aio_fleet.control_plane import publish_components
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
@@ -92,6 +93,7 @@ def release_plan_for_repo(
     registry_only = str(config.get("release_policy", "")).strip() == "registry_only"
     github_release = _latest_github_release(repo)
     registry_only_component_changes = False
+    ignored_release_changes = _only_ignored_release_changes(repo)
 
     if repo.publish_profile == "template":
         latest_tag = latest_semver_tag(repo.path)
@@ -118,7 +120,12 @@ def release_plan_for_repo(
     if not latest_tag and github_release.get("state") == "ok":
         latest_tag = str(github_release.get("tag", ""))
     target_commit = str(github_release.get("target_commitish", ""))
-    if _looks_like_sha(target_commit) and sha and not registry_only_component_changes:
+    if (
+        _looks_like_sha(target_commit)
+        and sha
+        and not registry_only_component_changes
+        and not ignored_release_changes
+    ):
         release_due = target_commit != sha
 
     changelog_version = _safe_changelog_version(repo, component=component)
@@ -315,11 +322,25 @@ def _safe_next_aio(repo: RepoConfig) -> str:
 
 def _safe_has_aio_changes(repo: RepoConfig) -> bool:
     try:
+        if _only_ignored_release_changes(repo):
+            return False
         if _only_registry_only_component_changes(repo):
             return False
         return has_aio_unreleased_changes(repo.path)
     except (Exception, SystemExit):
         return False
+
+
+def _only_ignored_release_changes(repo: RepoConfig) -> bool:
+    patterns = set(repo.list_value("non_release_paths"))
+    patterns.update(RETIRED_SHARED_PATHS)
+    latest_tag = _safe_latest_aio_tag(repo)
+    if not patterns or not latest_tag:
+        return False
+    changed_paths = _changed_paths_since(repo.path, latest_tag)
+    if not changed_paths:
+        return False
+    return all(_matches_release_pattern(path, patterns) for path in changed_paths)
 
 
 def _only_registry_only_component_changes(repo: RepoConfig) -> bool:
@@ -371,6 +392,16 @@ def _string_list(value: object) -> set[str]:
     if isinstance(value, list):
         return {str(item) for item in value if str(item).strip()}
     return set()
+
+
+def _matches_release_pattern(path: str, patterns: set[str]) -> bool:
+    for pattern in patterns:
+        normalized = pattern.rstrip("/")
+        if path == normalized or path.startswith(f"{normalized}/"):
+            return True
+        if fnmatch.fnmatch(path, pattern):
+            return True
+    return False
 
 
 def _changed_paths_since(repo_path: Path, ref: str) -> list[str]:

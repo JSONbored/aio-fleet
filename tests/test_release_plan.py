@@ -302,6 +302,63 @@ def test_release_plan_ignores_registry_only_component_changes(
     assert plan["state"] == "current"  # nosec B101
 
 
+def test_release_plan_ignores_retired_shared_file_cleanup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "nanoclaw-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=v2.0.64\n")
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.md").write_text("## v2.0.64-aio.1\n")
+    (repo_path / "cliff.toml").write_text("[changelog]\n")
+    (repo_path / ".github" / "ISSUE_TEMPLATE").mkdir(parents=True)
+    (repo_path / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml").write_text(
+        "name: Bug report\n"
+    )
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.0.64-aio.1")
+    _git(repo_path, "tag", "v2.0.64-aio.1")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    (repo_path / "cliff.toml").unlink()
+    (repo_path / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml").unlink()
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(cleanup): remove centralized files")
+    repo = RepoConfig(
+        name="nanoclaw-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "nanoclaw-aio",
+            "image_name": "jsonbored/nanoclaw-aio",
+            "docker_cache_scope": "nanoclaw-aio-image",
+            "pytest_image_tag": "nanoclaw-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {
+            "state": "ok",
+            "tag": "v2.0.64-aio.1",
+            "target_commitish": release_sha,
+        },
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
 def test_release_plan_outputs_component_specific_alpha_publish_action(
     tmp_path: Path, monkeypatch
 ) -> None:
