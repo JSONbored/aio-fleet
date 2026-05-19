@@ -22,15 +22,16 @@ from aio_fleet.cli import (
     cmd_fleet_report_schema,
     cmd_fleet_report_validate,
     cmd_infra_doctor,
-    cmd_registry_delete_dockerhub_tags,
-    cmd_registry_preflight,
     cmd_onboard_repo,
     cmd_poll,
     cmd_promote_rehab,
+    cmd_registry_delete_dockerhub_tags,
+    cmd_registry_preflight,
     cmd_registry_publish,
     cmd_registry_verify,
     cmd_release_plan,
     cmd_release_publish,
+    cmd_release_publish_github_prereleases,
     cmd_release_readiness,
     cmd_security_audit_workflows,
     cmd_trunk_audit,
@@ -590,6 +591,104 @@ repos:
     return manifest, repo_path
 
 
+def _git(repo_path: Path, *args: str) -> str:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", *args],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _write_alpha_prerelease_repo(tmp_path: Path) -> tuple[Path, Path, str]:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        upstream_version_key: UPSTREAM_VERSION
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        github_release_latest: false
+""")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.7\nARG AIO_REVISION=1\n"
+    )
+    (repo_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "UPSTREAM_VERSION"\n'
+    )
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
+        "- alpha release notes\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "initial alpha release metadata")
+    return manifest, repo_path, _git(repo_path, "rev-parse", "HEAD")
+
+
+def _write_control_report(
+    path: Path,
+    *,
+    sha: str,
+    status: str = "success",
+    publish: bool = True,
+    components: list[str] | None = None,
+) -> None:
+    component_names = components or ["sure-alpha"]
+    path.write_text(
+        json.dumps(
+            {
+                "repo": "sure-aio",
+                "sha": sha,
+                "event": "push",
+                "source": "main",
+                "publish": publish,
+                "status": status,
+                "failures": [],
+                "publish_attestation": {
+                    "repo": "sure-aio",
+                    "expected_sha": sha,
+                    "event": "push",
+                    "source": "main",
+                    "control_check_result": status,
+                    "publish_requested": publish,
+                    "publish_eligible": publish and status == "success",
+                    "publish_components": component_names,
+                },
+                "components": [
+                    {"component": component_name} for component_name in component_names
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
 def test_release_prepare_dry_run_prepends_changelog_section(
     tmp_path: Path, capsys
 ) -> None:
@@ -918,6 +1017,215 @@ repos:
     assert "registry package tag 0.7.1-alpha.7-aio.2" in captured.err  # nosec B101
 
 
+def test_prerelease_publish_refuses_mutated_checkout_after_control_report(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.7-aio.2 - 2026-05-18\n\n"
+        "- mutated release notes\n"
+    )
+    _git(repo_path, "add", "CHANGELOG.alpha.md")
+    _git(repo_path, "commit", "-m", "mutate release metadata")
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(report),
+            expected_sha=None,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    captured = capsys.readouterr()
+    assert "checkout-mismatch: app checkout HEAD" in captured.err  # nosec B101
+    assert f"does not match expected {expected_sha}" in captured.err  # nosec B101
+
+
+def test_prerelease_publish_refuses_dirty_checkout_before_metadata_read(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    (repo_path / "CHANGELOG.alpha.md").write_text("uncommitted release drift\n")
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(report),
+            expected_sha=None,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert (
+        "checkout-mismatch: app checkout is dirty before release publish"
+        in capsys.readouterr().err
+    )  # nosec B101
+
+
+def test_prerelease_publish_requires_control_report_or_expected_sha(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, repo_path, _expected_sha = _write_alpha_prerelease_repo(tmp_path)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(tmp_path / "missing-control-report.json"),
+            expected_sha=None,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    captured = capsys.readouterr()
+    assert "unable to read control report" in captured.err  # nosec B101
+    assert "expected SHA is required" in captured.err  # nosec B101
+
+
+def test_prerelease_publish_allows_reset_checkout_with_matching_report(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.7-aio.2 - 2026-05-18\n\n"
+        "- transient release drift\n"
+    )
+    _git(repo_path, "add", "CHANGELOG.alpha.md")
+    _git(repo_path, "commit", "-m", "transient release drift")
+    _git(repo_path, "reset", "--hard", expected_sha)
+    _git(repo_path, "clean", "-ffd")
+
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(report),
+            expected_sha=None,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "gh release create sure-alpha/0.7.1-alpha.7-aio.1" in output  # nosec B101
+    assert f"--target {expected_sha}" in output  # nosec B101
+
+
+def test_prerelease_publish_skips_matching_github_prerelease(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            assert env["GH_TOKEN"] == "release-token"  # nosec B101
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "targetCommitish": expected_sha,
+                        "name": "0.7.1-alpha.7-aio.1",
+                        "body": "- alpha release notes",
+                        "isPrerelease": True,
+                        "isLatest": False,
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=expected_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert (
+        "sure-aio:sure-alpha: prerelease=already-present "
+        "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
+    )  # nosec B101
+
+
+def test_prerelease_publish_preflights_release_credentials(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    for key in (
+        "AIO_FLEET_RELEASE_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=expected_sha,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    captured = capsys.readouterr()
+    assert "credential-gap: missing" in captured.err  # nosec B101
+
+
 def test_latest_main_ci_requires_external_id_bound_check(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1128,6 +1436,7 @@ def test_registry_publish_verifies_with_repo_path(
             sha="a" * 40,
             component="aio",
             dry_run=False,
+            force=True,
         )
     )
 
@@ -1145,7 +1454,7 @@ def test_registry_publish_verifies_with_repo_path(
     assert "preflight" not in captured.err  # nosec B101
 
 
-def test_registry_publish_rebuilds_when_tags_are_current(
+def test_registry_publish_skips_when_tags_are_current(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
@@ -1153,17 +1462,13 @@ def test_registry_publish_rebuilds_when_tags_are_current(
     monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
     monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
 
-    seen: dict[str, object] = {}
-
-    def fake_run(
-        command: list[str], cwd: Path | None = None, env=None
-    ) -> SimpleNamespace:
-        seen["publish_command"] = command
-        seen["publish_cwd"] = cwd
-        seen["publish_env"] = env
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(cli, "_run_streaming", fake_run)
+    monkeypatch.setattr(
+        cli,
+        "_run_streaming",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("publish should be skipped")
+        ),
+    )
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, **_kwargs: [])
 
     result = cmd_registry_publish(
@@ -1174,13 +1479,13 @@ def test_registry_publish_rebuilds_when_tags_are_current(
             sha="a" * 40,
             component="aio",
             dry_run=False,
+            force=False,
         )
     )
 
     assert result == 0  # nosec B101
-    assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
     assert (
-        "example-aio:aio: registry=publishing" in capsys.readouterr().out
+        "example-aio: registry=already-present" in capsys.readouterr().out
     )  # nosec B101
 
 
@@ -1229,6 +1534,7 @@ repos:
             sha="a" * 40,
             component="sure-alpha",
             dry_run=False,
+            force=True,
         )
     )
 
@@ -1261,6 +1567,7 @@ repos:
             sha="a" * 40,
             component="aio",
             dry_run=False,
+            force=False,
         )
     )
 
@@ -1522,6 +1829,7 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
             sha="a" * 40,
             component="aio",
             dry_run=False,
+            force=True,
         )
     )
 

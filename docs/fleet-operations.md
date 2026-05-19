@@ -146,6 +146,12 @@ control-plane workflow:
 python -m aio_fleet registry preflight --mode publish --format json
 ```
 
+The central control-check runs this preflight before install/test/build work
+when publish is requested. Registry publishing is idempotent by default: if all
+expected Docker Hub and GHCR tags already verify, `registry publish` reports
+`registry=already-present` and exits without pushing. Use `--force` only when a
+deliberate rebuild is needed.
+
 For Docker Hub tag cleanup, use a delete-scoped token and verify it before
 attempting cleanup:
 
@@ -177,6 +183,12 @@ publish control-check:
 ```bash
 python -m aio_fleet control-check --repo sure-aio --sha <release-sha> --event push --publish --publish-component sure-alpha
 ```
+
+GitHub prerelease publishing must consume the matching control report or an
+explicit `--expected-sha`. It refuses to read release metadata if the app
+checkout is dirty or if `HEAD` differs from the attested SHA, even if the
+workflow reset step already ran. This keeps app-owned test commands from
+mutating release notes, tags, or targets before the privileged token is used.
 
 Component template contracts belong in `fleet.yml` under the component
 `validation` block. Use that for lane-specific XML rules such as alpha beta

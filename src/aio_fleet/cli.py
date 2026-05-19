@@ -4,6 +4,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess  # nosec B404
@@ -107,6 +108,8 @@ from aio_fleet.workflow_jobs import (
     upstream_monitor_checkouts,
 )
 from aio_fleet.workflow_security import audit_workflows
+
+FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def _run(
@@ -1208,9 +1211,9 @@ def cmd_registry_preflight(args: argparse.Namespace) -> int:
         )
 
     report = {
-        "status": "failed"
-        if any(check["status"] == "failed" for check in checks)
-        else "ok",
+        "status": (
+            "failed" if any(check["status"] == "failed" for check in checks) else "ok"
+        ),
         "checks": checks,
     }
     if args.format == "json":
@@ -1238,9 +1241,11 @@ def _registry_publish_preflight_checks(*, live_auth: bool) -> list[dict[str, str
         _preflight_check(
             "publish-credentials",
             "failed" if missing else "ok",
-            "missing " + ", ".join(missing)
-            if missing
-            else "Docker Hub and GHCR publish credentials are present",
+            (
+                "missing " + ", ".join(missing)
+                if missing
+                else "Docker Hub and GHCR publish credentials are present"
+            ),
         )
     ]
     if missing:
@@ -1301,12 +1306,14 @@ def _registry_cleanup_preflight_checks(
         _preflight_check(
             "cleanup-credentials",
             "failed" if missing else "ok",
-            "missing " + ", ".join(missing)
-            if missing
-            else (
-                "Docker Hub delete credentials are present"
-                if delete_token
-                else "using DOCKERHUB_TOKEN fallback for delete credentials"
+            (
+                "missing " + ", ".join(missing)
+                if missing
+                else (
+                    "Docker Hub delete credentials are present"
+                    if delete_token
+                    else "using DOCKERHUB_TOKEN fallback for delete credentials"
+                )
             ),
         )
     ]
@@ -1383,6 +1390,18 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
         print(" ".join(shlex.quote(part) for part in command))
         return 0
     tags = compute_registry_tags(repo, sha=sha, component=args.component)
+    if not getattr(args, "force", False):
+        existing_failures = verify_registry_tags(tags.all_tags)
+        if not existing_failures:
+            label = (
+                repo.name
+                if args.component == "aio"
+                else f"{repo.name}:{args.component}"
+            )
+            print(f"{label}: registry=already-present")
+            for tag in [*tags.dockerhub, *tags.ghcr]:
+                print(f"- {tag}")
+            return 0
     print(f"{repo.name}:{args.component}: registry=publishing", flush=True)
     try:
         with _registry_publish_environment(repo) as publish_env:
@@ -1933,7 +1952,9 @@ def _image_status(repo: RepoConfig, *, component: str = "aio") -> str:
     docker = shutil.which("docker")
     if docker is None:
         return "unknown:no-docker"
-    image_name = str(component_config(repo, component).get("image_name", repo.image_name))
+    image_name = str(
+        component_config(repo, component).get("image_name", repo.image_name)
+    )
     floating_tags = component_config(repo, component).get("floating_tags", ["latest"])
     tag = (
         str(floating_tags[0])
@@ -2082,6 +2103,19 @@ def cmd_release_publish_github_prereleases(args: argparse.Namespace) -> int:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
     components = args.component or publish_components(repo)
     failures: list[str] = []
+    guard_failures = _github_prerelease_publish_guard_failures(
+        repo,
+        components=components,
+        expected_sha=str(getattr(args, "expected_sha", "") or ""),
+        control_report_json=str(getattr(args, "control_report_json", "") or ""),
+        require_token=not args.dry_run,
+    )
+    if guard_failures:
+        failures.extend(guard_failures)
+        if args.control_report_json:
+            _append_control_report_failures(Path(args.control_report_json), failures)
+        print("\n".join(failures), file=sys.stderr)
+        return 1
     published = 0
     for component in components:
         config = component_config(repo, component)
@@ -2117,8 +2151,115 @@ def _append_control_report_failures(path: Path, failures: list[str]) -> None:
         existing = []
     existing.extend(failures)
     report["failures"] = existing
+    report["failure_classes"] = _failure_classes(existing)
     report["status"] = "failure"
     path.write_text(json.dumps(report, indent=2, sort_keys=True))
+
+
+def _github_prerelease_publish_guard_failures(
+    repo: RepoConfig,
+    *,
+    components: list[str],
+    expected_sha: str,
+    control_report_json: str,
+    require_token: bool,
+) -> list[str]:
+    failures: list[str] = []
+    report: dict[str, object] = {}
+    if control_report_json:
+        try:
+            report = json.loads(Path(control_report_json).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            failures.append(
+                f"checkout-mismatch: unable to read control report before prerelease publish: {exc}"
+            )
+        else:
+            failures.extend(
+                _control_report_publish_guard_failures(report, repo.name, components)
+            )
+            expected_sha = expected_sha or _control_report_expected_sha(report)
+    if not expected_sha:
+        failures.append(
+            "checkout-mismatch: expected SHA is required before prerelease publish"
+        )
+    elif not FULL_SHA_RE.fullmatch(expected_sha):
+        failures.append(
+            f"checkout-mismatch: expected SHA must be a full commit SHA, got {expected_sha}"
+        )
+
+    head = _git_head(repo.path)
+    if expected_sha and FULL_SHA_RE.fullmatch(expected_sha) and head != expected_sha:
+        failures.append(
+            f"checkout-mismatch: app checkout HEAD {head or '<unknown>'} does not match expected {expected_sha}"
+        )
+
+    status = _run(["git", "status", "--short"], cwd=repo.path)
+    if status.returncode != 0:
+        detail = (status.stderr or status.stdout).strip()
+        failures.append(
+            f"checkout-mismatch: unable to inspect app checkout cleanliness: {detail or 'git status failed'}"
+        )
+    elif status.stdout.strip():
+        failures.append(
+            "checkout-mismatch: app checkout is dirty before release publish"
+        )
+
+    if require_token and _github_cli_env() is None:
+        failures.append(
+            "credential-gap: missing AIO_FLEET_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN for GitHub prerelease publish"
+        )
+    return failures
+
+
+def _control_report_publish_guard_failures(
+    report: dict[str, object], expected_repo: str, components: list[str]
+) -> list[str]:
+    failures: list[str] = []
+    report_repo = str(report.get("repo", "") or "").strip()
+    if report_repo != expected_repo:
+        failures.append(
+            f"control-report: repo is {report_repo or '<missing>'}, expected {expected_repo}"
+        )
+    if report.get("status") != "success":
+        failures.append(
+            f"control-report: central control-check status is {report.get('status', '<missing>')}"
+        )
+    if report.get("publish") is not True:
+        failures.append("control-report: publish was not authorized by control-check")
+
+    attested_components = _control_report_publish_components(report)
+    missing = sorted(set(components) - attested_components)
+    if missing:
+        failures.append(
+            "control-report: component(s) not attested for publish: "
+            + ", ".join(missing)
+        )
+    return failures
+
+
+def _control_report_expected_sha(report: dict[str, object]) -> str:
+    attestation = report.get("publish_attestation", {})
+    if isinstance(attestation, dict):
+        expected = str(attestation.get("expected_sha", "") or "").strip()
+        if expected:
+            return expected
+    return str(report.get("sha", "") or "").strip()
+
+
+def _control_report_publish_components(report: dict[str, object]) -> set[str]:
+    attestation = report.get("publish_attestation", {})
+    if isinstance(attestation, dict):
+        components = attestation.get("publish_components", [])
+        if isinstance(components, list):
+            return {str(component) for component in components if str(component)}
+    components = report.get("components", [])
+    if isinstance(components, list):
+        return {
+            str(component.get("component", ""))
+            for component in components
+            if isinstance(component, dict) and str(component.get("component", ""))
+        }
+    return set()
 
 
 def cmd_release_publish(args: argparse.Namespace) -> int:
@@ -2250,8 +2391,44 @@ def _control_check_report(
         "publish": publish,
         "status": "failure" if failures else "success",
         "failures": failures,
+        "failure_classes": _failure_classes(failures),
+        "publish_attestation": {
+            "repo": repo.name,
+            "expected_sha": sha,
+            "event": event,
+            "source": source,
+            "control_check_result": "failure" if failures else "success",
+            "publish_requested": publish,
+            "publish_eligible": publish and not failures,
+            "publish_components": selected_components,
+        },
         "components": components,
     }
+
+
+def _failure_classes(failures: list[object]) -> list[str]:
+    classes: set[str] = set()
+    for failure in failures:
+        text = str(failure).lower()
+        if any(token in text for token in ["credential", "token", "dockerhub", "ghcr"]):
+            classes.add("credential-gap")
+        if any(token in text for token in ["registry", "missing tag", "unreachable"]):
+            classes.add("registry-missing")
+        if any(
+            token in text
+            for token in [
+                "prerelease",
+                "release changelog version",
+                "release_package_tag",
+                "retarget",
+            ]
+        ):
+            classes.add("prerelease-mismatch")
+        if any(token in text for token in ["checkout", "expected sha", "dirty"]):
+            classes.add("checkout-mismatch")
+        if "catalog" in text:
+            classes.add("catalog-sync-needed")
+    return sorted(classes)
 
 
 def publish_components_for_report(repo: RepoConfig) -> list[str]:
@@ -2304,16 +2481,15 @@ def _publish_github_prerelease(
             "--repo",
             repo.github_repo,
             "--json",
-            "targetCommitish",
-            "--jq",
-            ".targetCommitish",
+            "targetCommitish,name,body,isPrerelease,isLatest",
         ],
         cwd=repo.path,
         env=env,
     )
     action = "updated" if view.returncode == 0 else "created"
     if action == "updated":
-        existing_target = view.stdout.strip()
+        existing = _github_release_view_data(view.stdout)
+        existing_target = str(existing.get("targetCommitish", "") or "").strip()
         if existing_target and existing_target != target:
             print(
                 f"{repo.name}:{component}: existing prerelease {tag} targets "
@@ -2323,6 +2499,23 @@ def _publish_github_prerelease(
                 file=sys.stderr,
             )
             raise SystemExit(1)
+        if _github_prerelease_matches(
+            existing,
+            target=target,
+            title=title,
+            notes=notes,
+        ):
+            return {
+                "repo": repo.name,
+                "component": component,
+                "status": "success",
+                "action": "already-present",
+                "tag": tag,
+                "version": version,
+                "target": target,
+                "url": _github_release_url(repo, tag),
+                "release_package_tag": release_package_tag,
+            }
     command = [
         "gh",
         "release",
@@ -2373,10 +2566,33 @@ def _publish_github_prerelease(
     }
 
 
+def _github_release_view_data(output: str) -> dict[str, object]:
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return {"targetCommitish": output.strip()}
+    return data if isinstance(data, dict) else {}
+
+
+def _github_prerelease_matches(
+    release: dict[str, object], *, target: str, title: str, notes: str
+) -> bool:
+    if str(release.get("targetCommitish", "") or "").strip() != target:
+        return False
+    if str(release.get("name", "") or "").strip() != title:
+        return False
+    if str(release.get("body", "") or "").strip() != notes.strip():
+        return False
+    if release.get("isPrerelease") is not True:
+        return False
+    if release.get("isLatest") is True:
+        return False
+    return True
+
+
 def _github_cli_env() -> dict[str, str] | None:
     token = (
         os.environ.get("AIO_FLEET_RELEASE_TOKEN")
-        or os.environ.get("AIO_FLEET_CHECK_TOKEN")
         or os.environ.get("GH_TOKEN")
         or os.environ.get("GITHUB_TOKEN")
     )
@@ -3615,6 +3831,11 @@ def build_parser() -> argparse.ArgumentParser:
     registry_publish.add_argument("--sha")
     registry_publish.add_argument("--component", default="aio")
     registry_publish.add_argument("--dry-run", action="store_true")
+    registry_publish.add_argument(
+        "--force",
+        action="store_true",
+        help="Push even when all expected registry tags already verify.",
+    )
     registry_publish.set_defaults(func=cmd_registry_publish)
     registry_delete = registry_sub.add_parser("delete-dockerhub-tags")
     registry_delete.add_argument("--image", required=True)
@@ -3682,6 +3903,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish_prereleases.add_argument("--repo-path")
     release_publish_prereleases.add_argument("--dry-run", action="store_true")
     release_publish_prereleases.add_argument("--control-report-json")
+    release_publish_prereleases.add_argument("--expected-sha")
     release_publish_prereleases.set_defaults(
         func=cmd_release_publish_github_prereleases
     )

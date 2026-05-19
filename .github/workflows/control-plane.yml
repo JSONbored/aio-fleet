@@ -76,7 +76,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repo || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.mode || 'event' }}-${{ inputs.repo || github.ref }}-${{ inputs.sha || github.run_id }}-${{ inputs.publish_component || 'all' }}
   cancel-in-progress: false
 
 jobs:
@@ -441,6 +441,7 @@ jobs:
         continue-on-error: true
         env:
           TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
           PUBLISH_COMPONENT: ${{ inputs.publish_component }}
           AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
           CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
@@ -451,6 +452,7 @@ jobs:
             publish-github-prereleases
             --repo "${TARGET_REPO}"
             --repo-path app-repo
+            --expected-sha "${TARGET_SHA}"
             --control-report-json "${CONTROL_REPORT}"
           )
           if [[ -n "${PUBLISH_COMPONENT}" ]]; then
@@ -538,6 +540,9 @@ jobs:
     needs: control-plane
     if: ${{ needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_targets == 'true' }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: aio-fleet-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}-${{ join(matrix.target.publish_components, '-') || 'all' }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -695,6 +700,7 @@ jobs:
         continue-on-error: true
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
           AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
@@ -705,6 +711,7 @@ jobs:
             publish-github-prereleases
             --repo "${TARGET_REPO}"
             --repo-path app-repo
+            --expected-sha "${TARGET_SHA}"
             --control-report-json "${CONTROL_REPORT}"
           )
           while IFS= read -r component; do

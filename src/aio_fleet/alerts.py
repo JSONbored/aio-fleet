@@ -263,6 +263,7 @@ def summarize_report(
             summary = f"Publish failed for {repo}"
             details: dict[str, Any] = {"failures": failures, "components": components}
             fields = _publish_failure_fields(components)
+            fields.extend(_failure_class_fields(report))
             if failures:
                 fields.append({"name": "Next action", "value": failures[0]})
             if fields:
@@ -511,8 +512,26 @@ def _control_check_details(
         step = failures[0].split(":", 1)[0]
         if step:
             fields.append({"name": "Failed step", "value": step, "inline": True})
+        fields.extend(_failure_class_fields(report))
         fields.append({"name": "Next action", "value": failures[0]})
     return {"failures": failures, "discord_fields": fields}
+
+
+def _failure_class_fields(report: dict[str, Any]) -> list[dict[str, Any]]:
+    classes = [
+        str(item).strip()
+        for item in report.get("failure_classes", [])
+        if str(item).strip()
+    ]
+    if not classes:
+        return []
+    return [
+        {
+            "name": "Failure class",
+            "value": ", ".join(classes),
+            "inline": True,
+        }
+    ]
 
 
 def _registry_failure_annotations(failures: list[dict[str, str]]) -> list[str]:
