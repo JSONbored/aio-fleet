@@ -46,6 +46,7 @@ from aio_fleet.control_plane import (
     run_central_trunk,
     run_steps,
 )
+from aio_fleet.doctor import fleet_doctor_report, manifest_shape_checks
 from aio_fleet.fleet_dashboard import (
     dashboard_issue_commands,
     dashboard_report,
@@ -196,33 +197,86 @@ def _app_manifest_failures(repo: RepoConfig) -> list[str]:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
-    failures: list[str] = []
-    for name, repo in manifest.repos.items():
-        if not repo.path.exists():
-            failures.append(f"{name}: repo path missing: {repo.path}")
-            continue
-        for required in [
-            "Dockerfile",
-            "README.md",
-            "pyproject.toml",
-            APP_MANIFEST_NAME,
-        ]:
-            if not (repo.path / required).exists():
-                failures.append(f"{name}: missing {required}")
-        failures.extend(_app_manifest_failures(repo))
-        failures.extend(catalog_asset_failures(repo))
-        failures.extend(tracked_artifact_failures(repo.path))
-    if args.github:
-        failures.extend(
-            validate_github_policy(
-                Path(args.policy),
-                check_secrets=args.check_secrets,
-            )
+    checks = fleet_doctor_report(
+        manifest,
+        repos=args.repo,
+        include_local=not args.no_local,
+        include_app_checks=args.app_checks,
+        include_publish=args.publish,
+        include_cleanup=args.cleanup,
+        include_alerts=args.alerts,
+        live_auth=args.live_auth,
+        check_delete_scope=args.check_delete_scope,
+        require_alerts=args.require_alerts,
+    )["checks"]
+    if not args.no_manifest_checks:
+        selected_repos = set(args.repo or [])
+        checks.extend(
+            check
+            for check in manifest_shape_checks(manifest)
+            if not selected_repos or check.get("repo") in selected_repos
         )
-    if failures:
-        print("\n".join(failures), file=sys.stderr)
+        for name, repo in manifest.repos.items():
+            if selected_repos and name not in selected_repos:
+                continue
+            if not repo.path.exists():
+                continue
+            for failure in [
+                *_app_manifest_failures(repo),
+                *catalog_asset_failures(repo),
+                *tracked_artifact_failures(repo.path),
+            ]:
+                checks.append(
+                    {
+                        "name": "manifest-validation",
+                        "status": "failed",
+                        "class": "manifest-drift",
+                        "repo": name,
+                        "detail": failure,
+                    }
+                )
+    if args.github:
+        for failure in validate_github_policy(
+            Path(args.policy),
+            check_secrets=args.check_secrets,
+        ):
+            checks.append(
+                {
+                    "name": "github-policy",
+                    "status": "failed",
+                    "class": "github-policy",
+                    "detail": failure,
+                }
+            )
+    failed = [check for check in checks if check["status"] == "failed"]
+    warnings = [check for check in checks if check["status"] == "warning"]
+    report = {
+        "status": "failed" if failed else "ok",
+        "failure_classes": sorted(
+            {str(check["class"]) for check in failed if check.get("class")}
+        ),
+        "checks": checks,
+        "summary": {
+            "checks": len(checks),
+            "failed": len(failed),
+            "warnings": len(warnings),
+        },
+    }
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for check in checks:
+            print(
+                "{name}: {status}: {detail}".format(
+                    name=check["name"],
+                    status=check["status"],
+                    detail=check["detail"],
+                )
+            )
+    if failed:
         return 1
-    print(f"fleet manifest ok: {len(manifest.repos)} repos")
+    if args.format != "json":
+        print(f"fleet doctor ok: {len(manifest.repos)} repos")
     return 0
 
 
@@ -1048,6 +1102,36 @@ def cmd_control_check(args: argparse.Namespace) -> int:
         print("\n".join(failures), file=sys.stderr)
         return 1
     return 0
+
+
+def cmd_workflow_control_report(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    repo = _repo_for_identifier(manifest, args.repo)
+    failures = list(args.failure or [])
+    report = _control_check_report(
+        repo,
+        sha=args.sha,
+        event=args.event,
+        source=args.source,
+        publish=args.publish,
+        publish_components=args.publish_component,
+        failures=failures,
+    )
+    if args.status:
+        report["status"] = args.status
+    if args.output:
+        Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True))
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(
+            "{repo}: control-report={status} classes={classes}".format(
+                repo=repo.name,
+                status=report["status"],
+                classes=",".join(report.get("failure_classes", [])) or "none",
+            )
+        )
+    return 1 if report.get("status") == "failure" else 0
 
 
 def cmd_catalog_audit(args: argparse.Namespace) -> int:
@@ -2051,6 +2135,157 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
     return 1 if report["summary"]["publish_missing"] else 0
 
 
+def cmd_release_reconcile(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    rows = _release_reconcile_rows(args, manifest)
+    actions = _release_reconcile_actions(rows)
+    if args.create_upstream_prs:
+        actions.extend(_release_reconcile_upstream_actions(args, manifest))
+    report = {
+        "status": "actionable" if actions else "ok",
+        "actions": actions,
+        "summary": {
+            "actions": len(actions),
+            "publish": len(
+                [action for action in actions if action["action"] == "publish"]
+            ),
+            "source_pr": len(
+                [action for action in actions if action["action"] == "source-pr"]
+            ),
+            "catalog_sync": len(
+                [action for action in actions if action["action"] == "catalog-sync"]
+            ),
+        },
+    }
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        if not actions:
+            print("release queue: no actionable work")
+        for action in actions:
+            label = action["repo"]
+            if action.get("component") and action["component"] != "aio":
+                label = f"{label}:{action['component']}"
+            print(f"{label}: {action['action']} {action.get('command', '')}".strip())
+    return 0
+
+
+def _release_reconcile_rows(
+    args: argparse.Namespace, manifest: FleetManifest
+) -> list[dict[str, object]]:
+    if args.input:
+        payload = json.loads(Path(args.input).read_text())
+        state = _report_state_from_payload(payload)
+        if isinstance(state.get("repos"), list):
+            rows = [row for row in state["repos"] if isinstance(row, dict)]
+        elif isinstance(state.get("releases"), list):
+            rows = [row for row in state["releases"] if isinstance(row, dict)]
+        else:
+            raise ManifestError(
+                "release reconcile input must contain repos or releases"
+            )
+    elif args.all:
+        rows = release_plan_for_manifest(manifest, include_registry=args.registry)
+    else:
+        if not args.repo:
+            raise ManifestError("--repo is required unless --all or --input is used")
+        repo = _repo_for_identifier(manifest, args.repo)
+        if args.repo_path:
+            repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+        rows = (
+            [
+                release_plan_for_repo(
+                    repo,
+                    include_registry=args.registry,
+                    component=args.component,
+                )
+            ]
+            if args.component
+            else release_plan_rows_for_repo(repo, include_registry=args.registry)
+        )
+    if args.repo:
+        rows = [row for row in rows if row.get("repo") == args.repo]
+    if args.component:
+        rows = [row for row in rows if row.get("component", "aio") == args.component]
+    return rows
+
+
+def _release_reconcile_actions(
+    rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    for row in rows:
+        state = str(row.get("state", ""))
+        repo = str(row.get("repo", ""))
+        component = str(row.get("component", "aio") or "aio")
+        command = str(row.get("next_action", "") or "")
+        if not repo or state in {"", "current", "private-skipped", "watch"}:
+            continue
+        if state == "publish-missing":
+            actions.append(
+                {
+                    "repo": repo,
+                    "component": component,
+                    "state": state,
+                    "action": "publish",
+                    "command": command,
+                }
+            )
+        elif state == "catalog-sync-needed":
+            actions.append(
+                {
+                    "repo": repo,
+                    "component": component,
+                    "state": state,
+                    "action": "catalog-sync",
+                    "command": command,
+                }
+            )
+        elif state == "release-due":
+            actions.append(
+                {
+                    "repo": repo,
+                    "component": component,
+                    "state": state,
+                    "action": "source-pr",
+                    "command": command,
+                }
+            )
+    return actions
+
+
+def _release_reconcile_upstream_actions(
+    args: argparse.Namespace, manifest: FleetManifest
+) -> list[dict[str, object]]:
+    selected = [args.repo] if args.repo else list(manifest.repos.keys())
+    actions: list[dict[str, object]] = []
+    for name in selected:
+        repo = _repo_for_identifier(manifest, name)
+        if repo.publish_profile == "template":
+            continue
+        results = monitor_repo(repo, write=args.write and not args.dry_run)
+        writeable_updates = [
+            result
+            for result in results
+            if result.updates_available
+            and result.strategy == "pr"
+            and not getattr(result, "blocked", False)
+        ]
+        if not writeable_updates:
+            continue
+        if args.write and not args.dry_run:
+            _run_generator_for_write(repo)
+        action = create_or_update_upstream_pr(
+            repo,
+            results,
+            dry_run=args.dry_run or not args.write,
+            post_check=args.post_check,
+        )
+        action["action"] = "source-pr"
+        actions.append(action)
+    return actions
+
+
 def cmd_release_prepare(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
@@ -2412,6 +2647,8 @@ def _failure_classes(failures: list[object]) -> list[str]:
         text = str(failure).lower()
         if any(token in text for token in ["credential", "token", "dockerhub", "ghcr"]):
             classes.add("credential-gap")
+        if "delete-scope" in text:
+            classes.add("delete-scope-gap")
         if any(token in text for token in ["registry", "missing tag", "unreachable"]):
             classes.add("registry-missing")
         if any(
@@ -2426,6 +2663,16 @@ def _failure_classes(failures: list[object]) -> list[str]:
             classes.add("prerelease-mismatch")
         if any(token in text for token in ["checkout", "expected sha", "dirty"]):
             classes.add("checkout-mismatch")
+        if any(
+            token in text
+            for token in [
+                "check-run",
+                "checks: write",
+                "app-check-permission",
+                "bootstrap",
+            ]
+        ):
+            classes.add("app-check-permission")
         if "catalog" in text:
             classes.add("catalog-sync-needed")
     return sorted(classes)
@@ -3534,9 +3781,20 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     doctor = sub.add_parser("doctor")
+    doctor.add_argument("--repo", action="append")
     doctor.add_argument("--github", action="store_true")
     doctor.add_argument("--policy", default="infra/github/github-policy.yml")
     doctor.add_argument("--check-secrets", action="store_true")
+    doctor.add_argument("--no-local", action="store_true")
+    doctor.add_argument("--no-manifest-checks", action="store_true")
+    doctor.add_argument("--app-checks", action="store_true")
+    doctor.add_argument("--publish", action="store_true")
+    doctor.add_argument("--cleanup", action="store_true")
+    doctor.add_argument("--alerts", action="store_true")
+    doctor.add_argument("--require-alerts", action="store_true")
+    doctor.add_argument("--live-auth", action="store_true")
+    doctor.add_argument("--check-delete-scope", action="store_true")
+    doctor.add_argument("--format", choices=["text", "json"], default="text")
     doctor.set_defaults(func=cmd_doctor)
     status = sub.add_parser("status")
     status.add_argument("--github", action="store_true")
@@ -3883,6 +4141,19 @@ def build_parser() -> argparse.ArgumentParser:
     release_plan.add_argument("--registry", action="store_true")
     release_plan.add_argument("--format", choices=["text", "json"], default="text")
     release_plan.set_defaults(func=cmd_release_plan)
+    release_reconcile = release_sub.add_parser("reconcile")
+    release_reconcile.add_argument("--input")
+    release_reconcile.add_argument("--repo")
+    release_reconcile.add_argument("--component")
+    release_reconcile.add_argument("--repo-path")
+    release_reconcile.add_argument("--all", action="store_true")
+    release_reconcile.add_argument("--registry", action="store_true")
+    release_reconcile.add_argument("--create-upstream-prs", action="store_true")
+    release_reconcile.add_argument("--write", action="store_true")
+    release_reconcile.add_argument("--dry-run", action="store_true")
+    release_reconcile.add_argument("--post-check", action="store_true")
+    release_reconcile.add_argument("--format", choices=["text", "json"], default="json")
+    release_reconcile.set_defaults(func=cmd_release_reconcile)
     release_prepare = release_sub.add_parser("prepare")
     release_prepare.add_argument("--repo", required=True)
     release_prepare.add_argument("--component", default="aio")
@@ -4058,6 +4329,31 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_registry.add_argument("--token")
     workflow_registry.add_argument("--github-output")
     workflow_registry.set_defaults(func=cmd_workflow_registry_audit)
+    workflow_control_report = workflow_sub.add_parser("control-report")
+    workflow_control_report.add_argument("--repo", required=True)
+    workflow_control_report.add_argument("--sha", required=True)
+    workflow_control_report.add_argument(
+        "--event",
+        required=True,
+        choices=["pull_request", "push", "release", "workflow_dispatch"],
+    )
+    workflow_control_report.add_argument("--source", default="")
+    workflow_control_report.add_argument("--publish", action="store_true")
+    workflow_control_report.add_argument(
+        "--publish-component",
+        action="append",
+        default=[],
+        dest="publish_component",
+    )
+    workflow_control_report.add_argument("--failure", action="append", default=[])
+    workflow_control_report.add_argument(
+        "--status", choices=["success", "failure"], default=""
+    )
+    workflow_control_report.add_argument("--output")
+    workflow_control_report.add_argument(
+        "--format", choices=["text", "json"], default="text"
+    )
+    workflow_control_report.set_defaults(func=cmd_workflow_control_report)
 
     trunk = sub.add_parser("trunk")
     trunk_sub = trunk.add_subparsers(dest="trunk_command", required=True)

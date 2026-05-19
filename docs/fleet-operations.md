@@ -79,8 +79,8 @@ scheduled jobs can compare transitions later. It tracks:
 - active app repos from `fleet.yml`;
 - destination repos such as `awesome-unraid`, rendered as catalog/downstream
   infrastructure rather than app packages;
-- rehab repos such as `nanoclaw-aio`, rendered as non-blocking onboarding work
-  until they are explicitly promoted into the active fleet;
+- rehab repos, rendered as non-blocking onboarding work until they are
+  explicitly promoted into the active fleet;
 - open PR/issue counts, draft PRs, blocked PRs, stale PRs, clean PRs,
   response-needed issues, and the oldest actionable issue links;
 - upstream current/latest versions;
@@ -121,9 +121,27 @@ Use `fleet-report generate` for future GitHub Pages, Discord, Raycast, or
 GitHub Action surfaces. Those surfaces should consume the versioned report
 object and avoid scraping the rendered issue body.
 
-`nanoclaw-aio` is dashboard-visible but excluded from `validate --all`,
-publish, registry verification, and upstream monitor `--all` until a rehab PR
-proves the repo is ready for active fleet management.
+`nanoclaw-aio` is an active multi-component fleet repo. It participates in
+dashboard state, upstream monitoring, registry verification, publish planning,
+and `validate --all` like the other active app repos.
+
+## Fleet Doctor
+
+Use the fleet doctor before release work when a failed job would otherwise burn
+time on app checkout, Docker/QEMU setup, or registry publishing:
+
+```bash
+python -m aio_fleet doctor --publish --cleanup --alerts --format json
+python -m aio_fleet doctor --repo nanoclaw-aio --app-checks --format json
+python -m aio_fleet doctor --cleanup --check-delete-scope --live-auth --format json
+```
+
+The doctor classifies local checkout drift, detached branches, stale branches,
+GitHub App check-run permission gaps, missing publish credentials, missing
+Docker Hub delete-scope credentials, and alert configuration. The workflow also
+writes a minimal control report when the initial check-run bootstrap fails, so
+alerts can report `app-check-permission` instead of a generic missing-report
+failure.
 
 Missing alert secrets are warnings in the dashboard by default. They only become
 failures when a command is run with an explicit required-alerts mode.
@@ -137,6 +155,7 @@ validation:
 ```bash
 python -m aio_fleet release plan --all --format json
 python -m aio_fleet release plan --repo dify-aio --registry --format json
+python -m aio_fleet release reconcile --input release-plan-report.json --format json
 ```
 
 Before a real publish, run the same repo-local credential preflight used by the

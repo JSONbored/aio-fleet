@@ -51,8 +51,9 @@ python -m aio_fleet promote-rehab --repo <repo> --dry-run --format json
 
 Use `existing` for a current app repo that is already structurally close to the
 fleet model, `new-from-template` for a brand new repo created from
-`unraid-aio-template`, and `rehab` for neglected repos such as `nanoclaw-aio`
-that should appear on the dashboard without blocking active fleet validation.
+`unraid-aio-template`, and `rehab` only for neglected repos that should appear
+on the dashboard without blocking active fleet validation. `nanoclaw-aio` is an
+active multi-component repo now, not a rehab example.
 Use `--shape` to generate the acceptance pack for the repo surface: normal
 single-image apps, multi-component repos such as `signoz-aio`, future
 submodule-backed apps, dashboard-only catalog/destination repos, and rehab-only

@@ -184,6 +184,82 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
 
 
+def test_publish_preflight_runs_before_docker_setup_and_writes_artifact() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        job = workflow["jobs"][job_name]
+        names = [step["name"] for step in job["steps"]]
+        preflight = _step(job, "Validate publish credentials")
+
+        assert names.index("Validate publish credentials") < names.index(  # nosec B101
+            "Set up QEMU"
+        )
+        assert names.index("Validate publish credentials") < names.index(  # nosec B101
+            "Set up Docker Buildx"
+        )
+        assert "registry-preflight-report.json" in preflight["run"]  # nosec B101
+        assert "workflow control-report" in preflight["run"]  # nosec B101
+        assert (
+            "credential-gap: registry publish preflight failed" in preflight["run"]
+        )  # nosec B101
+        assert "CONTROL_REPORT" in preflight["env"]  # nosec B101
+
+
+def test_bootstrap_check_failures_write_structured_control_report() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    manual = _step(workflow["jobs"]["control-plane"], "Start central control check")
+    manual_checkout = _step(workflow["jobs"]["control-plane"], "Checkout app repo")
+    manual_complete = _step(
+        workflow["jobs"]["control-plane"], "Complete central control check"
+    )
+    poll = _step(workflow["jobs"]["poll-checks"], "Start central control check")
+    poll_checkout = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
+    poll_complete = _step(
+        workflow["jobs"]["poll-checks"], "Complete central control check"
+    )
+
+    for step in (manual, poll):
+        assert step.get("continue-on-error") is True  # nosec B101
+        assert "workflow control-report" in step["run"]  # nosec B101
+        assert (
+            "app-check-permission: bootstrap check-run failed" in step["run"]
+        )  # nosec B101
+        assert "--output" in step["run"]  # nosec B101
+
+    assert (
+        "start-central-control-check.outcome == 'success'" in manual_checkout["if"]
+    )  # nosec B101
+    assert (
+        "start-poll-central-control-check.outcome == 'success'" in poll_checkout["if"]
+    )  # nosec B101
+    assert (
+        "start-central-control-check.outcome == 'success'" in manual_complete["if"]
+    )  # nosec B101
+    assert (
+        "start-poll-central-control-check.outcome == 'success'" in poll_complete["if"]
+    )  # nosec B101
+
+
+def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    control = _step(workflow["jobs"]["control-plane"], "Upload control-plane artifacts")
+    poll = _step(workflow["jobs"]["poll-checks"], "Upload poll-check artifacts")
+    release_plan = _step(
+        workflow["jobs"]["control-plane"], "Generate release plan report"
+    )
+
+    assert "actions/upload-artifact@" in control["uses"]  # nosec B101
+    assert "actions/upload-artifact@" in poll["uses"]  # nosec B101
+    assert "release-plan-report.json" in release_plan["run"]  # nosec B101
+    assert "fleet-dashboard-report.json" in control["with"]["path"]  # nosec B101
+    assert "release-plan-report.json" in control["with"]["path"]  # nosec B101
+    assert "registry-preflight-report.json" in control["with"]["path"]  # nosec B101
+    assert "registry-preflight-report.json" in poll["with"]["path"]  # nosec B101
+
+
 def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 

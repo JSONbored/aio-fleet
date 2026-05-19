@@ -103,6 +103,7 @@ def upsert_check_run(
     summary: str = "",
     details_url: str | None = None,
     token: str | None = None,
+    name: str = CHECK_NAME,
 ) -> CheckRunResult:
     token = token or resolve_token(fallback_envs=("AIO_FLEET_CHECK_TOKEN",))
     if not token:
@@ -117,6 +118,7 @@ def upsert_check_run(
         conclusion=conclusion,
         summary=summary,
         details_url=details_url,
+        name=name,
     )
     owner, repo_name = repo.github_repo.split("/", 1)
     existing = _find_existing_check_run(
