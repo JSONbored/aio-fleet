@@ -12,7 +12,6 @@ from typing import Any
 import yaml
 
 from aio_fleet.manifest import load_manifest
-from aio_fleet.poll import PublishPathResolutionError, publish_components_required
 
 
 def poll_outputs(
@@ -288,38 +287,7 @@ def registry_audit_checkouts(
             text=True,
         ).strip()
         components = _publish_components(repo_config.raw)
-        try:
-            required_components = set(
-                publish_components_required(repo_config, sha=sha, event="push")
-            )
-        except PublishPathResolutionError as exc:
-            status = 1
-            for component in components:
-                report["repos"].append(
-                    {
-                        "repo": repo,
-                        "component": component,
-                        "sha": sha,
-                        "dockerhub": [],
-                        "ghcr": [],
-                        "failures": [str(exc)],
-                    }
-                )
-            continue
         for component in components:
-            if component not in required_components:
-                report["repos"].append(
-                    {
-                        "repo": repo,
-                        "component": component,
-                        "sha": sha,
-                        "dockerhub": [],
-                        "ghcr": [],
-                        "failures": [],
-                        "skipped": "not-publish-related",
-                    }
-                )
-                continue
             verify = subprocess.run(  # nosec B603
                 [
                     sys.executable,
