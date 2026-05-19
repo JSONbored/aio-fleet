@@ -333,6 +333,11 @@ repos:
     assert "ARG AIO_REVISION=1" in text  # nosec B101
     changelog_text = changelog.read_text()
     assert "## 0.7.1-alpha.7-aio.1" in changelog_text  # nosec B101
+    assert "### Build\n\n- Track upstream Sure Alpha" in changelog_text  # nosec B101
+    assert (
+        "### Component Customizations\n\n- Preserve the Sure AIO alpha import-limit"
+        in changelog_text
+    )  # nosec B101
     assert "Track upstream Sure Alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
     assert "SURE_IMPORT_MAX_NDJSON_SIZE_MB" in changelog_text  # nosec B101
     assert "passkey/WebAuthn template controls" in changelog_text  # nosec B101

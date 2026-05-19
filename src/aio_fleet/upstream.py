@@ -497,6 +497,7 @@ def _upsert_alpha_release_section(
         heading,
         "",
         "### Build",
+        "",
         f"- Track upstream {result.name} {result.latest_version}.",
         "- Publish Docker Hub and GHCR tags with the configured component revision tag.",
         "",
@@ -505,6 +506,7 @@ def _upsert_alpha_release_section(
         lines.extend(
             [
                 "### Component Customizations",
+                "",
                 *[f"- {item}" for item in customizations],
                 "",
             ]
