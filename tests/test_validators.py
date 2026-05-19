@@ -235,6 +235,7 @@ def _write_sure_hardening_fixture(
     tmp_path: Path,
     *,
     proxy_mask: str = "true",
+    redis_url_mask: str = "true",
     session_default: str = "",
 ) -> None:
     for path in ("Dockerfile", "Dockerfile.alpha"):
@@ -245,6 +246,7 @@ def _write_sure_hardening_fixture(
   <Config Name="HTTP Proxy" Target="HTTP_PROXY" Mask="{proxy_mask}"/>
   <Config Name="HTTPS Proxy" Target="HTTPS_PROXY" Mask="{proxy_mask}"/>
   <Config Name="No Proxy" Target="NO_PROXY" Mask="false"/>
+  <Config Name="Redis URL" Target="REDIS_URL" Mask="{redis_url_mask}"/>
   <Config Name="Session Key" Target="EXTERNAL_ASSISTANT_SESSION_KEY" Default="{session_default}" Description="isolated per-chat remote state">{session_default}</Config>
 </Container>
 """)
@@ -295,7 +297,10 @@ def test_release_hardening_rejects_sure_secret_and_component_drift(
     tmp_path: Path,
 ) -> None:
     _write_sure_hardening_fixture(
-        tmp_path, proxy_mask="false", session_default="agent:main:main"
+        tmp_path,
+        proxy_mask="false",
+        redis_url_mask="false",
+        session_default="agent:main:main",
     )
     repo = _repo(
         tmp_path,
@@ -318,6 +323,9 @@ def test_release_hardening_rejects_sure_secret_and_component_drift(
     assert (  # nosec B101
         "sure-aio: sure-aio-alpha.xml Config Target HTTPS_PROXY must be masked"
         in failures
+    )
+    assert (  # nosec B101
+        "sure-aio: sure-aio.xml Config Target REDIS_URL must be masked" in failures
     )
     assert (  # nosec B101
         "sure-aio: sure-aio.xml EXTERNAL_ASSISTANT_SESSION_KEY default must be blank"
