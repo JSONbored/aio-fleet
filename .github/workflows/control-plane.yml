@@ -396,7 +396,6 @@ jobs:
           DOCKERHUB_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.DOCKERHUB_TOKEN || '' }}
           AIO_FLEET_GHCR_TOKEN: ${{ inputs.publish && !inputs.dry_run && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
           AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
-          AIO_FLEET_RELEASE_TOKEN: ${{ inputs.publish && !inputs.dry_run && steps.app-token.outputs.token || '' }}
           CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
         run: |
           set -euo pipefail
@@ -410,7 +409,7 @@ jobs:
             --event "${TARGET_EVENT}"
           )
           if [[ "${PUBLISH}" == "true" ]]; then
-            args+=(--publish)
+            args+=(--publish --no-github-prereleases)
           fi
           if [[ -n "${PUBLISH_COMPONENT}" ]]; then
             args+=(--publish-component "${PUBLISH_COMPONENT}")
@@ -429,6 +428,29 @@ jobs:
           git clean -ffd
           python -m pip install --force-reinstall .
 
+      - name: Publish GitHub prereleases
+        id: github-prereleases
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && steps.central-control-check.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            release
+            publish-github-prereleases
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --control-report-json "${CONTROL_REPORT}"
+          )
+          if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+            args+=(--component "${PUBLISH_COMPONENT}")
+          fi
+          python -I -m aio_fleet "${args[@]}"
+
       - name: Complete central control check
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run }}
         env:
@@ -436,6 +458,7 @@ jobs:
           TARGET_SHA: ${{ inputs.sha }}
           TARGET_EVENT: ${{ inputs.event }}
           CHECK_OUTCOME: ${{ steps.central-control-check.outcome }}
+          RELEASE_OUTCOME: ${{ steps.github-prereleases.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
@@ -444,6 +467,9 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" ]]; then
             conclusion=failure
             summary="aio-fleet central check failed"
+          elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub prerelease publish failed"
           fi
           if ! python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
@@ -454,7 +480,7 @@ jobs:
             --summary "${summary}"; then
             echo "::warning::Unable to update app repo check run"
           fi
-          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+          if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
 
@@ -619,7 +645,6 @@ jobs:
           DOCKERHUB_TOKEN: ${{ matrix.target.publish && secrets.DOCKERHUB_TOKEN || '' }}
           AIO_FLEET_GHCR_TOKEN: ${{ matrix.target.publish && secrets.AIO_FLEET_GHCR_TOKEN || '' }}
           AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
-          AIO_FLEET_RELEASE_TOKEN: ${{ matrix.target.publish && steps.app-token.outputs.token || '' }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
           set -euo pipefail
@@ -633,7 +658,7 @@ jobs:
             --event "${TARGET_EVENT}"
           )
           if [[ "${TARGET_PUBLISH}" == "true" ]]; then
-            args+=(--publish)
+            args+=(--publish --no-github-prereleases)
           fi
           while IFS= read -r component; do
             if [[ -n "${component}" ]]; then
@@ -659,6 +684,39 @@ jobs:
           git clean -ffd
           python -m pip install --force-reinstall .
 
+      - name: Publish GitHub prereleases
+        id: poll-github-prereleases
+        if: ${{ matrix.target.publish == true && steps.poll-central-control-check.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            release
+            publish-github-prereleases
+            --repo "${TARGET_REPO}"
+            --repo-path app-repo
+            --control-report-json "${CONTROL_REPORT}"
+          )
+          while IFS= read -r component; do
+            if [[ -n "${component}" ]]; then
+              args+=(--component "${component}")
+            fi
+          done < <(python - <<'PY'
+          import json
+          import os
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          for component in json.loads(value):
+              print(component)
+          PY
+          )
+          python -I -m aio_fleet "${args[@]}"
+
       - name: Complete central control check
         if: ${{ always() }}
         env:
@@ -666,6 +724,7 @@ jobs:
           TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_EVENT: ${{ matrix.target.event }}
           CHECK_OUTCOME: ${{ steps.poll-central-control-check.outcome }}
+          RELEASE_OUTCOME: ${{ steps.poll-github-prereleases.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
@@ -674,6 +733,9 @@ jobs:
           if [[ "${CHECK_OUTCOME}" != "success" ]]; then
             conclusion=failure
             summary="aio-fleet central check failed"
+          elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub prerelease publish failed"
           fi
           if ! python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
@@ -684,7 +746,7 @@ jobs:
             --summary "${summary}"; then
             echo "::warning::Unable to update app repo check run"
           fi
-          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+          if [[ "${CHECK_OUTCOME}" != "success" || "${RELEASE_OUTCOME}" == "failure" ]]; then
             exit 1
           fi
 

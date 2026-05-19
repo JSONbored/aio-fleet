@@ -69,6 +69,7 @@ def central_check_steps(
     publish_component_names: Sequence[str] | None = None,
     include_trunk: bool = True,
     include_integration: bool = True,
+    include_github_prereleases: bool = True,
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
     trusted_cwd = _trusted_aio_root()
@@ -221,11 +222,12 @@ def central_check_steps(
                     ),
                 )
             )
-            release_step = _github_release_publish_step(
-                repo, component, manifest_args=manifest_args
-            )
-            if release_step is not None:
-                steps.append(release_step)
+            if include_github_prereleases:
+                release_step = _github_release_publish_step(
+                    repo, component, manifest_args=manifest_args
+                )
+                if release_step is not None:
+                    steps.append(release_step)
     return steps
 
 
