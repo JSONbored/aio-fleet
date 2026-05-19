@@ -498,6 +498,29 @@ def test_tracked_artifact_validation_rejects_tfstate_and_pycache(
     assert any("test.pyc" in failure for failure in failures)  # nosec B101
 
 
+def test_tracked_artifact_validation_rejects_virtualenv_symlink(
+    tmp_path: Path,
+) -> None:
+    import subprocess  # nosec B404
+
+    subprocess.run(
+        ["git", "init"], cwd=tmp_path, check=True, capture_output=True
+    )  # nosec
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").write_text("#!/bin/sh\nexit 0\n")
+    (tmp_path / ".venv-local").symlink_to(".", target_is_directory=True)
+    subprocess.run(  # nosec
+        ["git", "add", "-f", ".venv-local", "bin/python"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    failures = tracked_artifact_failures(tmp_path)
+
+    assert any(".venv-local" in failure for failure in failures)  # nosec B101
+
+
 def test_catalog_validation_skips_unpublished_repos(tmp_path: Path) -> None:
     repo = _repo(tmp_path / "repo", catalog_published=False)
     manifest = _Manifest()
