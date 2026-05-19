@@ -363,9 +363,7 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
         lambda _tags: ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
     )
 
-    plan = release_plan_for_repo(
-        repo, include_registry=True, component="sure-alpha"
-    )
+    plan = release_plan_for_repo(repo, include_registry=True, component="sure-alpha")
 
     assert plan["repo"] == "sure-aio"  # nosec B101
     assert plan["component"] == "sure-alpha"  # nosec B101
@@ -378,6 +376,9 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     )
     assert plan["operator_commands"]["release_publish"] == (  # nosec B101
         "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+    )
+    assert plan["operator_commands"]["control_check_publish"] == (  # nosec B101
+        f"python -m aio_fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
     )
 
 

@@ -359,7 +359,9 @@ def test_template_metadata_validation_allows_component_changelog_note(
 
     failures = template_metadata_failures(repo, _Manifest())  # type: ignore[arg-type]
 
-    assert not any("second line must be" in failure for failure in failures)  # nosec B101
+    assert not any(
+        "second line must be" in failure for failure in failures
+    )  # nosec B101
 
 
 def test_template_metadata_validation_applies_manifest_declared_targets(
@@ -394,6 +396,182 @@ def test_template_metadata_validation_applies_manifest_declared_targets(
 
     assert any("MISSING" in failure for failure in failures)  # nosec B101
     assert any("manifest-forbidden" in failure for failure in failures)  # nosec B101
+
+
+def test_template_metadata_validation_accepts_component_alpha_contract(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio-alpha.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio-alpha</Name>
+  <Repository>jsonbored/example-aio-alpha:latest-alpha</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio-alpha</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Testing / Unstable alpha lane with Alpha-only controls, latest-alpha tags, and /mnt/user/appdata/example-aio-alpha storage.</Overview>
+  <Category>Tools:</Category>
+  <Beta>True</Beta>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText/>
+  <DonateLink/>
+  <Changes>### 2026-05-19
+- Generated from CHANGELOG.alpha.md during release preparation. Do not edit manually.
+- Alpha contract.</Changes>
+  <Config Name="[Alpha] Sure NDJSON Upload Limit MB" Target="SURE_IMPORT_MAX_NDJSON_SIZE_MB" Default="250" Description="Alpha-only upload limit.">250</Config>
+  <Config Name="[Alpha] Sure Import Max Rows" Target="SURE_IMPORT_MAX_ROWS" Default="1000000" Description="Alpha-only row limit.">1000000</Config>
+  <Config Name="[Alpha Auth] WebAuthn Relying Party ID" Target="WEBAUTHN_RP_ID" Default="" Description="Alpha-only passkey relying party."/>
+  <Config Name="[Alpha Auth] WebAuthn Allowed Origins" Target="WEBAUTHN_ALLOWED_ORIGINS" Default="" Description="Alpha-only passkey origins."/>
+</Container>
+""")
+
+    failures = template_metadata_failures(
+        _repo(
+            tmp_path,
+            catalog_assets=[
+                {
+                    "source": "example-aio-alpha.xml",
+                    "target": "example-aio-alpha.xml",
+                }
+            ],
+            components={
+                "alpha": {
+                    "image_name": "jsonbored/example-aio-alpha",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "xml_paths": ["example-aio-alpha.xml"],
+                    "validation": _alpha_validation_contract(),
+                }
+            },
+        ),
+        _Manifest(),  # type: ignore[arg-type]
+    )
+
+    assert failures == []  # nosec B101
+
+
+def test_template_metadata_validation_rejects_component_alpha_contract_drift(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio-alpha.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Stable-looking lane with /mnt/user/appdata/example-aio/system storage.</Overview>
+  <Category>Tools:</Category>
+  <Beta>False</Beta>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText/>
+  <DonateLink/>
+  <Changes>### 2026-05-19
+- Generated from CHANGELOG.alpha.md during release preparation. Do not edit manually.
+- Alpha contract drift.</Changes>
+  <Config Name="Sure NDJSON Upload Limit MB" Target="SURE_IMPORT_MAX_NDJSON_SIZE_MB" Default="100" Description="Upload limit.">100</Config>
+  <Config Name="[Alpha Auth] WebAuthn Relying Party ID" Target="WEBAUTHN_RP_ID" Default="" Description="Passkey relying party."/>
+  <Config Name="[Alpha Auth] WebAuthn Allowed Origins" Target="WEBAUTHN_ALLOWED_ORIGINS" Default="" Description="Alpha-only passkey origins."/>
+</Container>
+""")
+
+    failures = template_metadata_failures(
+        _repo(
+            tmp_path,
+            catalog_assets=[
+                {
+                    "source": "example-aio-alpha.xml",
+                    "target": "example-aio-alpha.xml",
+                }
+            ],
+            components={
+                "alpha": {
+                    "image_name": "jsonbored/example-aio-alpha",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "xml_paths": ["example-aio-alpha.xml"],
+                    "validation": _alpha_validation_contract(),
+                }
+            },
+        ),
+        _Manifest(),  # type: ignore[arg-type]
+    )
+
+    assert any("<Beta> must be True" in failure for failure in failures)  # nosec B101
+    assert any(
+        "missing manifest-required XML text snippet: Testing / Unstable" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "contains manifest-forbidden XML text snippet: <Name>example-aio</Name>"
+        in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "missing manifest-required Config Target(s): SURE_IMPORT_MAX_ROWS" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Config Target SURE_IMPORT_MAX_NDJSON_SIZE_MB Name must contain [Alpha]"
+        in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Config Target SURE_IMPORT_MAX_NDJSON_SIZE_MB Default must be 250" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Config Target WEBAUTHN_RP_ID Description must contain Alpha-only" in failure
+        for failure in failures
+    )  # nosec B101
+
+
+def _alpha_validation_contract() -> dict[str, object]:
+    return {
+        "required_targets": [
+            "SURE_IMPORT_MAX_NDJSON_SIZE_MB",
+            "SURE_IMPORT_MAX_ROWS",
+            "WEBAUTHN_RP_ID",
+            "WEBAUTHN_ALLOWED_ORIGINS",
+        ],
+        "required_field_values": {
+            "Name": "example-aio-alpha",
+            "Repository": "jsonbored/example-aio-alpha:latest-alpha",
+            "Beta": "True",
+        },
+        "required_text_snippets": [
+            "Testing / Unstable",
+            "Alpha-only",
+            "/mnt/user/appdata/example-aio-alpha",
+            "latest-alpha",
+        ],
+        "forbidden_text_snippets": [
+            "<Name>example-aio</Name>",
+            "<Repository>jsonbored/example-aio:latest</Repository>",
+            "/mnt/user/appdata/example-aio/system",
+        ],
+        "config_target_requirements": {
+            "SURE_IMPORT_MAX_NDJSON_SIZE_MB": {
+                "name_contains": "[Alpha]",
+                "description_contains": "Alpha-only",
+                "default": "250",
+                "value": "250",
+            },
+            "SURE_IMPORT_MAX_ROWS": {
+                "name_contains": "[Alpha]",
+                "description_contains": "Alpha-only",
+                "default": "1000000",
+                "value": "1000000",
+            },
+            "WEBAUTHN_RP_ID": {
+                "name_contains": "[Alpha Auth]",
+                "description_contains": "Alpha-only",
+            },
+            "WEBAUTHN_ALLOWED_ORIGINS": {
+                "name_contains": "[Alpha Auth]",
+                "description_contains": "Alpha-only",
+            },
+        },
+    }
 
 
 def test_runtime_contract_allows_unpublished_optional_port(tmp_path: Path) -> None:
@@ -687,6 +865,7 @@ def test_catalog_quality_audit_reports_catalog_presentation_drift(
     )  # nosec B101
     assert any("not a valid PNG" in finding for finding in findings)  # nosec B101
 
+
 def test_runtime_contract_rejects_required_non_advanced_docker_socket_even_with_manifest_flag(
     tmp_path: Path,
 ) -> None:
@@ -708,5 +887,9 @@ def test_runtime_contract_rejects_required_non_advanced_docker_socket_even_with_
         _repo(tmp_path, validation={"docker_socket_required": True})
     )
 
-    assert any("Docker socket mount must be advanced" in failure for failure in failures)  # nosec B101
-    assert any("Docker socket mount must be optional" in failure for failure in failures)  # nosec B101
+    assert any(
+        "Docker socket mount must be advanced" in failure for failure in failures
+    )  # nosec B101
+    assert any(
+        "Docker socket mount must be optional" in failure for failure in failures
+    )  # nosec B101

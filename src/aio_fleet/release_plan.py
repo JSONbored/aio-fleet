@@ -218,7 +218,20 @@ def _operator_commands(
         "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {label_sha} --verbose",
         "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
         "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
+        "control_check_publish": control_check_publish_command(
+            repo, component=component, sha=sha
+        ),
     }
+
+
+def control_check_publish_command(
+    repo: RepoConfig, *, component: str = "aio", sha: str = ""
+) -> str:
+    label_sha = sha if sha else "<sha>"
+    return (
+        f"python -m aio_fleet control-check --repo {repo.name} --sha {label_sha} "
+        f"--event push --publish --publish-component {component}"
+    )
 
 
 def _safe_latest_aio_tag(repo: RepoConfig) -> str:
