@@ -450,18 +450,18 @@ def _discord_body(payload: AlertPayload) -> dict[str, Any]:
         )
     if payload.details_url:
         embed["url"] = payload.details_url
-    for field in payload.details.get("discord_fields", []):
-        if not isinstance(field, dict):
+    for discord_field in payload.details.get("discord_fields", []):
+        if not isinstance(discord_field, dict):
             continue
-        name = str(field.get("name", "")).strip()
-        value = str(field.get("value", "")).strip()
+        name = str(discord_field.get("name", "")).strip()
+        value = str(discord_field.get("value", "")).strip()
         if not name or not value:
             continue
         embed["fields"].append(
             {
                 "name": name[:256],
                 "value": value[:1024],
-                "inline": bool(field.get("inline", False)),
+                "inline": bool(discord_field.get("inline", False)),
             }
         )
     return {
