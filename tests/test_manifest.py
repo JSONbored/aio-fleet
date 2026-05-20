@@ -23,6 +23,7 @@ def test_manifest_loads_current_fleet() -> None:
         "dify-aio",
         "signoz-aio",
         "nanoclaw-aio",
+        "penpot-aio",
     }
 
 

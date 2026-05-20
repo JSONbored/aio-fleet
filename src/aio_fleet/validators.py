@@ -1411,7 +1411,7 @@ def _expected_generated_changelog_bullet(repo: RepoConfig, source: str) -> str:
 
 def _pipe_default_failures(repo: RepoConfig, source: str, config: Element) -> list[str]:
     default = config.attrib.get("Default", "")
-    if "|" not in default:
+    if not _is_pipe_dropdown_default(default):
         return []
 
     name = config.attrib.get("Name", config.attrib.get("Target", "<unnamed>"))
@@ -1426,6 +1426,15 @@ def _pipe_default_failures(repo: RepoConfig, source: str, config: Element) -> li
             f"{repo.name}: {source} Config {name} selected value {selected_value!r} is not one of {allowed_values!r}"
         ]
     return []
+
+
+def _is_pipe_dropdown_default(default: str) -> bool:
+    if "|" not in default:
+        return False
+    allowed_values = default.split("|")
+    if any(value == "" for value in allowed_values):
+        return True
+    return all(re.fullmatch(r"[A-Za-z0-9_.:/@+-]+", value) for value in allowed_values)
 
 
 def _manifest_declared_template_failures(
