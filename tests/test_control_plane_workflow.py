@@ -87,6 +87,9 @@ def test_alert_test_mode_uses_alert_webhook_secret_only() -> None:
     app_token = _step(workflow["jobs"]["control-plane"], "Resolve GitHub App token")
     alert_test = _step(workflow["jobs"]["control-plane"], "Test alert webhook")
 
+    assert app_token["env"]["AIO_FLEET_APP_CLIENT_ID"] == (  # nosec B101
+        "${{ vars.AIO_FLEET_APP_CLIENT_ID }}"
+    )
     assert "alert-test" in mode["options"]  # nosec B101
     assert "inputs.mode != 'alert-test'" in app_token["if"]  # nosec B101
     assert (  # nosec B101
@@ -240,6 +243,21 @@ def test_bootstrap_check_failures_write_structured_control_report() -> None:
     assert (
         "start-poll-central-control-check.outcome == 'success'" in poll_complete["if"]
     )  # nosec B101
+
+
+def test_app_token_resolution_prefers_app_client_id() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    for job_name in ("control-plane", "poll-checks"):
+        token_step = _step(workflow["jobs"][job_name], "Resolve GitHub App token")
+
+        assert token_step["env"]["AIO_FLEET_APP_CLIENT_ID"] == (  # nosec B101
+            "${{ vars.AIO_FLEET_APP_CLIENT_ID }}"
+        )
+        assert token_step["env"]["AIO_FLEET_APP_ID"] == (  # nosec B101
+            "${{ secrets.AIO_FLEET_APP_ID }}"
+        )
+        assert "python -m aio_fleet.github_app" in token_step["run"]  # nosec B101
 
 
 def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> None:

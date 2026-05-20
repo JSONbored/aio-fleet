@@ -45,11 +45,12 @@ def test_github_app_main_prefers_app_credentials(monkeypatch, capsys) -> None:
     calls: list[tuple[str, str, str]] = []
 
     def fake_create_installation_token(
-        app_id: str, installation_id: str, private_key: str
+        issuer: str, installation_id: str, private_key: str
     ) -> str:
-        calls.append((app_id, installation_id, private_key))
+        calls.append((issuer, installation_id, private_key))
         return "app-token"
 
+    monkeypatch.setenv("AIO_FLEET_APP_CLIENT_ID", "client-123")
     monkeypatch.setenv("AIO_FLEET_APP_ID", "123")
     monkeypatch.setenv("AIO_FLEET_APP_INSTALLATION_ID", "456")
     monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
@@ -66,6 +67,29 @@ def test_github_app_main_prefers_app_credentials(monkeypatch, capsys) -> None:
             "AIO_FLEET_BOT_TOKEN",
         ],
     )
+
+    assert github_app.main() == 0  # nosec B101
+    assert capsys.readouterr().out.strip() == "app-token"  # nosec B101
+    assert calls == [("client-123", "456", "private-key")]  # nosec B101
+
+
+def test_github_app_main_falls_back_to_app_id(monkeypatch, capsys) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_create_installation_token(
+        issuer: str, installation_id: str, private_key: str
+    ) -> str:
+        calls.append((issuer, installation_id, private_key))
+        return "app-token"
+
+    monkeypatch.delenv("AIO_FLEET_APP_CLIENT_ID", raising=False)
+    monkeypatch.setenv("AIO_FLEET_APP_ID", "123")
+    monkeypatch.setenv("AIO_FLEET_APP_INSTALLATION_ID", "456")
+    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setattr(
+        github_app, "create_installation_token", fake_create_installation_token
+    )
+    monkeypatch.setattr(sys, "argv", ["github_app"])
 
     assert github_app.main() == 0  # nosec B101
     assert capsys.readouterr().out.strip() == "app-token"  # nosec B101
