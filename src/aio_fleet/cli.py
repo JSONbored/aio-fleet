@@ -54,6 +54,7 @@ from aio_fleet.fleet_dashboard import (
     upsert_dashboard_issue,
 )
 from aio_fleet.github_policy import load_policy, validate_github_policy
+from aio_fleet.hooks import install_local_hooks, run_local_trunk_overlay
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets
 from aio_fleet.public_text import assert_public_text
@@ -3256,21 +3257,32 @@ def cmd_trunk_audit(args: argparse.Namespace) -> int:
 def cmd_trunk_run(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     if not args.all and not args.repo:
-        print("--repo is required unless --all is used", file=sys.stderr)
-        return 1
-    repos = (
-        list(manifest.repos.values())
-        if args.all
-        else [_repo_for_identifier(manifest, args.repo)]
-    )
+        if args.local and args.repo_path:
+            repo_path = Path(args.repo_path).resolve()
+            repos = [_local_repo_config(repo_path, owner=manifest.owner)]
+        else:
+            print("--repo is required unless --all is used", file=sys.stderr)
+            return 1
+    else:
+        repos = (
+            list(manifest.repos.values())
+            if args.all
+            else [_repo_for_identifier(manifest, args.repo)]
+        )
     if args.repo_path:
         if len(repos) != 1:
             print("--repo-path can only be used with --repo", file=sys.stderr)
             return 1
-        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+        if args.repo:
+            repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
     failed = False
     for repo in repos:
-        result = run_central_trunk(repo, fix=args.fix)
+        if args.local:
+            result = run_local_trunk_overlay(
+                repo, fix=args.fix, all_files=args.all_files
+            )
+        else:
+            result = run_central_trunk(repo, fix=args.fix)
         if result.returncode == 0:
             print(f"{repo.name}: trunk=ok")
             continue
@@ -3281,6 +3293,75 @@ def cmd_trunk_run(args: argparse.Namespace) -> int:
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="")
     return 1 if failed else 0
+
+
+def _local_repo_config(repo_path: Path, *, owner: str) -> RepoConfig:
+    name = repo_path.name
+    return RepoConfig(
+        name=name,
+        raw={
+            "path": repo_path,
+            "app_slug": name,
+            "image_name": f"jsonbored/{name}",
+            "docker_cache_scope": f"{name}-image",
+            "pytest_image_tag": f"{name}:pytest",
+        },
+        defaults={},
+        owner=owner,
+    )
+
+
+def cmd_hooks_install(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    if not args.all and not args.repo:
+        print("--repo is required unless --all is used", file=sys.stderr)
+        return 1
+    repos = (
+        list(manifest.repos.values())
+        if args.all
+        else [_repo_for_identifier(manifest, args.repo)]
+    )
+    if args.all and args.include_destinations:
+        repos.extend(_dashboard_destination_repos(manifest))
+    if args.repo_path:
+        if len(repos) != 1:
+            print("--repo-path can only be used with --repo", file=sys.stderr)
+            return 1
+        repos = [_repo_with_path(repos[0], Path(args.repo_path).resolve())]
+    for repo in repos:
+        hooks_dir = install_local_hooks(
+            repo, target_kind=str(repo.raw.get("_hook_target_kind", "repo"))
+        )
+        print(f"{repo.name}: hooks=installed path={hooks_dir}")
+    return 0
+
+
+def _dashboard_destination_repos(manifest: FleetManifest) -> list[RepoConfig]:
+    destination_repos = (
+        manifest.raw.get("dashboard", {}).get("destination_repos", {})
+        if isinstance(manifest.raw.get("dashboard"), dict)
+        else {}
+    )
+    repos: list[RepoConfig] = []
+    for name, raw_config in destination_repos.items():
+        if not isinstance(raw_config, dict) or "path" not in raw_config:
+            continue
+        repos.append(
+            RepoConfig(
+                name=str(name),
+                raw={
+                    "path": raw_config["path"],
+                    "app_slug": name,
+                    "image_name": f"jsonbored/{name}",
+                    "docker_cache_scope": f"{name}-image",
+                    "pytest_image_tag": f"{name}:pytest",
+                    "_hook_target_kind": "catalog",
+                },
+                defaults={},
+                owner=manifest.owner,
+            )
+        )
+    return repos
 
 
 def cmd_import_app_manifest(args: argparse.Namespace) -> int:
@@ -4510,12 +4591,32 @@ def build_parser() -> argparse.ArgumentParser:
     trunk_run.add_argument("--all", action="store_true")
     trunk_run.add_argument("--fix", action="store_true")
     trunk_run.add_argument("--no-fix", action="store_false", dest="fix")
-    trunk_run.set_defaults(func=cmd_trunk_run, fix=False)
+    trunk_run.add_argument(
+        "--local",
+        action="store_true",
+        help="Run central Trunk config directly in the target checkout.",
+    )
+    trunk_run.add_argument(
+        "--changed",
+        action="store_false",
+        dest="all_files",
+        help="With --local, check only changed files instead of the full checkout.",
+    )
+    trunk_run.set_defaults(func=cmd_trunk_run, fix=False, all_files=True)
 
     trunk_audit = sub.add_parser("trunk-audit")
     trunk_audit.add_argument("--repo")
     trunk_audit.add_argument("--verbose", action="store_true")
     trunk_audit.set_defaults(func=cmd_trunk_audit)
+
+    hooks = sub.add_parser("hooks")
+    hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)
+    hooks_install = hooks_sub.add_parser("install")
+    hooks_install.add_argument("--repo")
+    hooks_install.add_argument("--repo-path")
+    hooks_install.add_argument("--all", action="store_true")
+    hooks_install.add_argument("--include-destinations", action="store_true")
+    hooks_install.set_defaults(func=cmd_hooks_install)
     return parser
 
 
