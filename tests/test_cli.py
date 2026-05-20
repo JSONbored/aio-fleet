@@ -1475,6 +1475,7 @@ def test_prerelease_publish_skips_matching_github_prerelease(
             return real_run(command, cwd=cwd, env=env)
         if command[:3] == ["gh", "release", "view"]:
             assert env["GH_TOKEN"] == "release-token"  # nosec B101
+            assert "isLatest" not in command  # nosec B101
             return SimpleNamespace(
                 returncode=0,
                 stdout=json.dumps(
