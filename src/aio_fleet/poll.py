@@ -53,7 +53,12 @@ def poll_targets(
         if include_main:
             sha = _main_sha(repo)
             if sha:
-                components = [] if repo.publish_profile == "template" else _publish_components(repo)
+                try:
+                    components = publish_components_required(
+                        repo, sha=sha, event="push"
+                    )
+                except PublishPathResolutionError:
+                    components = []
                 targets.append(
                     PollTarget(
                         repo=repo,

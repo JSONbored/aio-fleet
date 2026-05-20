@@ -101,6 +101,8 @@ def test_poll_targets_disable_checkout_submodules_for_prs_but_keep_main_policy(
     ]
     assert targets[0].checkout_submodules is False  # nosec B101
     assert targets[1].checkout_submodules is True  # nosec B101
+    assert targets[1].publish is True  # nosec B101
+    assert targets[1].publish_components == ("aio",)  # nosec B101
 
 
 def test_publish_required_ignores_docs_only_main_commits(
@@ -136,7 +138,7 @@ def test_publish_required_accepts_runtime_and_release_commits(
         )  # nosec B101
 
 
-def test_poll_targets_publish_main_commits_for_non_template_repos(
+def test_poll_targets_skip_publish_for_docs_only_main_commits(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest_path = _write_manifest(tmp_path)
@@ -151,7 +153,44 @@ def test_poll_targets_publish_main_commits_for_non_template_repos(
     targets = poll.poll_targets(manifest)
 
     assert len(targets) == 1  # nosec B101
+    assert targets[0].publish is False  # nosec B101
+    assert targets[0].publish_components == ()  # nosec B101
+
+
+def test_poll_targets_publish_main_commits_for_publish_related_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(poll, "_open_pull_requests", lambda _repo: [])
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
     assert targets[0].publish is True  # nosec B101
+    assert targets[0].publish_components == ("aio",)  # nosec B101
+
+
+def test_poll_targets_skip_publish_when_main_paths_cannot_be_resolved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(poll, "_open_pull_requests", lambda _repo: [])
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
+    monkeypatch.setattr(poll, "_commit_changed_paths", lambda _repo, _sha: None)
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].publish is False  # nosec B101
+    assert targets[0].publish_components == ()  # nosec B101
 
 
 def test_publish_components_required_can_target_alpha_component(

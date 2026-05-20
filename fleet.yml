@@ -18,6 +18,12 @@ defaults:
   trunk_org_slug: aethereal
   publish_platforms: linux/amd64,linux/arm64
   integration_pytest_args: tests/integration -m integration
+  non_release_paths:
+    - README.md
+    - AGENTS.md
+    - docs/**
+    - .github/**
+    - .trunk/**
   release_transaction:
     autopilot: false
     checkout_policy: standard

@@ -22,6 +22,7 @@ from aio_fleet.release import (
     latest_aio_release_tag,
     latest_changelog_version,
     latest_component_changelog_version,
+    latest_component_release_tag,
     latest_semver_tag,
     next_aio_release_version,
     next_semver_release_version,
@@ -277,6 +278,8 @@ def release_transaction_command(
 
 def _safe_latest_aio_tag(repo: RepoConfig) -> str:
     try:
+        if repo.publish_profile == "changelog-version":
+            return latest_component_release_tag(repo.path) or ""
         return (
             latest_aio_release_tag(
                 repo.path, repo.path / "Dockerfile", repo.path / "upstream.toml"
