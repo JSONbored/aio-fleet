@@ -318,12 +318,19 @@ def _workflow_writer_checks(target: SigningTarget) -> list[dict[str, str]]:
         signed = "sign-commits: true" in text
         app_token = "actions/create-github-app-token" in text
         verified_output = "pull-request-commits-verified" in text
+        verifies_existing_pr = "pull-request-number" in text
         unsafe_fallback = "|| secrets.GITHUB_TOKEN" in text
-        ok = signed and app_token and verified_output and not unsafe_fallback
+        ok = (
+            signed
+            and app_token
+            and verified_output
+            and verifies_existing_pr
+            and not unsafe_fallback
+        )
         detail = (
             "uses GitHub App signed PR commits"
             if ok
-            else "must use GitHub App token, sign-commits, verified output check, and no GITHUB_TOKEN fallback"
+            else "must use GitHub App token, sign-commits, PR-number-gated verified output check, and no GITHUB_TOKEN fallback"
         )
         checks.append(
             _check(
