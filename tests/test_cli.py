@@ -22,6 +22,7 @@ from aio_fleet.cli import (
     cmd_fleet_report_generate,
     cmd_fleet_report_schema,
     cmd_fleet_report_validate,
+    cmd_hooks_install,
     cmd_infra_doctor,
     cmd_onboard_repo,
     cmd_poll,
@@ -37,11 +38,13 @@ from aio_fleet.cli import (
     cmd_release_reconcile,
     cmd_security_audit_workflows,
     cmd_trunk_audit,
+    cmd_trunk_run,
     cmd_upstream_assess,
     cmd_upstream_monitor,
     cmd_validate_template_common,
     cmd_workflow_control_report,
 )
+from aio_fleet.hooks import run_local_trunk_overlay
 from aio_fleet.manifest import load_manifest
 from aio_fleet.poll import PollTarget
 
@@ -90,6 +93,187 @@ repos:
 
     assert result == 0  # nosec B101
     assert "example-aio: trunk=ok" in capsys.readouterr().out  # nosec B101
+
+
+def test_trunk_run_local_uses_checkout_overlay(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    called = {}
+
+    def fake_local(
+        repo, *, fix: bool = False, all_files: bool = True
+    ) -> SimpleNamespace:
+        called["repo"] = repo.name
+        called["path"] = repo.path
+        called["fix"] = fix
+        called["all_files"] = all_files
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "run_local_trunk_overlay", fake_local)
+
+    result = cmd_trunk_run(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            all=False,
+            fix=True,
+            local=True,
+            all_files=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert called == {
+        "repo": "example-aio",
+        "path": repo_path,
+        "fix": True,
+        "all_files": False,
+    }  # nosec B101
+    assert "example-aio: trunk=ok" in capsys.readouterr().out  # nosec B101
+
+
+def test_trunk_run_local_accepts_repo_path_without_manifest_repo(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    catalog_path = tmp_path / "awesome-unraid"
+    catalog_path.mkdir()
+    called = {}
+
+    def fake_local(
+        repo, *, fix: bool = False, all_files: bool = True
+    ) -> SimpleNamespace:
+        called["repo"] = repo.name
+        called["path"] = repo.path
+        called["fix"] = fix
+        called["all_files"] = all_files
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "run_local_trunk_overlay", fake_local)
+
+    result = cmd_trunk_run(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            repo_path=str(catalog_path),
+            all=False,
+            fix=False,
+            local=True,
+            all_files=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert called == {  # nosec B101
+        "repo": "awesome-unraid",
+        "path": catalog_path,
+        "fix": False,
+        "all_files": True,
+    }
+    assert "awesome-unraid: trunk=ok" in capsys.readouterr().out  # nosec B101
+
+
+def test_run_local_trunk_overlay_cleans_temporary_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    fake_trunk = tmp_path / "trunk"
+    fake_trunk.write_text("#!/usr/bin/env sh\nexit 0\n")
+    fake_trunk.chmod(0o755)
+    monkeypatch.setenv("TRUNK_PATH", str(fake_trunk))
+
+    result = run_local_trunk_overlay(load_manifest(manifest).repo("example-aio"))
+
+    assert result.returncode == 0  # nosec B101
+    assert not (repo_path / ".trunk").exists()  # nosec B101
+
+
+def test_hooks_install_writes_local_hooks(tmp_path: Path) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    subprocess.run(  # nosec B603 B607
+        ["git", "init"], cwd=repo_path, check=True, capture_output=True
+    )
+
+    result = cmd_hooks_install(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            all=False,
+            include_destinations=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    hooks_path = subprocess.run(  # nosec B603 B607
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=repo_path,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    pre_commit = Path(hooks_path) / "pre-commit"
+    pre_push = Path(hooks_path) / "pre-push"
+
+    assert pre_commit.exists()  # nosec B101
+    assert pre_push.exists()  # nosec B101
+    assert "--local --changed --fix" in pre_commit.read_text()  # nosec B101
+    assert "--local --changed --no-fix" in pre_push.read_text()  # nosec B101
+    assert "validate-repo --repo" in pre_push.read_text()  # nosec B101
+
+
+def test_hooks_install_can_include_dashboard_destinations(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    catalog_path = tmp_path / "awesome-unraid"
+    repo_path.mkdir()
+    catalog_path.mkdir()
+    subprocess.run(  # nosec B603 B607
+        ["git", "init"], cwd=repo_path, check=True, capture_output=True
+    )
+    subprocess.run(  # nosec B603 B607
+        ["git", "init"], cwd=catalog_path, check=True, capture_output=True
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  destination_repos:
+    awesome-unraid:
+      path: {catalog_path}
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+
+    result = cmd_hooks_install(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            repo_path=None,
+            all=True,
+            include_destinations=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    catalog_hooks = subprocess.run(  # nosec B603 B607
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=catalog_path,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+    pre_push = Path(catalog_hooks) / "pre-push"
+    assert pre_push.exists()  # nosec B101
+    assert "validate-catalog --catalog-path" in pre_push.read_text()  # nosec B101
+    assert "validate-repo --repo" not in pre_push.read_text()  # nosec B101
 
 
 def test_debt_report_outputs_json_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -776,6 +960,7 @@ repos:
     _git(repo_path, "init")
     _git(repo_path, "config", "user.email", "tests@example.invalid")
     _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
     _git(repo_path, "add", ".")
     _git(repo_path, "commit", "-m", "initial alpha release metadata")
     return manifest, repo_path, _git(repo_path, "rev-parse", "HEAD")
