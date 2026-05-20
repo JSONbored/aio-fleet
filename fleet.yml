@@ -402,6 +402,7 @@ repos:
       - source: simplelogin-aio.xml
         target: simplelogin-aio.xml
     validation:
+      docker_socket_required: true
       required_targets:
         - /appdata
         - /custom-assets
