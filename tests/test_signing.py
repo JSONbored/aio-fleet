@@ -111,7 +111,8 @@ jobs:
         with:
           token: ${{ steps.fleetbot-token.outputs.token }}
           sign-commits: true
-      - run: test "${{ steps.changelog-pr.outputs.pull-request-commits-verified }}" = "true"
+      - if: ${{ steps.changelog-pr.outputs.pull-request-number != '' }}
+        run: test "${{ steps.changelog-pr.outputs.pull-request-commits-verified }}" = "true"
 """)
 
     checks = workflow_writer_checks(
@@ -146,6 +147,37 @@ jobs:
       - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
         with:
           token: ${{ secrets.AIO_FLEET_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+""")
+
+    checks = workflow_writer_checks(
+        SigningTarget(
+            name="awesome-unraid",
+            path=repo_path,
+            github_repo="JSONbored/awesome-unraid",
+            role="catalog destination",
+        )
+    )
+
+    assert checks[0]["status"] == "failed"  # nosec B101
+    assert checks[0]["class"] == "external-writer-gap"  # nosec B101
+
+
+def test_workflow_writer_flags_operation_gated_signature_check(tmp_path: Path) -> None:
+    repo_path = _repo(tmp_path / "awesome-unraid")
+    workflow = repo_path / ".github" / "workflows" / "changelog.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("""
+jobs:
+  update:
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        id: changelog-pr
+        with:
+          token: ${{ steps.fleetbot-token.outputs.token }}
+          sign-commits: true
+      - if: ${{ steps.changelog-pr.outputs.pull-request-operation != 'none' }}
+        run: test "${{ steps.changelog-pr.outputs.pull-request-commits-verified }}" = "true"
 """)
 
     checks = workflow_writer_checks(
