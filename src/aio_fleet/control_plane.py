@@ -12,6 +12,7 @@ from pathlib import Path
 
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.registry import compute_registry_tags
+from aio_fleet.trunk_overlay import copy_trunk_overlay
 
 _SECRET_ENV_EXACT = {
     "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
@@ -612,10 +613,7 @@ def run_central_trunk(
         scratch_trunk = scratch / ".trunk"
         if scratch_trunk.exists():
             shutil.rmtree(scratch_trunk)
-        scratch_trunk.mkdir()
-        shutil.copy2(central_trunk / "trunk.yaml", scratch_trunk / "trunk.yaml")
-        if (central_trunk / "configs").exists():
-            shutil.copytree(central_trunk / "configs", scratch_trunk / "configs")
+        copy_trunk_overlay(central_trunk, scratch_trunk)
         command = [
             trunk,
             "check",
@@ -623,6 +621,7 @@ def run_central_trunk(
             "--all",
             "--no-progress",
             "--color=false",
+            "--ignore=.trunk/**",
             "--fix" if fix else "--no-fix",
         ]
         return subprocess.run(  # nosec B603
