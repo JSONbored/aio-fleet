@@ -1116,6 +1116,56 @@ def test_release_prepare_dry_run_prepends_changelog_section(
     assert "--output" not in output  # nosec B101
 
 
+def test_release_publish_uses_changelog_version_for_changelog_profile(
+    tmp_path: Path, capsys
+) -> None:
+    repo_path = tmp_path / "penpot-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  penpot-aio:
+    path: {repo_path}
+    app_slug: penpot-aio
+    image_name: jsonbored/penpot-aio
+    docker_cache_scope: penpot-aio-image
+    pytest_image_tag: penpot-aio:pytest
+    github_repo: JSONbored/penpot-aio
+    publish_profile: changelog-version
+""")
+    (repo_path / "Dockerfile").write_text("ARG PENPOT_VERSION=2.15.3\n")
+    (repo_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## v2.15.3-aio.1 - 2026-05-20\n\n"
+        "- Package Penpot 2.15.3 as an AIO image.\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.15.3-aio.1")
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="penpot-aio",
+            component="aio",
+            repo_path=None,
+            dry_run=True,
+            report_json=None,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "gh release create v2.15.3-aio.1" in output  # nosec B101
+    assert "--title v2.15.3-aio.1" in output  # nosec B101
+    assert "--notes '- Package Penpot 2.15.3 as an AIO image.'" in output  # nosec B101
+
+
 def test_release_publish_dry_run_creates_alpha_prerelease_command(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
