@@ -39,6 +39,8 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
   rendering instead of app-local release scripts.
 - `trunk run` overlays the central `.trunk` config into scratch checkouts so
   app repos can drop local Trunk config after the check-run migration is proven.
+- `hooks install` installs local pre-commit/pre-push hooks that run the central
+  Trunk overlay and repo validation before changes leave a checkout.
 - `cleanup-repo` verifies and, with `--fix`, removes retired app-local shared
   files.
 - OpenTofu policy under `infra/github` manages public repo metadata, branch
@@ -82,6 +84,8 @@ python -m aio_fleet cleanup-repo --repo sure-aio --fix --verify
 python -m aio_fleet security audit-workflows --format json
 python -m aio_fleet promote-rehab --repo nanoclaw-aio --dry-run --format json
 python -m aio_fleet trunk run --repo sure-aio --no-fix
+python -m aio_fleet trunk run --repo sure-aio --local --fix
+python -m aio_fleet hooks install --all --include-destinations
 python -m aio_fleet export-app-manifest --repo sure-aio
 python -m aio_fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml
 python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
