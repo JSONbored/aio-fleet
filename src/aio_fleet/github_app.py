@@ -19,6 +19,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Resolve an AIO fleet automation token."
     )
+    parser.add_argument("--client-id-env", default="AIO_FLEET_APP_CLIENT_ID")
     parser.add_argument("--app-id-env", default="AIO_FLEET_APP_ID")
     parser.add_argument(
         "--installation-id-env", default="AIO_FLEET_APP_INSTALLATION_ID"
@@ -28,6 +29,7 @@ def main() -> int:
     args = parser.parse_args()
 
     token = resolve_token(
+        client_id_env=args.client_id_env,
         app_id_env=args.app_id_env,
         installation_id_env=args.installation_id_env,
         private_key_env=args.private_key_env,
@@ -41,16 +43,19 @@ def main() -> int:
 
 def resolve_token(
     *,
+    client_id_env: str = "AIO_FLEET_APP_CLIENT_ID",
     app_id_env: str = "AIO_FLEET_APP_ID",
     installation_id_env: str = "AIO_FLEET_APP_INSTALLATION_ID",
     private_key_env: str = "AIO_FLEET_APP_PRIVATE_KEY",
     fallback_envs: tuple[str, ...] = (),
 ) -> str:
+    client_id = os.environ.get(client_id_env, "").strip()
     app_id = os.environ.get(app_id_env, "").strip()
     installation_id = os.environ.get(installation_id_env, "").strip()
     private_key = os.environ.get(private_key_env, "").strip()
-    if app_id and installation_id and private_key:
-        return create_installation_token(app_id, installation_id, private_key)
+    issuer = client_id or app_id
+    if issuer and installation_id and private_key:
+        return create_installation_token(issuer, installation_id, private_key)
 
     for env_name in fallback_envs:
         value = os.environ.get(env_name, "").strip()
@@ -60,9 +65,9 @@ def resolve_token(
 
 
 def create_installation_token(
-    app_id: str, installation_id: str, private_key: str
+    issuer: str, installation_id: str, private_key: str
 ) -> str:
-    jwt = _create_jwt(app_id, private_key)
+    jwt = _create_jwt(issuer, private_key)
     request = urllib.request.Request(  # nosec B310
         f"https://api.github.com/app/installations/{installation_id}/access_tokens",
         data=b"{}",
@@ -119,14 +124,14 @@ def _sleep_before_retry(attempt: int) -> None:
     time.sleep(min(2 ** (attempt - 1), 8))
 
 
-def _create_jwt(app_id: str, private_key: str) -> str:
+def _create_jwt(issuer: str, private_key: str) -> str:
     openssl = shutil.which("openssl")
     if not openssl:
         raise RuntimeError("openssl is required to sign GitHub App JWTs")
 
     now = int(time.time())
     header = _base64url_json({"alg": "RS256", "typ": "JWT"})
-    payload = _base64url_json({"iat": now - 60, "exp": now + 540, "iss": app_id})
+    payload = _base64url_json({"iat": now - 60, "exp": now + 540, "iss": issuer})
     signing_input = f"{header}.{payload}".encode()
     with tempfile.TemporaryDirectory() as tmpdir:
         key_path = Path(tmpdir) / "app-private-key.pem"

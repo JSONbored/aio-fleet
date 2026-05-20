@@ -46,6 +46,7 @@ jobs:
       - name: Resolve GitHub App token
         id: app-token
         env:
+          AIO_FLEET_APP_CLIENT_ID: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
           AIO_FLEET_APP_ID: ${{ secrets.AIO_FLEET_APP_ID }}
           AIO_FLEET_APP_INSTALLATION_ID: ${{ secrets.AIO_FLEET_APP_INSTALLATION_ID }}
           AIO_FLEET_APP_PRIVATE_KEY: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}

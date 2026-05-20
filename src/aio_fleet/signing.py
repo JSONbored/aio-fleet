@@ -105,12 +105,13 @@ def _credential_checks(env: dict[str, str]) -> list[dict[str, str]]:
     missing = [
         key
         for key in (
-            "AIO_FLEET_APP_ID",
             "AIO_FLEET_APP_INSTALLATION_ID",
             "AIO_FLEET_APP_PRIVATE_KEY",
         )
         if not env.get(key)
     ]
+    if not env.get("AIO_FLEET_APP_CLIENT_ID") and not env.get("AIO_FLEET_APP_ID"):
+        missing.insert(0, "AIO_FLEET_APP_CLIENT_ID or AIO_FLEET_APP_ID")
     return [
         _check(
             "fleetbot-credentials",
@@ -317,12 +318,14 @@ def _workflow_writer_checks(target: SigningTarget) -> list[dict[str, str]]:
         rel = path.relative_to(target.path).as_posix()
         signed = "sign-commits: true" in text
         app_token = "actions/create-github-app-token" in text
+        client_id = "client-id:" in text and "AIO_FLEET_APP_CLIENT_ID" in text
         verified_output = "pull-request-commits-verified" in text
         verifies_existing_pr = "pull-request-number" in text
         unsafe_fallback = "|| secrets.GITHUB_TOKEN" in text
         ok = (
             signed
             and app_token
+            and client_id
             and verified_output
             and verifies_existing_pr
             and not unsafe_fallback
@@ -330,7 +333,7 @@ def _workflow_writer_checks(target: SigningTarget) -> list[dict[str, str]]:
         detail = (
             "uses GitHub App signed PR commits"
             if ok
-            else "must use GitHub App token, sign-commits, PR-number-gated verified output check, and no GITHUB_TOKEN fallback"
+            else "must use GitHub App client-id token, sign-commits, PR-number-gated verified output check, and no GITHUB_TOKEN fallback"
         )
         checks.append(
             _check(

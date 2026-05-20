@@ -25,10 +25,14 @@ def test_registry_audit_scopes_secrets_to_required_steps() -> None:
 
     token_step = _step(job, "Resolve GitHub App token")
     assert {  # nosec B101
+        "AIO_FLEET_APP_CLIENT_ID",
         "AIO_FLEET_APP_ID",
         "AIO_FLEET_APP_INSTALLATION_ID",
         "AIO_FLEET_APP_PRIVATE_KEY",
     }.issubset(token_step["env"])
+    assert token_step["env"]["AIO_FLEET_APP_CLIENT_ID"] == (  # nosec B101
+        "${{ vars.AIO_FLEET_APP_CLIENT_ID }}"
+    )
 
     alert_step = _step(job, "Alert registry audit")
     assert {  # nosec B101

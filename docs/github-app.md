@@ -30,9 +30,10 @@ the fleet should only validate secret names/presence.
 The control-plane workflows resolve automation credentials through
 `aio_fleet.github_app`:
 
-- If `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
+- If `AIO_FLEET_APP_CLIENT_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
   `AIO_FLEET_APP_PRIVATE_KEY` are present, `aio-fleet` mints a short-lived
-  installation token.
+  installation token. `AIO_FLEET_APP_ID` remains a compatibility fallback for
+  older environments.
 - Generated commit paths must use that App token. Missing App credentials are a
   `credential-gap`; do not fall back to a PAT or the repository `GITHUB_TOKEN`
   for generated release/catalog commits.
@@ -96,15 +97,21 @@ The private key secret should contain the PEM text. Escaped `\n` sequences are
 accepted so the value can be stored in GitHub Secrets without preserving literal
 newlines.
 
+Do not configure the GitHub App client secret for fleet automation. Client
+secrets are for OAuth user-authorization flows, while Fleetbot automation uses
+the App client ID, private key, and short-lived installation tokens.
+
 ## Migration Path
 
 1. Create the GitHub App with the minimal permission set above.
 2. Install it only on active fleet repos, `awesome-unraid`, and `aio-fleet`.
 3. Remove generated-commit PAT fallbacks once App credentials are configured.
-4. Add `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
-   `AIO_FLEET_APP_PRIVATE_KEY` to `aio-fleet`.
-5. Add `AIO_FLEET_APP_ID` and `AIO_FLEET_APP_PRIVATE_KEY` to repo-local
-   workflow writers that use `actions/create-github-app-token`.
+4. Add `AIO_FLEET_APP_CLIENT_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
+   `AIO_FLEET_APP_PRIVATE_KEY` to `aio-fleet`. Keep `AIO_FLEET_APP_ID` only as
+   a temporary fallback while old workflows finish draining.
+5. Add `AIO_FLEET_APP_CLIENT_ID` and `AIO_FLEET_APP_PRIVATE_KEY` to repo-local
+   workflow writers that use `actions/create-github-app-token`; store the client
+   ID as a repository variable and the private key as a repository secret.
 6. Verify generated PRs and catalog syncs pass required checks using the app
    identity and report `pull-request-commits-verified=true`.
 7. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.

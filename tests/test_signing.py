@@ -61,6 +61,26 @@ def test_signing_doctor_checks_destination_targets_when_selected(
     ]
 
 
+def test_signing_doctor_accepts_legacy_app_id_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = _repo(tmp_path / "example-aio")
+    manifest = _manifest(tmp_path, repo_path)
+    env = {
+        "AIO_FLEET_APP_ID": "123",
+        "AIO_FLEET_APP_INSTALLATION_ID": "456",
+        "AIO_FLEET_APP_PRIVATE_KEY": "private-key",
+    }
+
+    monkeypatch.setattr(signing, "_gh_json", _ok_gh_json)
+
+    report = signing_doctor_report(
+        load_manifest(manifest), env=env, include_hooks=False
+    )
+
+    assert report["status"] == "ok"  # nosec B101
+
+
 def test_signing_doctor_fails_unsigned_generated_pr(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -106,6 +126,9 @@ jobs:
   update:
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
         id: changelog-pr
         with:
@@ -134,6 +157,40 @@ jobs:
             "repo": "awesome-unraid",
         }
     ]
+
+
+def test_workflow_writer_requires_github_app_client_id(tmp_path: Path) -> None:
+    repo_path = _repo(tmp_path / "awesome-unraid")
+    workflow = repo_path / ".github" / "workflows" / "changelog.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("""
+jobs:
+  update:
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.AIO_FLEET_APP_ID }}
+          private-key: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        id: changelog-pr
+        with:
+          token: ${{ steps.fleetbot-token.outputs.token }}
+          sign-commits: true
+      - if: ${{ steps.changelog-pr.outputs.pull-request-number != '' }}
+        run: test "${{ steps.changelog-pr.outputs.pull-request-commits-verified }}" = "true"
+""")
+
+    checks = workflow_writer_checks(
+        SigningTarget(
+            name="awesome-unraid",
+            path=repo_path,
+            github_repo="JSONbored/awesome-unraid",
+            role="catalog destination",
+        )
+    )
+
+    assert checks[0]["status"] == "failed"  # nosec B101
+    assert checks[0]["class"] == "external-writer-gap"  # nosec B101
 
 
 def test_workflow_writer_flags_pat_or_github_token_fallback(tmp_path: Path) -> None:
@@ -171,6 +228,9 @@ jobs:
   update:
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.AIO_FLEET_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AIO_FLEET_APP_PRIVATE_KEY }}
       - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
         id: changelog-pr
         with:
@@ -264,6 +324,7 @@ def _repo(path: Path) -> Path:
 
 def _app_env() -> dict[str, str]:
     return {
+        "AIO_FLEET_APP_CLIENT_ID": "client-123",
         "AIO_FLEET_APP_ID": "123",
         "AIO_FLEET_APP_INSTALLATION_ID": "456",
         "AIO_FLEET_APP_PRIVATE_KEY": "private-key",
