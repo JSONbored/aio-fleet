@@ -110,6 +110,58 @@ def test_release_plan_classifies_catalog_sync_needed(
     assert plan["catalog_sync_needed"] is True  # nosec B101
 
 
+def test_release_plan_blocks_unsigned_generated_pr(tmp_path: Path, monkeypatch) -> None:
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "public": True,
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(release_plan_module, "_git_head", lambda _path: "d" * 40)
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_latest_aio_tag",
+        lambda _repo: "0.7.0-aio.1",
+    )
+    monkeypatch.setattr(release_plan_module, "_safe_next_aio", lambda _repo: "")
+    monkeypatch.setattr(
+        release_plan_module, "_safe_has_aio_changes", lambda _repo: False
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.0-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {"state": "ok", "tag": "0.7.0-aio.1"},
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "generated_pr_signature_blockers",
+        lambda _github_repo: ["generated PR #42 has unverified commits: unsigned"],
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["state"] == "blocked"  # nosec B101
+    assert plan["blockers"] == [  # nosec B101
+        "generated PR #42 has unverified commits: unsigned"
+    ]
+    assert plan["next_action"] == (  # nosec B101
+        "python -m aio_fleet signing doctor --repo sure-aio --format json"
+    )
+
+
 def test_release_plan_redacts_private_manifest_repos(
     tmp_path: Path, monkeypatch
 ) -> None:

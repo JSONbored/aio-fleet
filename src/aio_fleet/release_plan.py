@@ -27,6 +27,7 @@ from aio_fleet.release import (
     next_semver_release_version,
     read_upstream_version,
 )
+from aio_fleet.signing import generated_pr_signature_blockers
 
 
 def release_plan_for_manifest(
@@ -141,13 +142,22 @@ def release_plan_for_repo(
     if catalog_sync_needed:
         warnings.append("catalog sync needed after source merge")
 
+    signing_blockers = (
+        []
+        if repo.raw.get("public") is not True
+        else generated_pr_signature_blockers(repo.github_repo)
+    )
+    blockers.extend(signing_blockers)
+
     if not latest_tag:
         warnings.append("no formal release tag found")
     if not changelog_version:
         warnings.append("latest changelog version unavailable")
 
     state = "current"
-    if registry_failures:
+    if signing_blockers:
+        state = "blocked"
+    elif registry_failures:
         state = "publish-missing"
     elif catalog_sync_needed:
         state = "catalog-sync-needed"
@@ -211,6 +221,8 @@ def _next_release_action(
     component: str = "aio",
     sha: str = "",
 ) -> str:
+    if state == "blocked":
+        return f"python -m aio_fleet signing doctor --repo {repo.name} --format json"
     if state == "current":
         return "none"
     if state == "publish-missing":

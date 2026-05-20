@@ -1953,13 +1953,21 @@ def _render_next_commands(
         release_detail = row.get("release_detail")
         if isinstance(release_detail, dict):
             state = release_detail.get("state")
-            release_publish_handled = state in {"publish-missing", "release-due"}
+            release_publish_handled = state in {
+                "blocked",
+                "publish-missing",
+                "release-due",
+            }
             operator_commands = release_detail.get("operator_commands")
             if isinstance(operator_commands, dict):
                 control_check_publish = _actionable_control_check_publish_command(
                     release_detail
                 )
-                if state == "publish-missing":
+                if state == "blocked":
+                    command = release_detail.get("next_action")
+                    if command:
+                        commands.append(str(command))
+                elif state == "publish-missing":
                     command = operator_commands.get("registry_verify")
                     if command:
                         commands.append(str(command))

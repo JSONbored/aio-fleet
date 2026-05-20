@@ -145,6 +145,23 @@ def test_release_transaction_blocks_pull_request_submodule_policy(
     assert "submodule-policy-mismatch" in report["failure_classes"]  # nosec B101
 
 
+def test_release_transaction_blocks_unsigned_generated_pr(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _repo_config(_init_app_repo(tmp_path / "example-aio"))
+    monkeypatch.setattr(
+        "aio_fleet.release_transaction.current_generated_pr_signature_blockers",
+        lambda _github_repo, _repo_path: [
+            "generated PR #12 has unverified commits: unsigned"
+        ],
+    )
+
+    report = release_transaction_preflight(repo, components=["aio"])
+
+    assert report["status"] == "blocked"  # nosec B101
+    assert "unsigned-generated-pr" in report["failure_classes"]  # nosec B101
+
+
 def test_release_preflight_cli_outputs_json_failure_classes(
     tmp_path: Path,
     capsys,

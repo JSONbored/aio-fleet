@@ -16,6 +16,7 @@ from aio_fleet.release_plan import (
     release_plan_rows_for_repo,
     release_transaction_command,
 )
+from aio_fleet.signing import current_generated_pr_signature_blockers
 
 FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -74,6 +75,7 @@ def release_transaction_preflight(
         _submodule_policy_findings(repo, event=event, components=selected_components)
     )
     findings.extend(_release_metadata_findings(repo, components=selected_components))
+    findings.extend(_generated_pr_signature_findings(repo))
 
     if write:
         findings.extend(_autopilot_findings(repo, components=selected_components))
@@ -429,6 +431,17 @@ def _credential_findings(repo: RepoConfig) -> list[dict[str, str]]:
             )
         )
     return findings
+
+
+def _generated_pr_signature_findings(repo: RepoConfig) -> list[dict[str, str]]:
+    if repo.raw.get("public") is not True:
+        return []
+    return [
+        _finding("unsigned-generated-pr", blocker)
+        for blocker in current_generated_pr_signature_blockers(
+            repo.github_repo, repo.path
+        )
+    ]
 
 
 def _operator_commands(

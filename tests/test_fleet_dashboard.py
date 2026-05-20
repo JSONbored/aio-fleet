@@ -712,6 +712,38 @@ def test_dashboard_next_commands_include_transaction_for_release_due() -> None:
     )
 
 
+def test_dashboard_next_commands_route_blocked_release_to_signing_doctor() -> None:
+    row = {
+        "repo": "sure-aio",
+        "component": "aio",
+        "update": False,
+        "release_detail": {
+            "repo": "sure-aio",
+            "component": "aio",
+            "sha": "b" * 40,
+            "state": "blocked",
+            "next_action": "python -m aio_fleet signing doctor --repo sure-aio --format json",
+            "operator_commands": {
+                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                + "b" * 40
+                + " --event push --publish --publish-component aio",
+                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component aio --sha "
+                + "b" * 40
+                + " --dry-run",
+            },
+        },
+    }
+    lines: list[str] = []
+
+    fleet_dashboard._render_next_commands(lines, [row], [], [])
+    body = "\n".join(lines)
+
+    assert (  # nosec B101
+        "python -m aio_fleet signing doctor --repo sure-aio --format json" in body
+    )
+    assert "control-check --repo sure-aio" not in body  # nosec B101
+
+
 def test_dashboard_control_check_publish_requires_actionable_release() -> None:
     cases = [
         ("current", "c" * 40),

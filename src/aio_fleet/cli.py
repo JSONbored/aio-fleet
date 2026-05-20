@@ -90,6 +90,7 @@ from aio_fleet.report import (
     validate_report_shape,
 )
 from aio_fleet.safety import assess_expected_update, assess_upstream_pr
+from aio_fleet.signing import signing_doctor_report
 from aio_fleet.upstream import (
     create_or_update_upstream_pr,
     monitor_repo,
@@ -3475,6 +3476,37 @@ def cmd_infra_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_signing_doctor(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    report = signing_doctor_report(
+        manifest,
+        repos=args.repo,
+        all_targets=args.all,
+        env=os.environ,
+        include_hooks=not args.no_hooks,
+    )
+    if args.format == "json":
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for check in report["checks"]:
+            repo = f"{check.get('repo')}: " if check.get("repo") else ""
+            print(
+                "{status} {classification}: {repo}{detail}".format(
+                    status=check["status"],
+                    classification=check.get("classification", check.get("class")),
+                    repo=repo,
+                    detail=check["detail"],
+                )
+            )
+        print(
+            "signing doctor {status}: {failed} failed, {warnings} warning(s), {checks} checks".format(
+                status=report["status"],
+                **report["summary"],
+            )
+        )
+    return 1 if report["summary"]["failed"] else 0
+
+
 def _git_check_ignore(repo_path: Path, relative_path: str) -> bool:
     result = _run(["git", "check-ignore", "--quiet", relative_path], cwd=repo_path)
     return result.returncode == 0
@@ -4484,6 +4516,15 @@ def build_parser() -> argparse.ArgumentParser:
     infra_doctor.add_argument("--policy", default="infra/github/github-policy.yml")
     infra_doctor.add_argument("--skip-tofu", action="store_true")
     infra_doctor.set_defaults(func=cmd_infra_doctor)
+
+    signing = sub.add_parser("signing")
+    signing_sub = signing.add_subparsers(dest="signing_command", required=True)
+    signing_doctor = signing_sub.add_parser("doctor")
+    signing_doctor.add_argument("--repo", action="append")
+    signing_doctor.add_argument("--all", action="store_true")
+    signing_doctor.add_argument("--no-hooks", action="store_true")
+    signing_doctor.add_argument("--format", choices=["text", "json"], default="text")
+    signing_doctor.set_defaults(func=cmd_signing_doctor)
 
     support = sub.add_parser("support-thread")
     support_sub = support.add_subparsers(dest="support_command", required=True)

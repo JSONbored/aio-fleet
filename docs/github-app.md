@@ -33,18 +33,17 @@ The control-plane workflows resolve automation credentials through
 - If `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
   `AIO_FLEET_APP_PRIVATE_KEY` are present, `aio-fleet` mints a short-lived
   installation token.
-- If app credentials are absent, release/catalog paths may fall back to existing
-  token secrets such as `AIO_FLEET_BOT_TOKEN` while the App path is brought
-  online.
-- The fallback stays in place until generated catalog and release PRs are proven
-  to run required checks and remain mergeable under branch protection with the
-  app identity.
+- Generated commit paths must use that App token. Missing App credentials are a
+  `credential-gap`; do not fall back to a PAT or the repository `GITHUB_TOKEN`
+  for generated release/catalog commits.
+- API commit payloads must not set custom `author`, `committer`, or `signature`
+  fields. GitHub applies bot verification only when the commit is authored by
+  the App/bot identity through the supported API or action path.
 
 Release PR creation should not use `RELEASE_TOKEN` as a generic fallback. That
 token can be valid for release/tag operations while still lacking pull-request
-write access. Prepare-release workflows should prefer a GitHub App token, then
-`AIO_FLEET_BOT_TOKEN`, then the caller job `GITHUB_TOKEN` when no stronger
-automation identity is configured.
+write access and verified bot-signing behavior. Prepare-release workflows should
+fail early when the GitHub App token cannot be created.
 
 Check-runs are stricter than release PRs. The required fleet check is created
 by `aio-fleet check run`, and the long-term path is a GitHub App installation
@@ -69,6 +68,16 @@ contents API with no custom author, committer, or signature fields so GitHub can
 apply bot signature verification. `aio-fleet` then checks the commit API and
 fails before PR creation if GitHub reports `verified=false`.
 
+Run the signing doctor before merging or publishing generated fleet work:
+
+```bash
+python -m aio_fleet signing doctor --all --format json
+```
+
+The doctor checks App credentials, signed-commit branch protection, open
+generated PR commit verification, repo-local workflow writers, local hooks, and
+stray `.trunk/` overlays outside `aio-fleet`.
+
 Do not use GitHub rebase-merge on protected AIO repos. GitHub documents that
 its rebase-merge path rewrites commits and cannot sign those rewritten commits.
 With required signed commits enabled, the secure merge methods are squash or
@@ -89,21 +98,20 @@ newlines.
 
 ## Migration Path
 
-1. Keep `AIO_FLEET_BOT_TOKEN` in place while the workflow and catalog paths stay
-   stable.
-2. Create the GitHub App with the minimal permission set above.
-3. Install it only on active fleet repos and `awesome-unraid`.
+1. Create the GitHub App with the minimal permission set above.
+2. Install it only on active fleet repos, `awesome-unraid`, and `aio-fleet`.
+3. Remove generated-commit PAT fallbacks once App credentials are configured.
 4. Add `AIO_FLEET_APP_ID`, `AIO_FLEET_APP_INSTALLATION_ID`, and
    `AIO_FLEET_APP_PRIVATE_KEY` to `aio-fleet`.
-5. Verify generated PRs and catalog syncs pass required checks using the app
-   identity.
-6. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
-7. Update branch protection to require only `aio-fleet / required` from the
+5. Add `AIO_FLEET_APP_ID` and `AIO_FLEET_APP_PRIVATE_KEY` to repo-local
+   workflow writers that use `actions/create-github-app-token`.
+6. Verify generated PRs and catalog syncs pass required checks using the app
+   identity and report `pull-request-commits-verified=true`.
+7. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
+8. Update branch protection to require only `aio-fleet / required` from the
    GitHub App app ID.
-8. Run `aio-fleet cleanup-repo --verify`, or `aio-fleet cleanup-repo --fix --verify`
+9. Run `aio-fleet cleanup-repo --verify`, or `aio-fleet cleanup-repo --fix --verify`
    when removing known retired shared files.
-9. Remove PAT secrets after the GitHub App path is stable.
 
-The GitHub App is now the intended control-plane identity; PAT secrets are
-temporary fallbacks for any release or registry edge cases that still need
-operator verification.
+The GitHub App is the generated-commit identity. PAT secrets may still exist for
+registry or operator-only release edges, but not for generated PR commits.

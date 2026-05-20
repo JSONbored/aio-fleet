@@ -37,6 +37,7 @@ from aio_fleet.cli import (
     cmd_release_readiness,
     cmd_release_reconcile,
     cmd_security_audit_workflows,
+    cmd_signing_doctor,
     cmd_trunk_audit,
     cmd_trunk_run,
     cmd_upstream_assess,
@@ -319,6 +320,44 @@ repos:
     assert pre_push.exists()  # nosec B101
     assert "validate-catalog --catalog-path" in pre_push.read_text()  # nosec B101
     assert "validate-repo --repo" not in pre_push.read_text()  # nosec B101
+
+
+def test_signing_doctor_cli_outputs_json_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "signing_doctor_report",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "failure_classes": [],
+            "summary": {"checks": 1, "failed": 0, "warnings": 0},
+            "checks": [
+                {
+                    "name": "fleetbot-credentials",
+                    "status": "ok",
+                    "class": "ok",
+                    "detail": "Fleetbot GitHub App credentials are present",
+                }
+            ],
+        },
+    )
+
+    result = cmd_signing_doctor(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            all=False,
+            no_hooks=True,
+            format="json",
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert payload["status"] == "ok"  # nosec B101
 
 
 def test_debt_report_outputs_json_summary(tmp_path: Path, monkeypatch, capsys) -> None:
