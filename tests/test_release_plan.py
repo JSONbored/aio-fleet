@@ -482,6 +482,58 @@ def test_release_plan_ignores_retired_shared_file_cleanup(
     assert plan["state"] == "current"  # nosec B101
 
 
+def test_release_plan_uses_default_non_release_paths_for_docs_only_commits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "penpot-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG PENPOT_VERSION=2.15.3\n")
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "README.md").write_text("old\n")
+    (repo_path / "CHANGELOG.md").write_text("## v2.15.3-aio.1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.15.3-aio.1")
+    _git(repo_path, "tag", "v2.15.3-aio.1")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    (repo_path / "README.md").write_text("new\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "docs(readme): refresh project docs")
+    repo = RepoConfig(
+        name="penpot-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "penpot-aio",
+            "image_name": "jsonbored/penpot-aio",
+            "docker_cache_scope": "penpot-aio-image",
+            "pytest_image_tag": "penpot-aio:pytest",
+            "publish_profile": "changelog-version",
+        },
+        defaults={"non_release_paths": ["README.md", "docs/**"]},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {
+            "state": "ok",
+            "tag": "v2.15.3-aio.1",
+            "target_commitish": release_sha,
+        },
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
 def test_release_plan_outputs_component_specific_alpha_publish_action(
     tmp_path: Path, monkeypatch
 ) -> None:
