@@ -504,6 +504,61 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
     )
 
 
+def test_template_metadata_validation_allows_literal_pipe_values(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Changes>### 2026-05-20
+- Test.</Changes>
+  <Config Name="LDAP query" Target="LDAP_QUERY" Default="(&#124;(uid=:username)(mail=:username))">(&#124;(uid=:username)(mail=:username))</Config>
+</Container>
+""")
+
+    failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
+
+    assert not any(
+        "LDAP query selected value" in failure for failure in failures
+    )  # nosec B101
+
+
+def test_template_metadata_validation_rejects_bad_pipe_dropdown_selection(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Changes>### 2026-05-20
+- Test.</Changes>
+  <Config Name="Mode" Target="MODE" Default="info|debug">warn</Config>
+</Container>
+""")
+
+    failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
+
+    assert (  # nosec B101
+        "example-aio: example-aio.xml Config Mode selected value 'warn' is not one of ['info', 'debug']"
+        in failures
+    )
+
+
 def test_template_metadata_validation_allows_component_changelog_note(
     tmp_path: Path,
 ) -> None:
