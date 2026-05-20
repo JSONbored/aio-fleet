@@ -2674,6 +2674,8 @@ def _component_release_version(repo: RepoConfig, *, component: str = "aio") -> s
     changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     if repo.publish_profile == "template":
         return latest_changelog_version(changelog, semver=True)
+    if repo.publish_profile == "changelog-version":
+        return latest_changelog_version(changelog)
     upstream_version = read_upstream_version(
         repo.path / str(config.get("dockerfile", "Dockerfile")),
         repo.path / str(config.get("upstream_config", "upstream.toml")),
