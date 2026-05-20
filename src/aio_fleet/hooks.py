@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aio_fleet.control_plane import _step_environment
 from aio_fleet.manifest import RepoConfig
+from aio_fleet.trunk_overlay import copy_trunk_overlay
 
 HOOK_NAMES = ("pre-commit", "pre-push")
 
@@ -28,14 +29,12 @@ def run_local_trunk_overlay(
             ["trunk"], 127, "", f"central Trunk config not found: {central_trunk}"
         )
 
+    original_hooks_path = _git_config_get_optional("core.hooksPath", cwd=repo.path)
     repo_trunk = repo.path / ".trunk"
     created_overlay = False
     if not repo_trunk.exists():
-        repo_trunk.mkdir()
         created_overlay = True
-        shutil.copy2(central_trunk / "trunk.yaml", repo_trunk / "trunk.yaml")
-        if (central_trunk / "configs").exists():
-            shutil.copytree(central_trunk / "configs", repo_trunk / "configs")
+        copy_trunk_overlay(central_trunk, repo_trunk)
 
     command = [
         trunk,
@@ -43,6 +42,7 @@ def run_local_trunk_overlay(
         "--show-existing",
         "--no-progress",
         "--color=false",
+        "--ignore=.trunk/**",
         "--ci",
         "--fix" if fix else "--no-fix",
     ]
@@ -60,6 +60,7 @@ def run_local_trunk_overlay(
             env=env,
         )
     finally:
+        _restore_git_config("core.hooksPath", original_hooks_path, cwd=repo.path)
         if created_overlay:
             shutil.rmtree(repo_trunk, ignore_errors=True)
 
@@ -115,6 +116,32 @@ def _run_git(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[st
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"git {' '.join(command)} failed: {detail}")
     return result
+
+
+def _git_config_get_optional(key: str, *, cwd: Path) -> str | None:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", "config", "--get", key],
+        cwd=cwd,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return None
+
+
+def _restore_git_config(key: str, value: str | None, *, cwd: Path) -> None:
+    if value is None:
+        subprocess.run(  # nosec B603 B607
+            ["git", "config", "--unset", key],
+            cwd=cwd,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        return
+    _run_git(["config", key, value], cwd=cwd)
 
 
 def _hook_script(

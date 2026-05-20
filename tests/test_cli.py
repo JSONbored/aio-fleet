@@ -190,6 +190,51 @@ def test_run_local_trunk_overlay_cleans_temporary_config(
     assert not (repo_path / ".trunk").exists()  # nosec B101
 
 
+def test_run_local_trunk_overlay_strips_hook_actions_and_restores_hooks_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    subprocess.run(  # nosec B603 B607
+        ["git", "init"], cwd=repo_path, check=True, capture_output=True
+    )
+    subprocess.run(  # nosec B603 B607
+        ["git", "config", "core.hooksPath", ".git/aio-fleet-hooks"],
+        cwd=repo_path,
+        check=True,
+    )
+    fake_trunk = tmp_path / "trunk"
+    fake_trunk.write_text(
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "import sys\n"
+        "if '--ignore=.trunk/**' not in sys.argv:\n"
+        "    sys.exit(3)\n"
+        "config = Path('.trunk/trunk.yaml').read_text()\n"
+        "if 'trunk-check-pre-push' in config or '\\nactions:' in config:\n"
+        "    sys.exit(2)\n"
+        "subprocess.run(\n"
+        "    ['git', 'config', 'core.hooksPath', '/tmp/trunk-owned-hooks'],\n"
+        "    check=True,\n"
+        ")\n"
+    )
+    fake_trunk.chmod(0o755)
+    monkeypatch.setenv("TRUNK_PATH", str(fake_trunk))
+
+    result = run_local_trunk_overlay(load_manifest(manifest).repo("example-aio"))
+
+    hooks_path = subprocess.run(  # nosec B603 B607
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=repo_path,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert result.returncode == 0  # nosec B101
+    assert hooks_path == ".git/aio-fleet-hooks"  # nosec B101
+    assert not (repo_path / ".trunk").exists()  # nosec B101
+
+
 def test_hooks_install_writes_local_hooks(tmp_path: Path) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
     subprocess.run(  # nosec B603 B607
@@ -1475,6 +1520,7 @@ def test_prerelease_publish_skips_matching_github_prerelease(
             return real_run(command, cwd=cwd, env=env)
         if command[:3] == ["gh", "release", "view"]:
             assert env["GH_TOKEN"] == "release-token"  # nosec B101
+            assert "isLatest" not in command  # nosec B101
             return SimpleNamespace(
                 returncode=0,
                 stdout=json.dumps(
