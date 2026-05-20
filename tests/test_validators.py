@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aio_fleet.manifest import RepoConfig
+from aio_fleet.manifest import RepoConfig, load_manifest
 from aio_fleet.validators import (
     catalog_quality_findings,
     catalog_repo_failures,
@@ -1180,3 +1180,16 @@ def test_runtime_contract_rejects_hidden_required_docker_socket_with_manifest_fl
         "required Docker socket mount must be always visible" in failure
         for failure in failures
     )  # nosec B101
+
+
+def test_fleet_manifest_limits_required_docker_socket_exception_to_nanoclaw() -> None:
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "fleet.yml")
+
+    flagged = sorted(
+        name
+        for name, repo in manifest.repos.items()
+        if isinstance(repo.get("validation", {}), dict)
+        and repo.get("validation", {}).get("docker_socket_required") is True
+    )
+
+    assert flagged == ["nanoclaw-aio"]  # nosec B101
