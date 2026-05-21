@@ -11,9 +11,18 @@ from typing import Any
 
 import yaml
 
+from aio_fleet.changelog import component_config
 from aio_fleet.control_plane import _secret_environment_key
-from aio_fleet.manifest import load_manifest
+from aio_fleet.manifest import RepoConfig, load_manifest
 from aio_fleet.poll import publish_components_required
+from aio_fleet.upstream import (
+    UpstreamMonitorResult,
+    _upstream_commit_paths,
+    create_or_update_upstream_pr,
+    monitor_configs,
+    read_arg,
+    result_dict,
+)
 
 
 def _sanitized_subprocess_env() -> dict[str, str]:
@@ -24,21 +33,21 @@ def _sanitized_subprocess_env() -> dict[str, str]:
     }
 
 
-def _upstream_monitor_subprocess_env(*, mutate: bool) -> dict[str, str]:
-    env = _sanitized_subprocess_env()
-    if mutate:
-        upstream_token = (
-            os.environ.get("AIO_FLEET_WORKFLOW_TOKEN", "").strip()
-            or os.environ.get("APP_TOKEN", "").strip()
-            or os.environ.get("AIO_FLEET_CHECK_TOKEN", "").strip()
-            or os.environ.get("GH_TOKEN", "").strip()
+def _upstream_monitor_subprocess_env() -> dict[str, str]:
+    return _sanitized_subprocess_env()
+
+
+def _secret_environment_keys() -> list[str]:
+    return sorted(key for key in os.environ if _secret_environment_key(key))
+
+
+def _assert_secretless_launcher() -> None:
+    unsafe = _secret_environment_keys()
+    if unsafe:
+        raise RuntimeError(
+            "refusing to launch generator-capable upstream monitor children from "
+            "a secret-bearing process: " + ", ".join(unsafe)
         )
-        check_token = os.environ.get("AIO_FLEET_CHECK_TOKEN", "").strip()
-        if upstream_token:
-            env["AIO_FLEET_UPSTREAM_TOKEN"] = upstream_token
-        if check_token:
-            env["AIO_FLEET_CHECK_TOKEN"] = check_token
-    return env
 
 
 def poll_outputs(
@@ -195,33 +204,65 @@ def checkout_dashboard_repos(
     return {"repos": results, "manifest": str(output_manifest)}
 
 
-def upstream_monitor_checkouts(
+def checkout_upstream_monitor_repos(
     *,
     manifest_path: Path,
     checkout_root: Path,
-    output_path: Path,
+    output_manifest: Path,
+    output_path: Path | None = None,
     token: str,
-    mutate: bool,
-    dry_run: bool,
 ) -> dict[str, Any]:
     manifest = yaml.safe_load(manifest_path.read_text()) or {}
     owner = manifest["owner"]
     checkout_root.mkdir(exist_ok=True)
     report: dict[str, Any] = {"repos": []}
-    status = 0
     for repo, repo_config in manifest["repos"].items():
+        worktree = checkout_root / repo
+        repo_config["path"] = str(worktree)
         if repo_config.get("publish_profile") == "template":
             report["repos"].append({"repo": repo, "skipped": "manual-template"})
             continue
-        worktree = checkout_root / repo
         checkout = _checkout_refs(
             [(repo, repo_config.get("github_repo", f"{owner}/{repo}"), worktree)],
             token=token,
             submodules="required",
         )[0]
         if checkout.get("error"):
-            status = 1
             report["repos"].append({"repo": repo, "error": checkout["error"]})
+            continue
+        report["repos"].append({"repo": repo, "path": str(worktree)})
+    output_manifest.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    if output_path:
+        output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
+def upstream_monitor_checkouts(
+    *,
+    manifest_path: Path,
+    output_path: Path,
+    mutate: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    _assert_secretless_launcher()
+    manifest = yaml.safe_load(manifest_path.read_text()) or {}
+    report: dict[str, Any] = {"repos": []}
+    status = 0
+    for repo, repo_config in manifest["repos"].items():
+        if repo_config.get("publish_profile") == "template":
+            report["repos"].append({"repo": repo, "skipped": "manual-template"})
+            continue
+        worktree_value = str(repo_config.get("path", "") or "").strip()
+        if not worktree_value:
+            status = 1
+            report["repos"].append({"repo": repo, "error": "missing checkout path"})
+            continue
+        worktree = Path(worktree_value)
+        if not worktree.exists():
+            status = 1
+            report["repos"].append(
+                {"repo": repo, "error": f"checkout path does not exist: {worktree}"}
+            )
             continue
         args = [
             sys.executable,
@@ -237,7 +278,7 @@ def upstream_monitor_checkouts(
             "json",
         ]
         if mutate:
-            args.extend(["--write", "--create-pr", "--post-check"])
+            args.append("--write")
         if dry_run:
             args.append("--dry-run")
         run = subprocess.run(  # nosec B603
@@ -245,7 +286,7 @@ def upstream_monitor_checkouts(
             check=False,
             text=True,
             capture_output=True,
-            env=_upstream_monitor_subprocess_env(mutate=mutate),
+            env=_upstream_monitor_subprocess_env(),
         )
         if run.stderr:
             print(run.stderr, file=sys.stderr, end="")
@@ -267,6 +308,339 @@ def upstream_monitor_checkouts(
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     report["status"] = status
     return report
+
+
+def apply_upstream_monitor_actions(
+    *, manifest_path: Path, checkout_root: Path, report_path: Path, output_path: Path
+) -> dict[str, Any]:
+    manifest = load_manifest(manifest_path)
+    report = _read_json(report_path, default={"repos": []})
+    items = report.get("repos", [])
+    items = items if isinstance(items, list) else []
+    output: dict[str, Any] = {"repos": []}
+    status = int(report.get("status", 0) or 0)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        repo_name = str(item.get("repo", "") or "")
+        if item.get("error") or item.get("skipped"):
+            output["repos"].append(dict(item))  # type: ignore[index]
+            continue
+        try:
+            repo = _repo_with_path(manifest.repo(repo_name), checkout_root / repo_name)
+            if not repo.path.exists():
+                raise ValueError(f"{repo.name}: checkout path does not exist")
+            _validate_upstream_report_item(repo, item)
+            updated = _append_upstream_monitor_actions(repo, [item])
+            output["repos"].extend(updated)  # type: ignore[index]
+        except Exception as exc:
+            status = 1
+            output["repos"].append(  # type: ignore[index]
+                {"repo": repo_name, "error": str(exc), "partial_results": item}
+            )
+    output["status"] = status
+    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    return output
+
+
+def validate_upstream_monitor_report(
+    *, manifest_path: Path, checkout_root: Path, report_path: Path, output_path: Path
+) -> dict[str, Any]:
+    manifest = load_manifest(manifest_path)
+    report = _read_json(report_path, default={"repos": []})
+    items = report.get("repos", [])
+    items = items if isinstance(items, list) else []
+    output: dict[str, Any] = {"repos": []}
+    status = int(report.get("status", 0) or 0)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        repo_name = str(item.get("repo", "") or "")
+        if item.get("error") or item.get("skipped"):
+            output["repos"].append(dict(item))  # type: ignore[index]
+            continue
+        try:
+            repo = _repo_with_path(manifest.repo(repo_name), checkout_root / repo_name)
+            if not repo.path.exists():
+                raise ValueError(f"{repo.name}: checkout path does not exist")
+            _validate_upstream_report_item(repo, item)
+            results_payload = item.get("results", [])
+            results = [
+                _trusted_upstream_result_from_dict(repo, result)
+                for result in results_payload
+                if isinstance(result, dict)
+            ]
+            output["repos"].append(  # type: ignore[index]
+                {
+                    "repo": repo.name,
+                    "results": [result_dict(result) for result in results],
+                    "actions": [],
+                }
+            )
+        except Exception as exc:
+            status = 1
+            output["repos"].append(  # type: ignore[index]
+                {"repo": repo_name, "error": str(exc), "partial_results": item}
+            )
+    output["status"] = status
+    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    return output
+
+
+def _repo_with_path(repo: RepoConfig, path: Path) -> RepoConfig:
+    raw = dict(repo.raw)
+    raw["path"] = str(path)
+    return RepoConfig(name=repo.name, raw=raw, defaults=repo.defaults, owner=repo.owner)
+
+
+def _append_upstream_monitor_actions(
+    repo: RepoConfig, repo_items: Any
+) -> list[dict[str, Any]]:
+    items = repo_items if isinstance(repo_items, list) else []
+    updated: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("repo") != repo.name or item.get("error") or item.get("skipped"):
+            updated.append(dict(item))
+            continue
+        results_payload = item.get("results", [])
+        results = [
+            _upstream_result_from_dict(repo, result)
+            for result in results_payload
+            if isinstance(result, dict)
+        ]
+        actions = (
+            list(item.get("actions", []))
+            if isinstance(item.get("actions"), list)
+            else []
+        )
+        blocked = [result for result in results if result.blocked]
+        writeable_updates = [
+            result
+            for result in results
+            if result.updates_available
+            and result.strategy == "pr"
+            and not result.blocked
+        ]
+        if blocked:
+            actions.append(
+                {
+                    "repo": repo.name,
+                    "action": "skipped",
+                    "reason": "blocked-upstream-update",
+                    "blockers": [result_dict(result) for result in blocked],
+                }
+            )
+        if writeable_updates:
+            actions.append(
+                create_or_update_upstream_pr(
+                    repo,
+                    results,
+                    dry_run=False,
+                    post_check=True,
+                )
+            )
+        merged = dict(item)
+        merged["actions"] = actions
+        updated.append(merged)
+    return updated
+
+
+def _validate_upstream_report_item(repo: RepoConfig, item: dict[str, Any]) -> None:
+    if item.get("repo") != repo.name:
+        raise ValueError(f"{repo.name}: report repo mismatch")
+    actions = item.get("actions", [])
+    if actions not in ([], None):
+        raise ValueError(f"{repo.name}: refusing untrusted child actions")
+    results_payload = item.get("results", [])
+    if not isinstance(results_payload, list):
+        raise ValueError(f"{repo.name}: results must be a list")
+    results = [
+        _trusted_upstream_result_from_dict(repo, result)
+        for result in results_payload
+        if isinstance(result, dict)
+    ]
+    writeable_updates = [
+        result
+        for result in results
+        if result.updates_available and result.strategy == "pr" and not result.blocked
+    ]
+    if not writeable_updates:
+        return
+    _validate_allowed_upstream_diff(repo, writeable_updates)
+    for result in writeable_updates:
+        if result.version_update:
+            _assert_arg_equals(
+                result.dockerfile, result.version_key, result.latest_version
+            )
+        if result.digest_update and result.digest_key:
+            _assert_arg_equals(
+                result.dockerfile, result.digest_key, result.latest_digest
+            )
+        config = component_config(repo, result.component)
+        revision_arg = str(config.get("registry_revision_arg", "") or "").strip()
+        if revision_arg and result.version_update:
+            _assert_arg_equals(result.dockerfile, revision_arg, "1")
+
+
+def _trusted_upstream_result_from_dict(
+    repo: RepoConfig, data: dict[str, Any]
+) -> UpstreamMonitorResult:
+    component = str(data.get("component", "aio"))
+    configs = _monitor_configs_by_component(repo)
+    config = configs.get(component)
+    if config is None:
+        raise ValueError(f"{repo.name}: unexpected upstream component: {component}")
+    expected_repo = str(data.get("repo", repo.name))
+    if expected_repo != repo.name:
+        raise ValueError(f"{repo.name}: result repo mismatch: {expected_repo}")
+    expected_strategy = str(config.get("strategy", "notify"))
+    expected_source = str(config.get("source", "manual"))
+    if str(data.get("strategy", "")) != expected_strategy:
+        raise ValueError(f"{repo.name}:{component}: strategy mismatch")
+    if str(data.get("source", "")) != expected_source:
+        raise ValueError(f"{repo.name}:{component}: source mismatch")
+    dockerfile = _trusted_monitor_dockerfile(repo, config)
+    reported_dockerfile = Path(str(data.get("dockerfile", "") or dockerfile))
+    if reported_dockerfile != dockerfile:
+        raise ValueError(f"{repo.name}:{component}: dockerfile mismatch")
+    skipped_versions = data.get("skipped_versions", ())
+    if not isinstance(skipped_versions, list):
+        skipped_versions = []
+    version_update = bool(data.get("version_update", False))
+    digest_update = bool(data.get("digest_update", False))
+    current_version = _safe_report_value(data.get("current_version", ""))
+    latest_version = _safe_report_value(data.get("latest_version", ""))
+    current_digest = _safe_report_value(data.get("current_digest", ""))
+    latest_digest = _safe_report_value(data.get("latest_digest", ""))
+    if version_update and current_version == latest_version:
+        raise ValueError(f"{repo.name}:{component}: invalid version update")
+    if digest_update and current_digest == latest_digest:
+        raise ValueError(f"{repo.name}:{component}: invalid digest update")
+    return UpstreamMonitorResult(
+        repo=repo.name,
+        component=component,
+        name=str(config.get("name", component)),
+        strategy=expected_strategy,
+        source=expected_source,
+        current_version=current_version,
+        latest_version=latest_version,
+        current_digest=current_digest,
+        latest_digest=latest_digest,
+        version_update=version_update,
+        digest_update=digest_update,
+        dockerfile=dockerfile,
+        version_key=str(
+            config.get("version_key", repo.get("upstream_version_key", ""))
+        ),
+        digest_key=str(config.get("digest_key", repo.get("upstream_digest_arg", ""))),
+        release_notes_url=str(config.get("release_notes_url", "")),
+        submodule_path=str(config.get("submodule_path", "")),
+        submodule_ref=_safe_report_value(data.get("submodule_ref", "")),
+        skipped_versions=tuple(
+            item for item in skipped_versions if isinstance(item, dict)
+        ),
+        blocked_reason=str(data.get("blocked_reason", "")),
+        next_action=str(data.get("next_action", "")),
+    )
+
+
+def _upstream_result_from_dict(
+    repo: RepoConfig, data: dict[str, Any]
+) -> UpstreamMonitorResult:
+    return _trusted_upstream_result_from_dict(repo, data)
+
+
+def _monitor_configs_by_component(repo: RepoConfig) -> dict[str, dict[str, Any]]:
+    configs: dict[str, dict[str, Any]] = {}
+    for config in monitor_configs(repo):
+        component = str(config.get("component", "aio"))
+        if component in configs:
+            raise ValueError(f"{repo.name}: duplicate upstream component: {component}")
+        configs[component] = config
+    return configs
+
+
+def _trusted_monitor_dockerfile(repo: RepoConfig, config: dict[str, Any]) -> Path:
+    relative = Path(str(config.get("dockerfile", "Dockerfile")))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{repo.name}: unsafe upstream dockerfile path: {relative}")
+    path = repo.path / relative
+    _assert_under_repo(repo, path)
+    return path
+
+
+def _validate_allowed_upstream_diff(
+    repo: RepoConfig, results: list[UpstreamMonitorResult]
+) -> None:
+    commit_paths = _safe_commit_paths(
+        repo,
+        _upstream_commit_paths(repo, results, repo.list_value("upstream_commit_paths")),
+    )
+    changed_paths = _changed_paths(repo.path)
+    unexpected = sorted(changed_paths.difference(commit_paths))
+    if unexpected:
+        raise ValueError(
+            f"{repo.name}: unexpected upstream monitor changes: "
+            + ", ".join(unexpected)
+        )
+
+
+def _safe_commit_paths(repo: RepoConfig, paths: set[str]) -> set[str]:
+    safe: set[str] = set()
+    for value in paths:
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts or not str(path):
+            raise ValueError(f"{repo.name}: unsafe upstream commit path: {value}")
+        _assert_under_repo(repo, repo.path / path)
+        safe.add(path.as_posix())
+    return safe
+
+
+def _changed_paths(repo_path: Path) -> set[str]:
+    run = subprocess.run(  # nosec B603
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if run.returncode != 0:
+        detail = (run.stderr or run.stdout).strip()
+        raise RuntimeError(
+            f"git status failed while validating upstream diff: {detail}"
+        )
+    paths: set[str] = set()
+    for line in run.stdout.splitlines():
+        if not line:
+            continue
+        raw = line[3:]
+        if " -> " in raw:
+            raise ValueError(f"refusing renamed upstream monitor path: {raw}")
+        paths.add(Path(raw).as_posix())
+    return paths
+
+
+def _assert_arg_equals(dockerfile: Path, arg_name: str, expected: str) -> None:
+    if not arg_name:
+        return
+    observed = read_arg(dockerfile, arg_name)
+    if observed != expected:
+        raise ValueError(
+            f"{dockerfile.name}: expected ARG {arg_name}={expected}, got {observed}"
+        )
+
+
+def _safe_report_value(value: object) -> str:
+    text = str(value)
+    if any(char in text for char in "\r\n\0"):
+        raise ValueError("upstream report value contains control characters")
+    return text
+
+
+def _assert_under_repo(repo: RepoConfig, path: Path) -> None:
+    path.resolve().relative_to(repo.path.resolve())
 
 
 def registry_audit_checkouts(

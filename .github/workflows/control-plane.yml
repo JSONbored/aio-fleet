@@ -290,33 +290,86 @@ jobs:
           fi
           python -m aio_fleet "${poll_args[@]}"
 
-      - name: Monitor upstream releases
+      - name: Checkout upstream monitor repos
         if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         env:
           AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
-          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
-        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout and PR creation
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for checkout auth
         run: |
           set -euo pipefail
           if [[ -z "${AIO_FLEET_WORKFLOW_TOKEN}" ]]; then
             echo "Unable to resolve a GitHub App token for upstream monitoring" >&2
             exit 1
           fi
-          args=(workflow upstream-monitor --output upstream-report.json)
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          mkdir -p "${handoff}"
+          python -m aio_fleet workflow checkout-upstream \
+            --checkout-root "${handoff}/checkouts" \
+            --output-manifest "${handoff}/manifest.yml" \
+            --output "${handoff}/checkout-report.json"
+
+      - name: Monitor upstream releases
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          args=(workflow upstream-monitor --manifest "${handoff}/manifest.yml" --output "${handoff}/report.json")
           if [[ "${MUTATE}" == "true" ]]; then
             args+=(--mutate)
           fi
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
           fi
-          python -m aio_fleet "${args[@]}"
+          env -i \
+            HOME="${HOME}" \
+            PATH="${PATH}" \
+            python -m aio_fleet "${args[@]}"
+
+      - name: Restore trusted aio-fleet after upstream monitor
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        run: |
+          set -euo pipefail
+          git reset --hard HEAD
+          git clean -ffdx
+          python -m pip install --force-reinstall .
+
+      - name: Validate upstream monitor handoff
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          python -m aio_fleet workflow upstream-validate \
+            --manifest fleet.yml \
+            --checkout-root "${handoff}/checkouts" \
+            --input "${handoff}/report.json" \
+            --output "${handoff}/validated-report.json"
+
+      - name: Apply upstream monitor actions
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
+          AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+        #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token after tokenless generator monitoring completes
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          python -m aio_fleet workflow upstream-actions \
+            --manifest fleet.yml \
+            --checkout-root "${handoff}/checkouts" \
+            --input "${handoff}/validated-report.json" \
+            --output "${handoff}/report.with-actions.json"
+          cp "${handoff}/report.with-actions.json" upstream-report.json
 
       - name: Publish upstream summary
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
         run: |
           set -euo pipefail
+          if [[ ! -f upstream-report.json && -f "${RUNNER_TEMP}/upstream-monitor/report.json" ]]; then
+            cp "${RUNNER_TEMP}/upstream-monitor/report.json" upstream-report.json
+          fi
           python -m aio_fleet workflow upstream-summary \
             --input upstream-report.json \
             --output upstream-summary.md

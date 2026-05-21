@@ -74,13 +74,42 @@ def test_control_plane_manual_runs_require_default_branch_before_checkout() -> N
 
 def test_upstream_monitor_scopes_git_auth_without_standard_tokens() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
+    checkout = _step(
+        workflow["jobs"]["control-plane"], "Checkout upstream monitor repos"
+    )
     monitor = _step(workflow["jobs"]["control-plane"], "Monitor upstream releases")
+    restore = _step(
+        workflow["jobs"]["control-plane"],
+        "Restore trusted aio-fleet after upstream monitor",
+    )
+    validate = _step(
+        workflow["jobs"]["control-plane"], "Validate upstream monitor handoff"
+    )
+    apply = _step(workflow["jobs"]["control-plane"], "Apply upstream monitor actions")
 
-    assert "AIO_FLEET_WORKFLOW_TOKEN" in monitor["env"]  # nosec B101
-    assert "AIO_FLEET_CHECK_TOKEN" in monitor["env"]  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" in checkout["env"]  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in checkout["env"]  # nosec B101
+    assert "workflow checkout-upstream" in checkout["run"]  # nosec B101
+    assert "${RUNNER_TEMP}/upstream-monitor" in checkout["run"]  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in monitor.get("env", {})  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in monitor.get("env", {})  # nosec B101
     assert "GH_TOKEN" not in monitor["env"]  # nosec B101
     assert "GITHUB_TOKEN" not in monitor["env"]  # nosec B101
     assert "workflow upstream-monitor" in monitor["run"]  # nosec B101
+    assert "${RUNNER_TEMP}/upstream-monitor" in monitor["run"]  # nosec B101
+    assert "env -i" in monitor["run"]  # nosec B101
+    assert "git reset --hard HEAD" in restore["run"]  # nosec B101
+    assert "git clean -ffdx" in restore["run"]  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in restore.get("env", {})  # nosec B101
+    assert "workflow upstream-validate" in validate["run"]  # nosec B101
+    assert "validated-report.json" in validate["run"]  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in validate.get("env", {})  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" in apply["env"]  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" in apply["env"]  # nosec B101
+    assert "workflow upstream-actions" in apply["run"]  # nosec B101
+    assert "--manifest fleet.yml" in apply["run"]  # nosec B101
+    assert "--checkout-root" in apply["run"]  # nosec B101
+    assert "validated-report.json" in apply["run"]  # nosec B101
     assert "extraheader=AUTHORIZATION" not in monitor["run"]  # nosec B101
     assert '"config",' not in monitor["run"]  # nosec B101
 

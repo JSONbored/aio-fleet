@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -11,6 +12,57 @@ from aio_fleet.workflow_jobs import (
     render_registry_summary,
     render_upstream_summary,
 )
+
+
+def _write_upstream_workflow_manifest(tmp_path: Path, checkout: Path) -> Path:
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {checkout}
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio
+    pytest_image_tag: sure-aio:pytest
+    upstream_monitor:
+      - component: aio
+        name: Sure
+        source: github-releases
+        repo: sureapp/sure
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        strategy: pr
+        release_notes_url: https://example.test/releases
+""")
+    return manifest
+
+
+def _upstream_update_payload(checkout: Path) -> dict[str, object]:
+    return {
+        "repo": "sure-aio",
+        "component": "aio",
+        "name": "Sure",
+        "strategy": "pr",
+        "source": "github-releases",
+        "current_version": "1.0.0",
+        "latest_version": "1.0.1",
+        "current_digest": "",
+        "latest_digest": "",
+        "version_update": True,
+        "digest_update": False,
+        "updates_available": True,
+        "dockerfile": str(checkout / "Dockerfile"),
+        "release_notes_url": "https://example.test/releases",
+        "state": "updates",
+    }
+
+
+def _clear_secret_env(monkeypatch) -> None:
+    for key in list(os.environ):
+        if workflow_jobs._secret_environment_key(key):
+            monkeypatch.delenv(key, raising=False)
 
 
 def test_poll_outputs_writes_github_matrix(tmp_path: Path) -> None:
@@ -201,12 +253,13 @@ repos:
     assert "sure-alpha" not in rows  # nosec B101
 
 
-def test_upstream_monitor_checkouts_sanitizes_subprocess_tokens(
+def test_checkout_upstream_monitor_repos_writes_token_checkout_manifest(
     monkeypatch, tmp_path: Path
 ) -> None:
     manifest = tmp_path / "fleet.yml"
     checkout_root = tmp_path / "checkouts"
-    output = tmp_path / "upstream-report.json"
+    output_manifest = tmp_path / "upstream.manifest.yml"
+    output = tmp_path / "checkout-report.json"
     manifest.write_text("""
 owner: JSONbored
 repos:
@@ -218,8 +271,14 @@ repos:
     docker_cache_scope: sure-aio
     pytest_image_tag: sure-aio:pytest
 """)
+    observed_refs: list[tuple[str, str, Path]] = []
+    observed_token = ""
 
     def fake_checkout_refs(refs, *, token: str, submodules: str):
+        nonlocal observed_token
+        observed_refs.extend(refs)
+        observed_token = token
+        assert submodules == "required"  # nosec B101
         results = []
         for name, github_repo, path in refs:
             path.mkdir(parents=True)
@@ -228,6 +287,61 @@ repos:
             )
         return results
 
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+
+    report = workflow_jobs.checkout_upstream_monitor_repos(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_manifest=output_manifest,
+        output_path=output,
+        token="checkout-token",  # nosec B106
+    )
+
+    assert observed_token == "checkout-token"  # nosec B101
+    assert observed_refs == [  # nosec B101
+        ("sure-aio", "JSONbored/sure-aio", checkout_root / "sure-aio")
+    ]
+    assert report["repos"] == [  # nosec B101
+        {"repo": "sure-aio", "path": str(checkout_root / "sure-aio")}
+    ]
+    assert "path: " in output_manifest.read_text()  # nosec B101
+    assert (
+        json.loads(output.read_text())["repos"][0]["repo"] == "sure-aio"
+    )  # nosec B101
+
+
+def test_upstream_monitor_checkouts_rejects_secret_bearing_launcher(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    output = tmp_path / "upstream-report.json"
+
+    _clear_secret_env(monkeypatch)
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
+
+    try:
+        workflow_jobs.upstream_monitor_checkouts(
+            manifest_path=manifest,
+            output_path=output,
+            mutate=True,
+            dry_run=False,
+        )
+    except RuntimeError as error:
+        assert "secret-bearing process" in str(error)  # nosec B101
+        assert "AIO_FLEET_WORKFLOW_TOKEN" in str(error)  # nosec B101
+    else:
+        raise AssertionError("expected secret-bearing launcher refusal")
+
+
+def test_upstream_monitor_checkouts_sanitizes_subprocess_tokens(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    output = tmp_path / "upstream-report.json"
     observed_env: dict[str, str] = {}
 
     def fake_run(args, **kwargs):
@@ -243,23 +357,13 @@ repos:
             args, 0, json.dumps({"repos": [{"repo": "sure-aio", "results": []}]}), ""
         )
 
-    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
     monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
-    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
-    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
-    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
-    monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub")
-    monkeypatch.setenv("CUSTOM_WEBHOOK_URL", "webhook")
+    _clear_secret_env(monkeypatch)
     monkeypatch.setenv("SAFE_TEST_KEY", "present")
-    monkeypatch.setenv("APP_TOKEN", "app")
-    monkeypatch.setenv("GH_TOKEN", "gh")
-    monkeypatch.setenv("GITHUB_TOKEN", "github")
 
     report = workflow_jobs.upstream_monitor_checkouts(
         manifest_path=manifest,
-        checkout_root=checkout_root,
         output_path=output,
-        token="token",  # nosec B106
         mutate=False,
         dry_run=False,
     )
@@ -276,36 +380,18 @@ repos:
     assert "GITHUB_TOKEN" not in observed_env  # nosec B101
 
 
-def test_upstream_monitor_checkouts_uses_minimal_mutation_auth_env(
+def test_upstream_monitor_checkouts_keeps_mutation_child_tokenless(
     monkeypatch, tmp_path: Path
 ) -> None:
-    manifest = tmp_path / "fleet.yml"
-    checkout_root = tmp_path / "checkouts"
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
     output = tmp_path / "upstream-report.json"
-    manifest.write_text("""
-owner: JSONbored
-repos:
-  sure-aio:
-    path: /tmp/sure-aio
-    public: true
-    app_slug: sure-aio
-    image_name: jsonbored/sure-aio
-    docker_cache_scope: sure-aio
-    pytest_image_tag: sure-aio:pytest
-""")
-
-    def fake_checkout_refs(refs, *, token: str, submodules: str):
-        results = []
-        for name, github_repo, path in refs:
-            path.mkdir(parents=True)
-            results.append(
-                {"repo": name, "github_repo": github_repo, "path": str(path)}
-            )
-        return results
-
     observed_env: dict[str, str] = {}
+    observed_args: list[str] = []
 
     def fake_run(args, **kwargs):
+        observed_args.extend(args)
         env = kwargs.get("env")
         assert isinstance(env, dict)  # nosec B101
         observed_env.update(env)
@@ -313,31 +399,24 @@ repos:
             args, 0, json.dumps({"repos": [{"repo": "sure-aio", "results": []}]}), ""
         )
 
-    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
     monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
-    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
-    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
-    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
-    monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub")
-    monkeypatch.setenv("CUSTOM_WEBHOOK_URL", "webhook")
+    _clear_secret_env(monkeypatch)
     monkeypatch.setenv("SAFE_TEST_KEY", "present")
-    monkeypatch.setenv("APP_TOKEN", "app")
-    monkeypatch.setenv("GH_TOKEN", "gh")
-    monkeypatch.setenv("GITHUB_TOKEN", "github")
 
     report = workflow_jobs.upstream_monitor_checkouts(
         manifest_path=manifest,
-        checkout_root=checkout_root,
         output_path=output,
-        token="token",  # nosec B106
         mutate=True,
         dry_run=False,
     )
 
     assert report["status"] == 0  # nosec B101
     assert observed_env.get("SAFE_TEST_KEY") == "present"  # nosec B101
-    assert observed_env.get("AIO_FLEET_UPSTREAM_TOKEN") == "workflow"  # nosec B101
-    assert observed_env.get("AIO_FLEET_CHECK_TOKEN") == "check"  # nosec B101
+    assert "--write" in observed_args  # nosec B101
+    assert "--create-pr" not in observed_args  # nosec B101
+    assert "--post-check" not in observed_args  # nosec B101
+    assert "AIO_FLEET_UPSTREAM_TOKEN" not in observed_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in observed_env  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed_env  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in observed_env  # nosec B101
     assert "DOCKERHUB_TOKEN" not in observed_env  # nosec B101
@@ -345,6 +424,182 @@ repos:
     assert "APP_TOKEN" not in observed_env  # nosec B101
     assert "GH_TOKEN" not in observed_env  # nosec B101
     assert "GITHUB_TOKEN" not in observed_env  # nosec B101
+
+
+def test_apply_upstream_monitor_actions_creates_pr_from_trusted_parent(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    dockerfile = checkout / "Dockerfile"
+    dockerfile.write_text("ARG UPSTREAM_VERSION=1.0.1\n")
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report_path = tmp_path / "upstream-report.json"
+    output = tmp_path / "upstream-report.json"
+    observed_parent: dict[str, object] = {}
+
+    def fake_create_or_update_upstream_pr(
+        repo, results, *, dry_run: bool, post_check: bool
+    ):
+        observed_parent["repo_path"] = repo.path
+        observed_parent["components"] = [result.component for result in results]
+        observed_parent["dry_run"] = dry_run
+        observed_parent["post_check"] = post_check
+        return {"repo": repo.name, "action": "upserted-pr", "branch": "codex/test"}
+
+    monkeypatch.setattr(
+        workflow_jobs,
+        "create_or_update_upstream_pr",
+        fake_create_or_update_upstream_pr,
+    )
+    monkeypatch.setattr(workflow_jobs, "_changed_paths", lambda _path: {"Dockerfile"})
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
+    report_path.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "sure-aio",
+                        "results": [_upstream_update_payload(checkout)],
+                        "actions": [],
+                    }
+                ],
+                "status": 0,
+            }
+        )
+    )
+
+    report = workflow_jobs.apply_upstream_monitor_actions(
+        manifest_path=manifest,
+        checkout_root=tmp_path / "checkouts",
+        report_path=report_path,
+        output_path=output,
+    )
+
+    assert report["status"] == 0  # nosec B101
+    assert observed_parent == {  # nosec B101
+        "repo_path": checkout,
+        "components": ["aio"],
+        "dry_run": False,
+        "post_check": True,
+    }
+    actions = report["repos"][0]["actions"]
+    assert actions == [  # nosec B101
+        {"repo": "sure-aio", "action": "upserted-pr", "branch": "codex/test"}
+    ]
+
+
+def test_validate_upstream_monitor_report_normalizes_handoff(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    (checkout / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.1\n")
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report_path = tmp_path / "upstream-report.json"
+    output = tmp_path / "validated-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "sure-aio",
+                        "results": [_upstream_update_payload(checkout)],
+                        "actions": [],
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(workflow_jobs, "_changed_paths", lambda _path: {"Dockerfile"})
+
+    report = workflow_jobs.validate_upstream_monitor_report(
+        manifest_path=manifest,
+        checkout_root=tmp_path / "checkouts",
+        report_path=report_path,
+        output_path=output,
+    )
+
+    assert report["status"] == 0  # nosec B101
+    assert report["repos"][0]["actions"] == []  # nosec B101
+    assert report["repos"][0]["results"][0]["latest_version"] == "1.0.1"  # nosec B101
+    assert json.loads(output.read_text()) == report  # nosec B101
+
+
+def test_apply_upstream_monitor_actions_rejects_untrusted_child_actions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    (checkout / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.1\n")
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report_path = tmp_path / "upstream-report.json"
+    output = tmp_path / "upstream-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "sure-aio",
+                        "results": [_upstream_update_payload(checkout)],
+                        "actions": [{"action": "upserted-pr"}],
+                    }
+                ]
+            }
+        )
+    )
+
+    report = workflow_jobs.apply_upstream_monitor_actions(
+        manifest_path=manifest,
+        checkout_root=tmp_path / "checkouts",
+        report_path=report_path,
+        output_path=output,
+    )
+
+    assert report["status"] == 1  # nosec B101
+    assert (
+        "refusing untrusted child actions" in report["repos"][0]["error"]
+    )  # nosec B101
+
+
+def test_apply_upstream_monitor_actions_rejects_unexpected_diff(
+    monkeypatch, tmp_path: Path
+) -> None:
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    checkout.mkdir(parents=True)
+    (checkout / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.1\n")
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report_path = tmp_path / "upstream-report.json"
+    output = tmp_path / "upstream-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "sure-aio",
+                        "results": [_upstream_update_payload(checkout)],
+                        "actions": [],
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(
+        workflow_jobs, "_changed_paths", lambda _path: {"Dockerfile", "evil.sh"}
+    )
+
+    report = workflow_jobs.apply_upstream_monitor_actions(
+        manifest_path=manifest,
+        checkout_root=tmp_path / "checkouts",
+        report_path=report_path,
+        output_path=output,
+    )
+
+    assert report["status"] == 1  # nosec B101
+    assert (
+        "unexpected upstream monitor changes" in report["repos"][0]["error"]
+    )  # nosec B101
 
 
 def test_checkout_refs_uses_bounded_single_branch_clone(
