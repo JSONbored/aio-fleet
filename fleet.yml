@@ -19,6 +19,7 @@ defaults:
   publish_platforms: linux/amd64,linux/arm64
   integration_pytest_args: tests/integration -m integration
   non_release_paths:
+    - .aio-fleet.yml
     - README.md
     - AGENTS.md
     - docs/**
