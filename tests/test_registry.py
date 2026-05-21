@@ -130,6 +130,54 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" in tags.ghcr  # nosec B101
 
 
+def test_registry_sha_tag_skips_non_publish_manifest_followup(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "0.7.0"
+    )
+    monkeypatch.setattr(
+        registry,
+        "latest_component_changelog_version",
+        lambda *_args, **_kwargs: "0.7.0-aio.2",
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "log",
+            "--format=%s",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "chore(fleet): reconcile app manifest"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return ".aio-fleet.yml"
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
+
+    include_sha_tag = registry.registry_sha_tag_required(
+        repo, component="aio", sha=publish_sha
+    )
+    tags = registry.compute_registry_tags(
+        repo, sha=publish_sha, component="aio", include_sha_tag=include_sha_tag
+    )
+
+    assert include_sha_tag is False  # nosec B101
+    assert tags.release_package_tag == "0.7.0-aio.2"  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.2" in tags.dockerhub  # nosec B101
+    assert f"jsonbored/sure-aio:sha-{publish_sha}" not in tags.dockerhub  # nosec B101
+
+
 def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
     release_sha = "c" * 40
@@ -326,7 +374,7 @@ def test_component_release_tag_allows_other_component_release_followup(
             "--name-only",
             f"{release_sha}..{publish_sha}",
         ):
-            return "CHANGELOG.md\nsignoz-agent.xml"
+            return "CHANGELOG.md\nsignoz-agent.xml\n.aio-fleet.yml"
         raise AssertionError(f"unexpected git call: {(command, *args)}")
 
     monkeypatch.setattr(registry, "git", fake_git)
@@ -338,7 +386,7 @@ def test_component_release_tag_allows_other_component_release_followup(
     assert "ghcr.io/jsonbored/signoz-aio:v0.124.0-aio.1" in tags.ghcr  # nosec B101
 
 
-def test_component_release_tag_rejects_other_component_runtime_followup(
+def test_component_release_tag_allows_other_component_runtime_followup(
     monkeypatch,
 ) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
@@ -377,9 +425,9 @@ def test_component_release_tag_rejects_other_component_runtime_followup(
 
     tags = registry.compute_registry_tags(repo, sha=publish_sha, component="aio")
 
-    assert tags.release_package_tag == ""  # nosec B101
-    assert "jsonbored/signoz-aio:v0.124.0-aio.1" not in tags.dockerhub  # nosec B101
-    assert "jsonbored/signoz-aio:v0.124.0" not in tags.dockerhub  # nosec B101
+    assert tags.release_package_tag == "v0.124.0-aio.1"  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0-aio.1" in tags.dockerhub  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0" in tags.dockerhub  # nosec B101
 
 
 def test_component_release_tag_allows_centralized_cleanup_followup(

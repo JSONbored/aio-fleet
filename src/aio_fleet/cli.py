@@ -66,6 +66,7 @@ from aio_fleet.registry import (
     delete_dockerhub_tags,
     dockerhub_auth_preflight_failure,
     dockerhub_delete_scope_preflight_failure,
+    registry_sha_tag_required,
     verify_registry_tags,
 )
 from aio_fleet.release import (
@@ -1406,7 +1407,15 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
         sha = args.sha or _git_head(repo.path)
         components = publish_components(repo) if args.all else [args.component]
         for component in components:
-            tags = compute_registry_tags(repo, sha=sha, component=component)
+            include_sha_tag = registry_sha_tag_required(
+                repo, sha=sha, component=component
+            )
+            tags = compute_registry_tags(
+                repo,
+                sha=sha,
+                component=component,
+                include_sha_tag=include_sha_tag,
+            )
             repo_failures = [] if args.dry_run else verify_registry_tags(tags.all_tags)
             failures.extend(
                 f"{repo.name}:{component}: {failure}" for failure in repo_failures
@@ -1419,6 +1428,7 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
                     "dockerhub": tags.dockerhub,
                     "ghcr": tags.ghcr,
                     "failures": repo_failures,
+                    "sha_tag": "expected" if include_sha_tag else "skipped",
                 }
             )
     if args.format == "json":

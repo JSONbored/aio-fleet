@@ -536,6 +536,64 @@ def test_release_plan_uses_default_non_release_paths_for_docs_only_commits(
     assert plan["state"] == "current"  # nosec B101
 
 
+def test_release_plan_ignores_manifest_only_component_commit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "signoz-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.0.0\n")
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.md").write_text("## 1.0.0-agent.1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 1.0.0-agent.1")
+    _git(repo_path, "tag", "1.0.0-agent.1")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    (repo_path / ".aio-fleet.yml").write_text("schema_version: 1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile app manifest")
+    repo = RepoConfig(
+        name="signoz-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "signoz-aio",
+            "image_name": "jsonbored/signoz-aio",
+            "docker_cache_scope": "signoz-aio-image",
+            "pytest_image_tag": "signoz-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "agent": {
+                    "release_suffix": "agent",
+                    "dockerfile": "Dockerfile",
+                    "upstream_config": "upstream.toml",
+                }
+            },
+        },
+        defaults={"non_release_paths": [".aio-fleet.yml"]},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo, **_kwargs: {
+            "state": "ok",
+            "tag": "1.0.0-agent.1",
+            "target_commitish": release_sha,
+        },
+    )
+
+    plan = release_plan_for_repo(repo, component="agent")
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
 def test_release_plan_outputs_component_specific_alpha_publish_action(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -587,7 +645,7 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
         ),
     )
 
-    def fake_tags(_repo: RepoConfig, *, sha: str, component: str):
+    def fake_tags(_repo: RepoConfig, *, sha: str, component: str, **_kwargs):
         assert component == "sure-alpha"  # nosec B101
         return SimpleNamespace(
             dockerhub=["jsonbored/sure-aio-alpha:latest-alpha"],
@@ -762,6 +820,9 @@ def test_release_plan_reports_component_specific_aio_metadata_after_agent_releas
     (repo_path / "signoz-agent.xml").write_text("<Container></Container>\n")
     _git(repo_path, "add", ".")
     _git(repo_path, "commit", "-m", "chore(release): 0.152.0-agent.2")
+    (repo_path / ".aio-fleet.yml").write_text("schema_version: 1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile app manifest")
     git = shutil.which("git")
     assert git is not None  # nosec B101
     head = subprocess.check_output(  # nosec B603
@@ -789,7 +850,7 @@ def test_release_plan_reports_component_specific_aio_metadata_after_agent_releas
                 },
             },
         },
-        defaults={},
+        defaults={"non_release_paths": [".aio-fleet.yml"]},
         owner="JSONbored",
     )
     monkeypatch.setattr(

@@ -52,6 +52,7 @@ from aio_fleet.cli import (
 from aio_fleet.hooks import run_local_trunk_overlay
 from aio_fleet.manifest import load_manifest
 from aio_fleet.poll import PollTarget
+from aio_fleet.registry import RegistryTagSet
 
 
 def test_repo_python_prefers_repo_virtualenv(tmp_path: Path) -> None:
@@ -2569,6 +2570,68 @@ repos:
     assert report["repos"][0]["skipped"] == "manual-template-publish"  # nosec B101
     assert all("unraid-aio-template" not in tag for tag in verified)  # nosec B101
     assert any("example-aio" in tag for tag in verified)  # nosec B101
+
+
+def test_registry_verify_reports_skipped_sha_tag_for_metadata_only_commit(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    app_path = tmp_path / "example-aio"
+    app_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {app_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    verified: list[str] = []
+    sha = "a" * 40
+
+    monkeypatch.setattr(cli, "_git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        cli, "registry_sha_tag_required", lambda *_args, **_kwargs: False
+    )
+
+    def fake_compute_tags(*_args, **kwargs) -> RegistryTagSet:
+        assert kwargs["include_sha_tag"] is False  # nosec B101
+        return RegistryTagSet(
+            dockerhub=["jsonbored/example-aio:latest"],
+            ghcr=["ghcr.io/jsonbored/example-aio:latest"],
+            upstream_version="1.0.0",
+            release_package_tag="1.0.0-aio.1",
+        )
+
+    def fake_verify(tags: list[str], **_kwargs) -> list[str]:
+        verified.extend(tags)
+        return []
+
+    monkeypatch.setattr(cli, "compute_registry_tags", fake_compute_tags)
+    monkeypatch.setattr(cli, "verify_registry_tags", fake_verify)
+
+    result = cmd_registry_verify(
+        Namespace(
+            manifest=str(manifest),
+            all=True,
+            repo=None,
+            repo_path=None,
+            sha=None,
+            component="aio",
+            include_manual=False,
+            dry_run=False,
+            format="json",
+            verbose=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["repos"][0]["sha_tag"] == "skipped"  # nosec B101
+    assert f"sha-{sha}" not in " ".join(verified)  # nosec B101
 
 
 def test_debt_report_flags_repos_missing_from_github_policy(

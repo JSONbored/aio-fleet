@@ -14,6 +14,7 @@ from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
+    registry_sha_tag_required,
     verify_registry_tags,
 )
 from aio_fleet.release import (
@@ -97,7 +98,7 @@ def release_plan_for_repo(
         config, registry_only=registry_only
     )
     registry_only_component_changes = False
-    ignored_release_changes = _only_ignored_release_changes(repo)
+    ignored_release_changes = False
 
     if repo.publish_profile == "template":
         latest_tag = latest_semver_tag(repo.path)
@@ -109,6 +110,7 @@ def release_plan_for_repo(
             if registry_only
             else _safe_latest_component_tag(repo, component)
         )
+        ignored_release_changes = _only_ignored_release_changes(repo, latest_tag)
         next_version = (
             _safe_next_component(repo, component)
             if github_release_required
@@ -120,15 +122,22 @@ def release_plan_for_repo(
             if registry_only
             else _safe_has_component_changes(repo, component)
         )
-        if release_due and _only_other_component_changes(repo, component, latest_tag):
+        if release_due and _only_ignored_or_other_component_changes(
+            repo, component, latest_tag
+        ):
             release_due = False
     else:
         latest_tag = _safe_latest_aio_tag(repo)
+        ignored_release_changes = _only_ignored_release_changes(repo, latest_tag)
         next_version = _safe_next_aio(repo)
         registry_only_component_changes = _only_registry_only_component_changes(repo)
         release_due = _safe_has_aio_changes(repo)
-        if release_due and _only_other_component_changes(repo, component, latest_tag):
+        if release_due and _only_ignored_or_other_component_changes(
+            repo, component, latest_tag
+        ):
             release_due = False
+    if repo.publish_profile != "template" and release_due and ignored_release_changes:
+        release_due = False
 
     github_release = (
         _latest_github_release(repo, tag=latest_tag)
@@ -152,7 +161,7 @@ def release_plan_for_repo(
         and sha
         and not registry_only_component_changes
         and not ignored_release_changes
-        and not _only_other_component_changes(repo, component, latest_tag)
+        and not _only_ignored_or_other_component_changes(repo, component, latest_tag)
     ):
         release_due = target_commit != sha
 
@@ -166,7 +175,14 @@ def release_plan_for_repo(
     )
 
     if include_registry and repo.publish_profile != "template":
-        tags = compute_registry_tags(repo, sha=sha, component=component)
+        tags = compute_registry_tags(
+            repo,
+            sha=sha,
+            component=component,
+            include_sha_tag=registry_sha_tag_required(
+                repo, sha=sha, component=component
+            ),
+        )
         registry_tags["dockerhub"].extend(tags.dockerhub)
         registry_tags["ghcr"].extend(tags.ghcr)
         registry_failures.extend(verify_registry_tags(tags.all_tags))
@@ -443,10 +459,10 @@ def _safe_has_aio_changes(repo: RepoConfig) -> bool:
         return False
 
 
-def _only_ignored_release_changes(repo: RepoConfig) -> bool:
+def _only_ignored_release_changes(repo: RepoConfig, latest_tag: str = "") -> bool:
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
-    latest_tag = _safe_latest_aio_tag(repo)
+    latest_tag = latest_tag or _safe_latest_aio_tag(repo)
     if not patterns or not latest_tag:
         return False
     changed_paths = _changed_paths_since(repo.path, latest_tag)
@@ -475,6 +491,26 @@ def _only_other_component_changes(
     if not isinstance(components, dict) or not latest_tag:
         return False
     patterns: set[str] = set()
+    for name in components:
+        if str(name) == component:
+            continue
+        patterns.update(_component_release_patterns(repo, str(name)))
+    if not patterns:
+        return False
+    changed_paths = _changed_paths_since(repo.path, latest_tag)
+    if not changed_paths:
+        return False
+    return all(_matches_release_pattern(path, patterns) for path in changed_paths)
+
+
+def _only_ignored_or_other_component_changes(
+    repo: RepoConfig, component: str, latest_tag: str
+) -> bool:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict) or not latest_tag:
+        return _only_ignored_release_changes(repo, latest_tag)
+    patterns: set[str] = set(repo.list_value("non_release_paths"))
+    patterns.update(RETIRED_SHARED_PATHS)
     for name in components:
         if str(name) == component:
             continue
