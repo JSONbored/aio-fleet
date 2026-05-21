@@ -389,12 +389,11 @@ jobs:
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          python -m aio_fleet standards reconcile \
-            --github \
-            --release \
-            --format json \
-            --allow-drift \
-            | tee standards-reconcile-report.json
+          args=(standards reconcile --github --release --format json --allow-drift)
+          if [[ -f fleet-dashboard.manifest.yml ]]; then
+            args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          fi
+          python -m aio_fleet "${args[@]}" | tee standards-reconcile-report.json
 
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
