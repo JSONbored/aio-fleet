@@ -596,8 +596,17 @@ def _matches_release_pattern(path: str, patterns: set[str]) -> bool:
 
 
 def _changed_paths_since(repo_path: Path, ref: str) -> list[str]:
+    verify = subprocess.run(  # nosec B603 B607
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if verify.returncode != 0:
+        return []
     result = subprocess.run(  # nosec B603 B607
-        ["git", "diff", "--name-only", f"{ref}..HEAD"],
+        ["git", "diff", "--name-only", f"{ref}..HEAD", "--"],
         cwd=repo_path,
         check=False,
         text=True,
