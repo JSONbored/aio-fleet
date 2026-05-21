@@ -201,6 +201,73 @@ repos:
     assert "sure-alpha" not in rows  # nosec B101
 
 
+def test_registry_audit_records_publish_path_resolution_failures(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "fleet.yml"
+    checkout_root = tmp_path / "checkouts"
+    output = tmp_path / "registry-report.json"
+    manifest.write_text("""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: /tmp/sure-aio
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio
+    pytest_image_tag: sure-aio:pytest
+""")
+
+    def fake_checkout_refs(refs, *, token: str, submodules: str):
+        results = []
+        for name, github_repo, path in refs:
+            path.mkdir(parents=True)
+            results.append(
+                {"repo": name, "github_repo": github_repo, "path": str(path)}
+            )
+        return results
+
+    def fake_check_output(*_args, **_kwargs):
+        return "a" * 40
+
+    def fail_publish_components_required(_repo, *, sha, event):
+        raise workflow_jobs.PublishPathResolutionError(
+            f"sure-aio: unable to resolve changed files for {sha}; publish skipped"
+        )
+
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(
+        workflow_jobs,
+        "publish_components_required",
+        fail_publish_components_required,
+    )
+    monkeypatch.setattr(workflow_jobs.subprocess, "check_output", fake_check_output)
+
+    report = registry_audit_checkouts(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_path=output,
+        token="token",  # nosec B106
+        github_output=None,
+    )
+
+    assert report["status"] == 1  # nosec B101
+    assert report["repos"] == [  # nosec B101
+        {
+            "repo": "sure-aio",
+            "sha": "a" * 40,
+            "dockerhub": [],
+            "ghcr": [],
+            "failures": [
+                "sure-aio: unable to resolve changed files for "
+                + ("a" * 40)
+                + "; publish skipped"
+            ],
+        }
+    ]
+
+
 def test_upstream_monitor_checkouts_sanitizes_subprocess_tokens(
     monkeypatch, tmp_path: Path
 ) -> None:
