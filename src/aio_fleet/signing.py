@@ -233,7 +233,7 @@ def open_generated_prs(github_repo: str) -> list[dict[str, Any]] | None:
             "--state",
             "open",
             "--json",
-            "number,headRefName",
+            "number,headRefName,isCrossRepository",
         ],
         check=False,
     )
@@ -243,6 +243,7 @@ def open_generated_prs(github_repo: str) -> list[dict[str, Any]] | None:
         pr
         for pr in prs
         if isinstance(pr, dict)
+        and pr.get("isCrossRepository") is False
         and str(pr.get("headRefName", "")).startswith(("codex/", "changelog/"))
     ]
 
@@ -267,7 +268,7 @@ def current_generated_pr_signature_blockers(
             "--state",
             "open",
             "--json",
-            "number,headRefName",
+            "number,headRefName,isCrossRepository",
         ],
         check=False,
     )
