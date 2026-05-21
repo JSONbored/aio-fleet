@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aio_fleet.release import (
     find_release_publish_target_commit,
+    latest_aio_release_tag,
     latest_changelog_version,
     latest_component_changelog_version,
     latest_component_release_tag,
@@ -81,6 +82,52 @@ def test_aio_next_version_supports_prefixed_component_tags(tmp_path: Path) -> No
     )
 
 
+def test_aio_next_version_preserves_existing_v_prefix_for_unprefixed_upstream(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "Dockerfile").write_text("ARG PENPOT_VERSION=2.15.3\n")
+    (tmp_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "PENPOT_VERSION"\n'
+    )
+    _commit(tmp_path, "feat(test): initial")
+    _git(tmp_path, "tag", "v2.15.3-aio.1")
+
+    assert (  # nosec B101
+        latest_aio_release_tag(
+            tmp_path,
+            tmp_path / "Dockerfile",
+            tmp_path / "upstream.toml",
+            version_key="PENPOT_VERSION",
+        )
+        == "v2.15.3-aio.1"
+    )
+    assert (  # nosec B101
+        next_aio_release_version(
+            tmp_path,
+            tmp_path / "Dockerfile",
+            tmp_path / "upstream.toml",
+            version_key="PENPOT_VERSION",
+        )
+        == "v2.15.3-aio.2"
+    )
+
+
+def test_aio_next_version_keeps_unprefixed_release_series(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=1.14.2\n")
+    (tmp_path / "upstream.toml").write_text("[upstream]\n")
+    _commit(tmp_path, "feat(test): initial")
+    _git(tmp_path, "tag", "1.14.2-aio.2")
+
+    assert (  # nosec B101
+        next_aio_release_version(
+            tmp_path, tmp_path / "Dockerfile", tmp_path / "upstream.toml"
+        )
+        == "1.14.2-aio.3"
+    )
+
+
 def test_latest_component_release_tag_ignores_namespaced_alpha_tags(
     tmp_path: Path,
 ) -> None:
@@ -144,6 +191,30 @@ def test_latest_component_changelog_version_uses_matching_suffix(
             changelog, upstream_version="0.152.0", suffix="agent"
         )
         == "0.152.0-agent.1"
+    )
+
+
+def test_latest_component_changelog_version_accepts_existing_v_prefix(
+    tmp_path: Path,
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "\n".join(
+            [
+                "# Changelog",
+                "",
+                "## v2.15.3-aio.2 - 2026-05-21",
+                "",
+                "- template fix",
+            ]
+        )
+    )
+
+    assert (  # nosec B101
+        latest_component_changelog_version(
+            changelog, upstream_version="2.15.3", suffix="aio"
+        )
+        == "v2.15.3-aio.2"
     )
 
 
