@@ -46,6 +46,32 @@ def test_poll_checks_job_does_not_export_secrets_to_app_code_step() -> None:
     assert "--check-run" not in run_step["run"]  # nosec B101
 
 
+def test_control_plane_manual_runs_require_default_branch_before_checkout() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    job = workflow["jobs"]["control-plane"]
+    names = [step["name"] for step in job["steps"]]
+    guard = _step(job, "Enforce trusted ref for manual runs")
+
+    assert names.index(
+        "Enforce trusted ref for manual runs"
+    ) < names.index(  # nosec B101
+        "Checkout aio-fleet"
+    )
+    assert names.index(
+        "Enforce trusted ref for manual runs"
+    ) < names.index(  # nosec B101
+        "Resolve GitHub App token"
+    )
+    assert (
+        guard["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    )  # nosec B101
+    assert (
+        "github.event.repository.default_branch" in guard["env"]["EXPECTED_REF"]
+    )  # nosec B101
+    assert "AIO_FLEET_APP_PRIVATE_KEY" not in guard.get("env", {})  # nosec B101
+    assert "GITHUB_REF" in guard["run"]  # nosec B101
+
+
 def test_upstream_monitor_scopes_git_auth_without_standard_tokens() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     monitor = _step(workflow["jobs"]["control-plane"], "Monitor upstream releases")

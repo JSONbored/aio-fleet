@@ -41,6 +41,32 @@ def test_registry_audit_scopes_secrets_to_required_steps() -> None:
     }.issubset(alert_step["env"])
 
 
+def test_registry_audit_manual_runs_require_default_branch_before_checkout() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    job = workflow["jobs"]["registry-audit"]
+    names = [step["name"] for step in job["steps"]]
+    guard = _step(job, "Enforce trusted ref for manual runs")
+
+    assert names.index(
+        "Enforce trusted ref for manual runs"
+    ) < names.index(  # nosec B101
+        "Checkout"
+    )
+    assert names.index(
+        "Enforce trusted ref for manual runs"
+    ) < names.index(  # nosec B101
+        "Resolve GitHub App token"
+    )
+    assert (
+        guard["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    )  # nosec B101
+    assert (
+        "github.event.repository.default_branch" in guard["env"]["EXPECTED_REF"]
+    )  # nosec B101
+    assert "AIO_FLEET_APP_PRIVATE_KEY" not in guard.get("env", {})  # nosec B101
+    assert "GITHUB_REF" in guard["run"]  # nosec B101
+
+
 def test_registry_audit_sanitizes_verify_subprocess_environment() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     verify = _step(workflow["jobs"]["registry-audit"], "Verify registry tags")
