@@ -2078,9 +2078,11 @@ def _run_generator_for_write(repo: RepoConfig) -> None:
     if not generator:
         return
     command = [part for part in shlex.split(generator) if part != "--check"]
-    safe_env = os.environ.copy()
-    for key in ["APP_TOKEN", "AIO_FLEET_CHECK_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]:
-        safe_env.pop(key, None)
+    safe_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not _secret_environment_key(key)
+    }
     result = _run(command, cwd=repo.path, env=safe_env)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()

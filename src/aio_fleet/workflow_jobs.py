@@ -11,7 +11,16 @@ from typing import Any
 
 import yaml
 
+from aio_fleet.control_plane import _secret_environment_key
 from aio_fleet.manifest import load_manifest
+
+
+def _sanitized_subprocess_env() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not _secret_environment_key(key)
+    }
 
 
 def poll_outputs(
@@ -214,7 +223,11 @@ def upstream_monitor_checkouts(
         if dry_run:
             args.append("--dry-run")
         run = subprocess.run(  # nosec B603
-            args, check=False, text=True, capture_output=True
+            args,
+            check=False,
+            text=True,
+            capture_output=True,
+            env=_sanitized_subprocess_env(),
         )
         if run.stderr:
             print(run.stderr, file=sys.stderr, end="")
