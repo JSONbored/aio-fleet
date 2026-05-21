@@ -672,8 +672,9 @@ def _run_git(
     if git is None:
         raise RuntimeError("git CLI is required")
     result = subprocess.run(  # nosec B603
-        [git, *args],
+        [git, "-c", "core.fsmonitor=", *args],
         cwd=cwd,
+        env=_safe_git_env(),
         text=True,
         capture_output=True,
         check=False,
@@ -682,6 +683,22 @@ def _run_git(
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
     return result
+
+
+def _safe_git_env() -> dict[str, str]:
+    env = {
+        key: os.environ[key]
+        for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+        if key in os.environ
+    }
+    env.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return env
 
 
 def _quote_path(path: str) -> str:
