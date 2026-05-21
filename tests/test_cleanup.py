@@ -40,6 +40,31 @@ repos:
     ]
 
 
+def test_cleanup_findings_allow_manifest_owned_upstream_config(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "upstream.toml").write_text("[upstream]\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    components:
+      aio:
+        upstream_config: upstream.toml
+""")
+    repo = load_manifest(manifest).repo("example-aio")
+
+    assert cleanup_findings(repo) == []  # nosec B101
+
+
 def test_cleanup_fix_removes_retired_shared_files(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     workflows = repo_path / ".github" / "workflows"

@@ -42,10 +42,30 @@ class CleanupFinding:
 def cleanup_findings(repo: RepoConfig) -> list[CleanupFinding]:
     findings: list[CleanupFinding] = []
     for relative, reason in RETIRED_SHARED_PATHS.items():
+        if _retired_path_is_manifest_owned(repo, relative):
+            continue
         path = repo.path / relative
         if path.exists():
             findings.append(CleanupFinding(path=path, reason=reason))
     return findings
+
+
+def _retired_path_is_manifest_owned(repo: RepoConfig, relative: str) -> bool:
+    if relative != "upstream.toml":
+        return False
+
+    expected = Path(relative)
+    candidates: list[object] = []
+    candidates.append(repo.get("upstream_config"))
+    components = repo.get("components", {})
+    if isinstance(components, dict):
+        for component in components.values():
+            if isinstance(component, dict):
+                candidates.append(component.get("upstream_config"))
+
+    return any(
+        Path(str(candidate)) == expected for candidate in candidates if candidate
+    )
 
 
 def remove_cleanup_findings(findings: list[CleanupFinding]) -> None:
