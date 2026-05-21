@@ -117,15 +117,7 @@ def registry_sha_tag_required(
         return True
     if not changed_paths:
         return False
-    ignored = _non_publish_patterns(repo)
-    other_components = _other_component_publish_patterns(repo, component)
-    for path in changed_paths:
-        if _matches_release_pattern(path, ignored):
-            continue
-        if _matches_release_pattern(path, other_components):
-            continue
-        return True
-    return False
+    return True
 
 
 def component_registry_release_tag(repo: RepoConfig, component: str = "aio") -> str:
@@ -643,10 +635,6 @@ def _release_tag_sha_allowed(
     ]
     if not subject_lines:
         return False
-    if _non_publish_or_other_component_followup_allowed(
-        repo, component=component, paths=changed_paths
-    ):
-        return True
     if _cleanup_followup_allowed(
         repo, subject_lines=subject_lines, paths=changed_paths
     ):
@@ -674,20 +662,6 @@ def _cleanup_followup_allowed(
     return bool(patterns) and all(
         _matches_release_pattern(path, patterns) for path in paths
     )
-
-
-def _non_publish_or_other_component_followup_allowed(
-    repo: RepoConfig, *, component: str, paths: list[str]
-) -> bool:
-    patterns = _non_publish_patterns(repo)
-    patterns.update(_other_component_publish_patterns(repo, component))
-    return (
-        bool(paths)
-        and bool(patterns)
-        and all(_matches_release_pattern(path, patterns) for path in paths)
-    )
-
-
 def _non_publish_patterns(repo: RepoConfig) -> set[str]:
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
@@ -731,52 +705,6 @@ def _changed_paths_between(repo_path: Path, base: str, head: str) -> list[str]:
         ).splitlines()
         if path.strip()
     ]
-
-
-def _other_component_publish_patterns(repo: RepoConfig, component: str) -> set[str]:
-    components = repo.raw.get("components")
-    if not isinstance(components, dict):
-        return set()
-    patterns: set[str] = set()
-    for name in components:
-        if str(name) == component:
-            continue
-        patterns.update(_component_publish_patterns(repo, str(name)))
-    return patterns
-
-
-def _component_publish_patterns(repo: RepoConfig, component: str) -> set[str]:
-    config = component_config(repo, component)
-    patterns: set[str] = set()
-    for key, default in (
-        ("dockerfile", "Dockerfile"),
-        ("upstream_config", "upstream.toml"),
-        ("release_changelog", "CHANGELOG.md"),
-    ):
-        value = str(config.get(key, default)).strip()
-        if value:
-            patterns.add(value)
-    context = str(config.get("context", "") or "").strip()
-    if context and context != ".":
-        patterns.add(context)
-    xml_paths = config.get("xml_paths", [])
-    if isinstance(xml_paths, str):
-        patterns.add(xml_paths)
-    elif isinstance(xml_paths, list):
-        patterns.update(str(path) for path in xml_paths if str(path).strip())
-    publish_paths = config.get("publish_paths", [])
-    if isinstance(publish_paths, str):
-        patterns.add(publish_paths)
-    elif isinstance(publish_paths, list):
-        patterns.update(str(path) for path in publish_paths if str(path).strip())
-    for monitor in repo.raw.get("upstream_monitor", []):
-        if (
-            isinstance(monitor, dict)
-            and str(monitor.get("component", "aio")) == component
-            and monitor.get("dockerfile")
-        ):
-            patterns.add(str(monitor["dockerfile"]))
-    return {pattern for pattern in patterns if pattern}
 
 
 def _release_followup_subject_allowed(

@@ -130,7 +130,7 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" in tags.ghcr  # nosec B101
 
 
-def test_registry_sha_tag_skips_non_publish_manifest_followup(monkeypatch) -> None:
+def test_registry_sha_tag_required_for_non_publish_manifest_followup(monkeypatch) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
@@ -172,10 +172,10 @@ def test_registry_sha_tag_skips_non_publish_manifest_followup(monkeypatch) -> No
         repo, sha=publish_sha, component="aio", include_sha_tag=include_sha_tag
     )
 
-    assert include_sha_tag is False  # nosec B101
-    assert tags.release_package_tag == "0.7.0-aio.2"  # nosec B101
-    assert "jsonbored/sure-aio:0.7.0-aio.2" in tags.dockerhub  # nosec B101
-    assert f"jsonbored/sure-aio:sha-{publish_sha}" not in tags.dockerhub  # nosec B101
+    assert include_sha_tag is True  # nosec B101
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/sure-aio:0.7.0-aio.2" not in tags.dockerhub  # nosec B101
+    assert f"jsonbored/sure-aio:sha-{publish_sha}" in tags.dockerhub  # nosec B101
 
 
 def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
@@ -405,7 +405,7 @@ def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
     )
 
 
-def test_component_release_tag_allows_other_component_release_followup(
+def test_component_release_tag_rejects_other_component_release_followup(
     monkeypatch,
 ) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
@@ -449,12 +449,12 @@ def test_component_release_tag_allows_other_component_release_followup(
 
     tags = registry.compute_registry_tags(repo, sha=publish_sha, component="aio")
 
-    assert tags.release_package_tag == "v0.124.0-aio.1"  # nosec B101
-    assert "jsonbored/signoz-aio:v0.124.0-aio.1" in tags.dockerhub  # nosec B101
-    assert "ghcr.io/jsonbored/signoz-aio:v0.124.0-aio.1" in tags.ghcr  # nosec B101
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0-aio.1" not in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/signoz-aio:v0.124.0-aio.1" not in tags.ghcr  # nosec B101
 
 
-def test_component_release_tag_allows_other_component_runtime_followup(
+def test_component_release_tag_rejects_other_component_runtime_followup(
     monkeypatch,
 ) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
@@ -493,9 +493,9 @@ def test_component_release_tag_allows_other_component_runtime_followup(
 
     tags = registry.compute_registry_tags(repo, sha=publish_sha, component="aio")
 
-    assert tags.release_package_tag == "v0.124.0-aio.1"  # nosec B101
-    assert "jsonbored/signoz-aio:v0.124.0-aio.1" in tags.dockerhub  # nosec B101
-    assert "jsonbored/signoz-aio:v0.124.0" in tags.dockerhub  # nosec B101
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0-aio.1" not in tags.dockerhub  # nosec B101
+    assert "jsonbored/signoz-aio:v0.124.0" not in tags.dockerhub  # nosec B101
 
 
 def test_component_release_tag_allows_centralized_cleanup_followup(
