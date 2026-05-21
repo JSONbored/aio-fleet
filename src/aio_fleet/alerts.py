@@ -289,23 +289,28 @@ def summarize_report(
             label = ", ".join(
                 f"{repo}:{item.get('component', 'aio')}" for item in components[:3]
             )
+            missing_package_tags = [
+                item
+                for item in components
+                if not str(item.get("release_package_tag", "") or "").strip()
+                and not str(item.get("error", "") or "").strip()
+            ]
             has_release_history = any(
                 isinstance(item.get("github_release"), dict)
                 and item["github_release"].get("url")
                 for item in components
             )
-            if has_release_history:
+            if missing_package_tags:
+                summary = f"Published unversioned images for {label}"
+            elif has_release_history:
                 summary = f"Published images and release history for {label}"
             else:
                 summary = f"Published images for {label}"
             annotations = []
             for item in components[:5]:
-                version = item.get("release_package_tag") or item.get(
-                    "upstream_version", ""
-                )
-                annotations.append(f"{repo}:{item.get('component', 'aio')} {version}")
+                annotations.append(_publish_component_annotation(repo, item))
             return (
-                "success",
+                "warning" if missing_package_tags else "success",
                 summary,
                 annotations,
                 {
@@ -581,6 +586,8 @@ def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
     fields: list[dict[str, Any]] = []
     for item in components[:3]:
         component = str(item.get("component", "aio"))
+        package_tag = str(item.get("release_package_tag", "") or "").strip()
+        upstream_version = str(item.get("upstream_version", "") or "").strip()
         dockerhub = "\n".join(str(tag) for tag in item.get("dockerhub", [])[:4])
         ghcr = "\n".join(str(tag) for tag in item.get("ghcr", [])[:4])
         error = str(item.get("error", "") or "").strip()
@@ -588,6 +595,15 @@ def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
         release_url = release.get("url", "") if isinstance(release, dict) else ""
         if error:
             fields.append({"name": f"{component} error", "value": error})
+        elif package_tag:
+            fields.append({"name": f"{component} package tag", "value": package_tag})
+        elif upstream_version:
+            fields.append(
+                {
+                    "name": f"{component} package tag",
+                    "value": f"missing; upstream version is {upstream_version}",
+                }
+            )
         if dockerhub:
             fields.append({"name": f"{component} Docker Hub", "value": dockerhub})
         if ghcr:
@@ -595,6 +611,20 @@ def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if release_url:
             fields.append({"name": f"{component} GitHub release", "value": release_url})
     return fields
+
+
+def _publish_component_annotation(repo: str, item: dict[str, Any]) -> str:
+    component = str(item.get("component", "aio"))
+    package_tag = str(item.get("release_package_tag", "") or "").strip()
+    if package_tag:
+        return f"{repo}:{component} package {package_tag}"
+    error = str(item.get("error", "") or "").strip()
+    if error:
+        return f"{repo}:{component} error"
+    upstream_version = str(item.get("upstream_version", "") or "").strip()
+    if upstream_version:
+        return f"{repo}:{component} no package tag; upstream {upstream_version}"
+    return f"{repo}:{component} no package tag"
 
 
 def _publish_failure_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
