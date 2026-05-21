@@ -3333,6 +3333,7 @@ repos:
 
     monkeypatch.setattr(cli, "_run", fake_run)
     monkeypatch.setenv("APP_TOKEN", "app")
+    monkeypatch.setenv("AIO_FLEET_UPSTREAM_TOKEN", "upstream")
     monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
     monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
     monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
@@ -3346,6 +3347,7 @@ repos:
 
     assert observed.get("SAFE_TEST_FLAG") == "present"  # nosec B101
     assert "APP_TOKEN" not in observed  # nosec B101
+    assert "AIO_FLEET_UPSTREAM_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in observed  # nosec B101
