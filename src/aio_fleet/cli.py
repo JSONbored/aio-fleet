@@ -40,7 +40,7 @@ from aio_fleet.checks import (
     check_run_satisfied,
     upsert_check_run,
 )
-from aio_fleet.cleanup import cleanup_findings, remove_cleanup_findings
+from aio_fleet.cleanup import CleanupFinding, cleanup_findings, remove_cleanup_findings
 from aio_fleet.control_plane import (
     _secret_environment_key,
     central_check_steps,
@@ -524,9 +524,12 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
     ]
     actions: list[dict[str, object]] = []
     applied: list[dict[str, object]] = []
+    cleanup_by_repo: dict[str, list[CleanupFinding]] = {}
     for repo in repos:
         actions.extend(_standards_manifest_actions(repo))
-        actions.extend(_standards_cleanup_actions(repo))
+        cleanup = cleanup_findings(repo)
+        cleanup_by_repo[repo.name] = cleanup
+        actions.extend(_standards_cleanup_actions(repo, cleanup))
         if args.github:
             actions.extend(_standards_github_actions(repo, Path(args.policy)))
         if args.release:
@@ -535,6 +538,7 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
             )
 
     if args.write:
+        applied_cleanup_repos: set[str] = set()
         for action in actions:
             if action["kind"] == "app-manifest":
                 repo = manifest.repo(str(action["repo"]))
@@ -542,8 +546,10 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
                 output.write_text(render_app_manifest(repo))
                 applied.append({**action, "applied": True})
             elif action["kind"] == "cleanup":
-                repo = manifest.repo(str(action["repo"]))
-                remove_cleanup_findings(cleanup_findings(repo))
+                repo_name = str(action["repo"])
+                if repo_name not in applied_cleanup_repos:
+                    remove_cleanup_findings(cleanup_by_repo.get(repo_name, []))
+                    applied_cleanup_repos.add(repo_name)
                 applied.append({**action, "applied": True})
 
     actionable = [
@@ -601,9 +607,11 @@ def _standards_manifest_actions(repo: RepoConfig) -> list[dict[str, object]]:
     return actions
 
 
-def _standards_cleanup_actions(repo: RepoConfig) -> list[dict[str, object]]:
+def _standards_cleanup_actions(
+    repo: RepoConfig, findings: list[CleanupFinding]
+) -> list[dict[str, object]]:
     actions: list[dict[str, object]] = []
-    for finding in cleanup_findings(repo):
+    for finding in findings:
         relative = str(finding.path.relative_to(repo.path))
         actions.append(
             _standards_action(
