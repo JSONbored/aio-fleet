@@ -13,6 +13,8 @@ The reusable engine should expose:
 - `fleetbot dashboard update`: render or update the durable dashboard issue.
 - `fleetbot registry verify`: verify image/package tags.
 - `fleetbot release readiness`: summarize release blockers.
+- `fleetbot standards reconcile`: produce a drift queue across manifests,
+  cleanup, GitHub policy, registry, and release state.
 
 The first stable report format is the versioned `FleetReport` state emitted by
 `aio-fleet fleet-report generate --format json`. The dashboard issue consumes

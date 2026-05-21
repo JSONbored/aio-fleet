@@ -518,6 +518,8 @@ def registry_publish_command(
         f"type=gha,scope={cache_scope}",
         "--cache-to",
         f"type=gha,mode=max,scope={cache_scope}",
+        "--attest=type=provenance,mode=max",
+        "--attest=type=sbom",
     ]
     dockerfile = component_config.get("dockerfile")
     if dockerfile:

@@ -56,7 +56,7 @@ repositories = {
     ]
     required_check_app_ids = {
       "validate-catalog"  = 15368
-      "CodeQL"            = 15368
+      "CodeQL"            = 57789
       "Analyze (actions)" = 15368
       "Security scan"     = 3287076
       "Contributor trust" = 3287076

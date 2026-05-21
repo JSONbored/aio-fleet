@@ -82,6 +82,7 @@ by accident.
 Known required-check producers:
 
 - GitHub Actions: `15368`
+- CodeQL: `57789`
 - JSONbored AIO Fleet: `3565017`
 - Superagent Security: `3287076`
 

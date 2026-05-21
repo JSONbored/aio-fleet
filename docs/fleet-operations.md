@@ -24,7 +24,15 @@ runtime path runs.
 ```bash
 python -m aio_fleet validate --all
 python -m aio_fleet validate-github --repo sure-aio
+python -m aio_fleet standards reconcile --github --release --format json
 ```
+
+`standards reconcile` is the operator drift queue. It reports generated
+`.aio-fleet.yml` drift, retired shared files, GitHub policy drift, and optional
+release/registry debt in one ordered JSON payload. `--write` is intentionally
+limited to safe local repairs: app manifest export and removal of retired shared
+paths. GitHub policy, releases, catalog sync, and registry operations stay
+explicit follow-up actions.
 
 `strategy: pr` opens or updates one source repo PR for the generated upstream
 branch. The commit must be verified before the PR is considered actionable
@@ -215,6 +223,11 @@ then failing during cleanup.
 unreachable. `catalog-sync-needed` means a validated source update is ready for
 downstream catalog sync. Normal `main` publishes still happen centrally;
 formal changelog/GitHub Releases remain release-driven.
+
+Registry-only helper components are not formal catalog/release lanes unless
+their component config declares GitHub prerelease history. Their release-plan
+row should show the registry package tag and registry commands, not fake
+changelog or GitHub release debt.
 
 For component release rows, the dashboard `Next Commands` section should route
 release work through the transaction/preflight entrypoint, not direct registry

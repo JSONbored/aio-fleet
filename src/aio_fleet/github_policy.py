@@ -200,9 +200,6 @@ def _action_permission_failures(
     if not expected:
         return []
     permissions = _gh_json(["api", f"repos/{owner}/{repo_name}/actions/permissions"])
-    selected = _gh_json(
-        ["api", f"repos/{owner}/{repo_name}/actions/permissions/selected-actions"]
-    )
     failures: list[str] = []
 
     for key in ["enabled", "allowed_actions", "sha_pinning_required"]:
@@ -210,6 +207,28 @@ def _action_permission_failures(
             failures.append(
                 f"{repo_name}: actions {key} expected {expected[key]!r}, got {permissions.get(key)!r}"
             )
+
+    selected_keys = {"github_owned_allowed", "verified_allowed", "patterns_allowed"}
+    if not selected_keys.intersection(expected):
+        return failures
+
+    if permissions.get("allowed_actions") != "selected":
+        failures.append(
+            f"{repo_name}: selected actions cannot be validated while actions allowed_actions is "
+            f"{permissions.get('allowed_actions')!r}"
+        )
+        return failures
+
+    try:
+        selected = _gh_json(
+            [
+                "api",
+                f"repos/{owner}/{repo_name}/actions/permissions/selected-actions",
+            ]
+        )
+    except RuntimeError as exc:
+        failures.append(f"{repo_name}: selected actions unavailable: {exc}")
+        return failures
 
     for key in ["github_owned_allowed", "verified_allowed"]:
         if key in expected and selected.get(key) != expected[key]:

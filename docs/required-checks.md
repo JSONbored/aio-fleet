@@ -37,8 +37,9 @@ Require:
 - `Security scan`
 - `Contributor trust`
 
-The GitHub Actions contexts should be pinned to app ID `15368`. The Superagent
-contexts should be pinned to app ID `3287076`.
+The GitHub Actions contexts should be pinned to app ID `15368`; the standalone
+`CodeQL` check reports app ID `57789`. The Superagent contexts should be pinned
+to app ID `3287076`.
 
 ## awesome-unraid
 

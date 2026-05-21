@@ -40,6 +40,7 @@ from aio_fleet.cli import (
     cmd_release_reconcile,
     cmd_security_audit_workflows,
     cmd_signing_doctor,
+    cmd_standards_reconcile,
     cmd_trunk_audit,
     cmd_trunk_run,
     cmd_upstream_assess,
@@ -466,6 +467,70 @@ repos:
 
     assert result == 0  # nosec B101
     assert '"repos": 1' in capsys.readouterr().out  # nosec B101
+
+
+def test_standards_reconcile_reports_manifest_and_cleanup_drift(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    (repo_path / ".trunk" / "actions").mkdir(parents=True)
+
+    monkeypatch.setattr(cli, "release_plan_rows_for_repo", lambda *_args, **_kwargs: [])
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=True,
+            registry=False,
+            write=False,
+            allow_drift=True,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["status"] == "actionable"  # nosec B101
+    assert report["summary"]["by_class"] == {  # nosec B101
+        "manifest-drift": 1,
+        "retired-shared-path": 1,
+    }
+    assert {action["kind"] for action in report["actions"]} == {  # nosec B101
+        "app-manifest",
+        "cleanup",
+    }
+
+
+def test_standards_reconcile_write_applies_safe_local_fixes(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    (repo_path / ".trunk" / "actions").mkdir(parents=True)
+
+    monkeypatch.setattr(cli, "release_plan_rows_for_repo", lambda *_args, **_kwargs: [])
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=False,
+            registry=False,
+            write=True,
+            allow_drift=True,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["summary"]["applied"] == 2  # nosec B101
+    assert (repo_path / ".aio-fleet.yml").exists()  # nosec B101
+    assert not (repo_path / ".trunk").exists()  # nosec B101
 
 
 def test_check_run_dry_run_outputs_payload(tmp_path: Path, capsys) -> None:

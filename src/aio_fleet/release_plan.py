@@ -93,7 +93,9 @@ def release_plan_for_repo(
     registry_tags: dict[str, list[str]] = {"dockerhub": [], "ghcr": []}
     config = component_config(repo, component)
     registry_only = str(config.get("release_policy", "")).strip() == "registry_only"
-    github_release = _latest_github_release(repo)
+    github_release_required = _component_uses_github_release(
+        config, registry_only=registry_only
+    )
     registry_only_component_changes = False
     ignored_release_changes = _only_ignored_release_changes(repo)
 
@@ -107,30 +109,61 @@ def release_plan_for_repo(
             if registry_only
             else _safe_latest_component_tag(repo, component)
         )
-        next_version = _safe_next_component(repo, component)
+        next_version = (
+            _safe_next_component(repo, component)
+            if github_release_required
+            else latest_tag
+        )
         registry_only_component_changes = registry_only
         release_due = (
             _has_registry_only_component_changes(repo, component, latest_tag)
             if registry_only
             else _safe_has_component_changes(repo, component)
         )
+        if release_due and _only_other_component_changes(repo, component, latest_tag):
+            release_due = False
     else:
         latest_tag = _safe_latest_aio_tag(repo)
         next_version = _safe_next_aio(repo)
         registry_only_component_changes = _only_registry_only_component_changes(repo)
         release_due = _safe_has_aio_changes(repo)
-    if not latest_tag and github_release.get("state") == "ok":
+        if release_due and _only_other_component_changes(repo, component, latest_tag):
+            release_due = False
+
+    github_release = (
+        _latest_github_release(repo, tag=latest_tag)
+        if github_release_required
+        else {
+            "state": "not-applicable",
+            "detail": "registry-only component without GitHub release history",
+        }
+    )
+    if (
+        not latest_tag
+        and github_release_required
+        and github_release.get("state") == "ok"
+    ):
         latest_tag = str(github_release.get("tag", ""))
     target_commit = str(github_release.get("target_commitish", ""))
     if (
-        _looks_like_sha(target_commit)
+        github_release_required
+        and _github_release_matches_component(github_release, latest_tag)
+        and _looks_like_sha(target_commit)
         and sha
         and not registry_only_component_changes
         and not ignored_release_changes
+        and not _only_other_component_changes(repo, component, latest_tag)
     ):
         release_due = target_commit != sha
 
-    changelog_version = _safe_changelog_version(repo, component=component)
+    changelog_required = _component_requires_changelog(
+        repo, config, registry_only=registry_only
+    )
+    changelog_version = (
+        _safe_changelog_version(repo, component=component)
+        if changelog_required
+        else "registry-only"
+    )
 
     if include_registry and repo.publish_profile != "template":
         tags = compute_registry_tags(repo, sha=sha, component=component)
@@ -151,8 +184,12 @@ def release_plan_for_repo(
     blockers.extend(signing_blockers)
 
     if not latest_tag:
-        warnings.append("no formal release tag found")
-    if not changelog_version:
+        warnings.append(
+            "no formal release tag found"
+            if github_release_required
+            else "registry package tag unavailable"
+        )
+    if changelog_required and not changelog_version:
         warnings.append("latest changelog version unavailable")
 
     state = "current"
@@ -164,7 +201,7 @@ def release_plan_for_repo(
         state = "catalog-sync-needed"
     elif release_due:
         state = "release-due"
-    elif not latest_tag or not changelog_version:
+    elif not latest_tag or (changelog_required and not changelog_version):
         state = "watch"
 
     return {
@@ -243,10 +280,11 @@ def _operator_commands(
     if repo.publish_profile == "template":
         return {}
     label_sha = sha if sha else "<sha>"
-    return {
+    config = component_config(repo, component)
+    registry_only = str(config.get("release_policy", "")).strip() == "registry_only"
+    commands = {
         "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {label_sha} --verbose",
         "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
-        "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
         "control_check_publish": control_check_publish_command(
             repo, component=component, sha=sha
         ),
@@ -254,6 +292,35 @@ def _operator_commands(
             repo, component=component, sha=sha
         ),
     }
+    if _component_uses_github_release(config, registry_only=registry_only):
+        commands["release_publish"] = (
+            f"python -m aio_fleet release publish --repo {repo.name} --component {component}"
+        )
+    return commands
+
+
+def _component_uses_github_release(
+    config: dict[str, object], *, registry_only: bool
+) -> bool:
+    if not registry_only:
+        return True
+    return str(config.get("release_history", "")).strip() == "github_prerelease"
+
+
+def _component_requires_changelog(
+    repo: RepoConfig, config: dict[str, object], *, registry_only: bool
+) -> bool:
+    if repo.publish_profile == "template":
+        return True
+    return _component_uses_github_release(config, registry_only=registry_only)
+
+
+def _github_release_matches_component(
+    github_release: dict[str, str], latest_tag: str
+) -> bool:
+    if github_release.get("state") != "ok":
+        return False
+    return not latest_tag or str(github_release.get("tag", "")) == latest_tag
 
 
 def control_check_publish_command(
@@ -401,6 +468,25 @@ def _only_registry_only_component_changes(repo: RepoConfig) -> bool:
     return all(_matches_release_pattern(path, patterns) for path in changed_paths)
 
 
+def _only_other_component_changes(
+    repo: RepoConfig, component: str, latest_tag: str
+) -> bool:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict) or not latest_tag:
+        return False
+    patterns: set[str] = set()
+    for name in components:
+        if str(name) == component:
+            continue
+        patterns.update(_component_release_patterns(repo, str(name)))
+    if not patterns:
+        return False
+    changed_paths = _changed_paths_since(repo.path, latest_tag)
+    if not changed_paths:
+        return False
+    return all(_matches_release_pattern(path, patterns) for path in changed_paths)
+
+
 def _has_registry_only_component_changes(
     repo: RepoConfig, component: str, latest_tag: str
 ) -> bool:
@@ -428,19 +514,30 @@ def _registry_only_component_patterns(
         if str(config.get("release_policy", "")).strip() != "registry_only":
             continue
         patterns.add(".aio-fleet.yml")
-        for key in ("dockerfile", "upstream_config", "release_changelog"):
-            value = str(config.get(key, "")).strip()
-            if value:
-                patterns.add(value)
-        patterns.update(_string_list(config.get("xml_paths", [])))
-        patterns.update(_string_list(config.get("publish_paths", [])))
-        for monitor in repo.raw.get("upstream_monitor", []):
-            if (
-                isinstance(monitor, dict)
-                and str(monitor.get("component", "aio")) == name
-                and monitor.get("dockerfile")
-            ):
-                patterns.add(str(monitor["dockerfile"]))
+        patterns.update(_component_release_patterns(repo, str(name)))
+    return {pattern for pattern in patterns if pattern}
+
+
+def _component_release_patterns(repo: RepoConfig, component: str) -> set[str]:
+    config = component_config(repo, component)
+    patterns: set[str] = set()
+    for key, default in (
+        ("dockerfile", "Dockerfile"),
+        ("upstream_config", "upstream.toml"),
+        ("release_changelog", "CHANGELOG.md"),
+    ):
+        value = str(config.get(key, default)).strip()
+        if value:
+            patterns.add(value)
+    patterns.update(_string_list(config.get("xml_paths", [])))
+    patterns.update(_string_list(config.get("publish_paths", [])))
+    for monitor in repo.raw.get("upstream_monitor", []):
+        if (
+            isinstance(monitor, dict)
+            and str(monitor.get("component", "aio")) == component
+            and monitor.get("dockerfile")
+        ):
+            patterns.add(str(monitor["dockerfile"]))
     return {pattern for pattern in patterns if pattern}
 
 
@@ -511,17 +608,20 @@ def _safe_changelog_version(repo: RepoConfig, *, component: str = "aio") -> str:
         return ""
 
 
-def _latest_github_release(repo: RepoConfig) -> dict[str, str]:
-    result = subprocess.run(  # nosec B603 B607
+def _latest_github_release(repo: RepoConfig, *, tag: str = "") -> dict[str, str]:
+    command = ["gh", "release", "view"]
+    if tag:
+        command.append(tag)
+    command.extend(
         [
-            "gh",
-            "release",
-            "view",
             "--repo",
             repo.github_repo,
             "--json",
             "tagName,publishedAt,targetCommitish,url",
-        ],
+        ]
+    )
+    result = subprocess.run(  # nosec B603 B607
+        command,
         check=False,
         text=True,
         capture_output=True,

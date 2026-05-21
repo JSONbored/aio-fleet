@@ -44,7 +44,7 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan._latest_github_release",
-        lambda _repo: {"state": "ok", "tag": "0.7.0-aio.1"},
+        lambda _repo, **_kwargs: {"state": "ok", "tag": "0.7.0-aio.1"},
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan.compute_registry_tags",
@@ -101,7 +101,7 @@ def test_release_plan_classifies_catalog_sync_needed(
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan._latest_github_release",
-        lambda _repo: {"state": "ok", "tag": "1.14.0-aio.2"},
+        lambda _repo, **_kwargs: {"state": "ok", "tag": "1.14.0-aio.2"},
     )
 
     plan = release_plan_for_repo(repo, catalog_sync_needed=True)
@@ -143,7 +143,7 @@ def test_release_plan_blocks_unsigned_generated_pr(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {"state": "ok", "tag": "0.7.0-aio.1"},
+        lambda _repo, **_kwargs: {"state": "ok", "tag": "0.7.0-aio.1"},
     )
     monkeypatch.setattr(
         release_plan_module,
@@ -328,6 +328,7 @@ def test_release_plan_ignores_registry_only_component_changes(
                     "image_name": "jsonbored/sure-aio-alpha",
                     "dockerfile": "Dockerfile.alpha",
                     "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
                     "release_changelog": "CHANGELOG.alpha.md",
                     "publish_paths": ["README.md", "pyproject.toml", "rootfs-alpha/**"],
                 },
@@ -339,7 +340,7 @@ def test_release_plan_ignores_registry_only_component_changes(
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {"state": "unknown"},
+        lambda _repo, **_kwargs: {"state": "unknown"},
     )
     monkeypatch.setattr(release_plan_module, "_safe_next_aio", lambda _repo: "")
     monkeypatch.setattr(
@@ -400,6 +401,7 @@ def test_release_plan_marks_registry_only_component_changes_due(
                     "image_name": "jsonbored/sure-aio-alpha",
                     "dockerfile": "Dockerfile.alpha",
                     "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
                     "release_changelog": "CHANGELOG.alpha.md",
                     "release_tag_prefix": "sure-alpha/",
                     "release_suffix": "aio",
@@ -414,7 +416,7 @@ def test_release_plan_marks_registry_only_component_changes_due(
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {"state": "unknown"},
+        lambda _repo, **_kwargs: {"state": "unknown"},
     )
 
     plan = release_plan_for_repo(repo, component="sure-alpha")
@@ -469,7 +471,7 @@ def test_release_plan_ignores_retired_shared_file_cleanup(
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {
+        lambda _repo, **_kwargs: {
             "state": "ok",
             "tag": "v2.0.64-aio.1",
             "target_commitish": release_sha,
@@ -521,7 +523,7 @@ def test_release_plan_uses_default_non_release_paths_for_docs_only_commits(
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {
+        lambda _repo, **_kwargs: {
             "state": "ok",
             "tag": "v2.15.3-aio.1",
             "target_commitish": release_sha,
@@ -552,6 +554,7 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
                     "image_name": "jsonbored/sure-aio-alpha",
                     "dockerfile": "Dockerfile.alpha",
                     "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
                     "release_changelog": "CHANGELOG.alpha.md",
                     "release_tag_prefix": "sure-alpha/",
                     "release_suffix": "aio",
@@ -566,7 +569,10 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {"state": "ok", "tag": "sure-alpha/0.7.1-alpha.7-aio.6"},
+        lambda _repo, **_kwargs: {
+            "state": "ok",
+            "tag": "sure-alpha/0.7.1-alpha.7-aio.6",
+        },
     )
     monkeypatch.setattr(
         release_plan_module,
@@ -616,6 +622,71 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     )
     assert plan["operator_commands"]["release_transaction"] == (  # nosec B101
         f"python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha {sha} --dry-run"
+    )
+
+
+def test_release_plan_keeps_registry_only_helper_out_of_formal_release_lane(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = RepoConfig(
+        name="nanoclaw-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "nanoclaw-aio",
+            "image_name": "jsonbored/nanoclaw-aio",
+            "docker_cache_scope": "nanoclaw-aio-image",
+            "pytest_image_tag": "nanoclaw-aio:pytest",
+            "publish_profile": "multi-component",
+            "components": {
+                "aio": {"image_name": "jsonbored/nanoclaw-aio"},
+                "agent": {
+                    "image_name": "jsonbored/nanoclaw-agent",
+                    "dockerfile": "components/nanoclaw-agent/Dockerfile",
+                    "release_policy": "registry_only",
+                    "release_suffix": "agent",
+                    "registry_revision_arg": "AGENT_REVISION",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    sha = "d" * 40
+    monkeypatch.setattr(release_plan_module, "_git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        release_plan_module,
+        "_component_release_tag",
+        lambda _repo, _component: "v2.0.64-agent.2",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_has_registry_only_component_changes",
+        lambda _repo, _component, _latest_tag: False,
+    )
+    latest_release_calls = []
+
+    def fake_latest_release(_repo: RepoConfig, **_kwargs):
+        latest_release_calls.append(_kwargs)
+        return {"state": "ok", "tag": "v2.0.64-aio.4"}
+
+    monkeypatch.setattr(
+        release_plan_module, "_latest_github_release", fake_latest_release
+    )
+
+    plan = release_plan_for_repo(repo, component="agent")
+
+    assert latest_release_calls == []  # nosec B101
+    assert plan["latest_release_tag"] == "v2.0.64-agent.2"  # nosec B101
+    assert plan["latest_changelog_version"] == "registry-only"  # nosec B101
+    assert plan["latest_github_release"] == {  # nosec B101
+        "state": "not-applicable",
+        "detail": "registry-only component without GitHub release history",
+    }
+    assert plan["warnings"] == []  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+    assert "release_publish" not in plan["operator_commands"]  # nosec B101
+    assert plan["operator_commands"]["registry_verify"] == (  # nosec B101
+        f"python -m aio_fleet registry verify --repo nanoclaw-aio --component agent --sha {sha} --verbose"
     )
 
 
@@ -724,7 +795,7 @@ def test_release_plan_reports_component_specific_aio_metadata_after_agent_releas
     monkeypatch.setattr(
         release_plan_module,
         "_latest_github_release",
-        lambda _repo: {
+        lambda _repo, **_kwargs: {
             "state": "ok",
             "tag": "0.152.0-agent.2",
             "target_commitish": head,
