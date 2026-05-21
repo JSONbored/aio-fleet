@@ -39,6 +39,26 @@ import {
 }
 
 import {
+  to = github_repository.aio["unraid-aio-template"]
+  id = "unraid-aio-template"
+}
+
+import {
+  to = github_branch_protection.main["unraid-aio-template"]
+  id = "unraid-aio-template:main"
+}
+
+import {
+  to = github_actions_repository_permissions.aio["unraid-aio-template"]
+  id = "unraid-aio-template"
+}
+
+import {
+  to = github_repository_vulnerability_alerts.aio["unraid-aio-template"]
+  id = "unraid-aio-template"
+}
+
+import {
   to = github_repository.aio["sure-aio"]
   id = "sure-aio"
 }

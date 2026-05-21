@@ -64,10 +64,8 @@ repositories:
       - AIO_FLEET_BOT_TOKEN
   unraid-aio-template:
     repository:
-      visibility: private
+      visibility: public
       homepage_url: ""
-      allow_rebase_merge: true
-    branch_protection: null
     required_checks:
       - aio-fleet / required
       - Security scan
