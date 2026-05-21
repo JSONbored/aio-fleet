@@ -99,6 +99,7 @@ def release_plan_for_repo(
     )
     registry_only_component_changes = False
     ignored_release_changes = False
+    release_history_incomplete = False
 
     if repo.publish_profile == "template":
         latest_tag = latest_semver_tag(repo.path)
@@ -161,9 +162,16 @@ def release_plan_for_repo(
         and sha
         and not registry_only_component_changes
         and not ignored_release_changes
-        and not _only_ignored_or_other_component_changes(repo, component, latest_tag)
     ):
-        release_due = target_commit != sha
+        release_history_warning = _release_history_warning(
+            repo.path, latest_tag=latest_tag, target_commit=target_commit
+        )
+        if release_history_warning:
+            release_history_incomplete = True
+            release_due = False
+            warnings.append(release_history_warning)
+        elif not _only_ignored_or_other_component_changes(repo, component, latest_tag):
+            release_due = target_commit != sha
 
     changelog_required = _component_requires_changelog(
         repo, config, registry_only=registry_only
@@ -217,6 +225,8 @@ def release_plan_for_repo(
         state = "catalog-sync-needed"
     elif release_due:
         state = "release-due"
+    elif release_history_incomplete:
+        state = "watch"
     elif not latest_tag or (changelog_required and not changelog_version):
         state = "watch"
 
@@ -615,6 +625,55 @@ def _changed_paths_since(repo_path: Path, ref: str) -> list[str]:
     if result.returncode != 0:
         return []
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _release_history_warning(
+    repo_path: Path, *, latest_tag: str, target_commit: str
+) -> str:
+    if _git_is_shallow(repo_path):
+        return "release history incomplete; fetch full history and tags before trusting release due"
+    if latest_tag and not _git_has_tag(repo_path, latest_tag):
+        return f"release tag {latest_tag} is missing locally; fetch tags before trusting release due"
+    if (
+        target_commit
+        and _looks_like_sha(target_commit)
+        and not _git_has_commit(repo_path, target_commit)
+    ):
+        return f"release target {target_commit} is missing locally; fetch full history before trusting release due"
+    return ""
+
+
+def _git_is_shallow(repo_path: Path) -> bool:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _git_has_tag(repo_path: Path, tag: str) -> bool:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _git_has_commit(repo_path: Path, sha: str) -> bool:
+    result = subprocess.run(  # nosec B603 B607
+        ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+        cwd=repo_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def _safe_next_semver(repo: RepoConfig) -> str:
