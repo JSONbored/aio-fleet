@@ -32,7 +32,7 @@ defaults:
 repos:
   unraid-aio-template:
     path: /Users/shadowbook/Documents/unraid-aio-template
-    public: false
+    public: true
     catalog_published: false
     workflow_name: CI / AIO Template
     app_slug: unraid-aio-template
