@@ -390,11 +390,15 @@ def _verify_dockerhub_tag(
         try:
             with urllib.request.urlopen(url, timeout=20) as response:  # nosec B310
                 if response.status == 200:
-                    json.load(response)
+                    try:
+                        json.load(response)
+                    except (json.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as error:
+                        last_error = f"invalid Docker Hub JSON response: {error}"
+                        if attempt < attempts:
+                            time.sleep(2 * attempt)
+                        continue
                     return None
                 last_error = f"unexpected status {response.status}"
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            last_error = f"invalid Docker Hub JSON response: {error}"
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 last_error = "tag not found on Docker Hub"

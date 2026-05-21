@@ -789,6 +789,41 @@ def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
     )
 
 
+def test_dockerhub_verification_reports_response_read_error(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            raise OSError("truncated response body")
+
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="not indexed yet"
+        ),
+    )
+    monkeypatch.setattr(
+        registry.urllib.request, "urlopen", lambda *_args, **_kwargs: Response()
+    )
+    monkeypatch.setattr(registry.time, "sleep", lambda _seconds: None)
+
+    failures = registry.verify_registry_tags(["jsonbored/sure-aio:latest"])
+
+    assert len(failures) == 1  # nosec B101
+    assert failures[0].startswith(  # nosec B101
+        "jsonbored/sure-aio:latest: Docker Hub tag lookup failed: "
+        "invalid Docker Hub JSON response: truncated response body"
+    )
+
+
 def test_dockerhub_verification_reports_missing_tag(monkeypatch) -> None:
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
     monkeypatch.setattr(
