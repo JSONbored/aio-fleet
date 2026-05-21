@@ -370,7 +370,14 @@ def _checkout_refs(
             shutil.rmtree(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         clone = subprocess.run(  # nosec B603 B607
-            ["git", "clone", f"https://github.com/{github_repo}.git", str(path)],
+            [
+                "git",
+                "clone",
+                "--single-branch",
+                "--filter=blob:none",
+                f"https://github.com/{github_repo}.git",
+                str(path),
+            ],
             env=env,
             check=False,
             text=True,
