@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from aio_fleet.public_text import assert_public_text, public_text_safe_value
+
 FLEET_REPORT_SCHEMA_VERSION = 3
 FLEET_REPORT_TOP_LEVEL_KEYS = (
     "schema_version",
@@ -62,6 +64,24 @@ def stable_report_json(state: dict[str, Any]) -> str:
     """Render report JSON in a deterministic form for snapshots and consumers."""
 
     return json.dumps(state, indent=2, sort_keys=True)
+
+
+def public_fleet_report_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Return report state safe for public dashboard/report surfaces."""
+
+    safe_state = public_text_safe_value(state)
+    if not isinstance(safe_state, dict):
+        safe_state = {}
+    assert_public_text(stable_report_json(safe_state), context="fleet-report state")
+    return safe_state
+
+
+def public_fleet_report_json(state: dict[str, Any]) -> str:
+    """Render deterministic report JSON after public-text sanitization."""
+
+    text = stable_report_json(public_fleet_report_state(state))
+    assert_public_text(text, context="fleet-report output")
+    return text
 
 
 def fleet_report_json_schema() -> dict[str, Any]:

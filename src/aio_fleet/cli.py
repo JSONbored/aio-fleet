@@ -16,6 +16,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import yaml
+
 from aio_fleet.alerts import alert_payload, emit_alert, payload_from_report
 from aio_fleet.app_manifest import (
     APP_MANIFEST_NAME,
@@ -86,6 +88,8 @@ from aio_fleet.release_transaction import (
 )
 from aio_fleet.report import (
     fleet_report_json_schema,
+    public_fleet_report_json,
+    public_fleet_report_state,
     stable_report_json,
     validate_report_shape,
 )
@@ -119,6 +123,10 @@ from aio_fleet.workflow_jobs import (
 from aio_fleet.workflow_security import audit_workflows
 
 FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+OnboardingPack = dict[
+    str,
+    list[dict[str, object]] | list[str] | dict[str, object],
+]
 
 
 def _run(
@@ -1004,9 +1012,9 @@ def cmd_fleet_report_generate(args: argparse.Namespace) -> int:
         stale_days=getattr(args, "stale_days", 7),
         issue_repo=args.issue_repo,
     )
-    state = dict(report["state"])
+    state = public_fleet_report_state(dict(report["state"]))
     if args.format == "json":
-        print(stable_report_json(state))
+        print(public_fleet_report_json(state))
     else:
         summary = state.get("summary", {})
         posture = (
@@ -3539,21 +3547,26 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
             {"source": f"{args.repo}.xml", "target": f"{args.repo}.xml"}
         ],
     }
+    component_publish: list[dict[str, object]] = []
+    component_notes: list[str] = []
     dashboard_entry: dict[str, object] | None = None
     if shape == "multi-component":
-        component_prefix = args.repo.removesuffix("-aio")
-        manifest_entry["components"] = [
-            {
-                "name": "aio",
-                "image_name": image_name,
-                "xml_path": f"{args.repo}.xml",
-            },
-            {
-                "name": "agent",
-                "image_name": f"jsonbored/{component_prefix}-agent",
-                "xml_path": f"{component_prefix}-agent.xml",
-            },
-        ]
+        pack = _multi_component_onboarding_pack(
+            args.repo,
+            upstream_name=upstream_name,
+            image_name=image_name,
+        )
+        manifest_update = pack.get("manifest", {})
+        if isinstance(manifest_update, dict):
+            manifest_entry.update(manifest_update)
+        raw_component_publish = pack.get("component_publish", [])
+        if isinstance(raw_component_publish, list):
+            component_publish = [
+                item for item in raw_component_publish if isinstance(item, dict)
+            ]
+        raw_component_notes = pack.get("notes", [])
+        if isinstance(raw_component_notes, list):
+            component_notes = [str(item) for item in raw_component_notes]
     elif shape == "submodule-backed":
         manifest_entry["submodules"] = [
             {
@@ -3595,7 +3608,12 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     ]
     acceptance_checklist.extend(_onboarding_shape_checklist(shape))
     creation_steps = _onboarding_creation_steps(args.repo, mode, shape)
-    first_commands = _onboarding_first_commands(args.repo, mode, shape)
+    first_commands = _onboarding_first_commands(
+        args.repo,
+        mode,
+        shape,
+        component_publish=component_publish,
+    )
     if mode == "rehab":
         acceptance_checklist = [
             "local repo synced to main",
@@ -3618,6 +3636,8 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
                     "shape": shape,
                     "manifest_entry": manifest_entry,
                     "dashboard_entry": dashboard_entry,
+                    "component_publish": component_publish,
+                    "component_notes": component_notes,
                     "creation_steps": creation_steps,
                     "first_commands": first_commands,
                     "acceptance_checklist": acceptance_checklist,
@@ -3642,18 +3662,26 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     print()
     print("```yaml")
     if manifest_entry:
-        print(f"  {args.repo}:")
-        for key, value in manifest_entry.items():
-            print(_yaml_line(key, value, indent=4))
+        print(_yaml_block({args.repo: manifest_entry}, indent=2))
     else:
         print(
             "  # no active repos entry; add this under dashboard.destination_repos or dashboard.rehab_repos"
         )
         if dashboard_entry:
-            for key, value in dashboard_entry.items():
-                print(_yaml_line(key, value, indent=2))
+            print(_yaml_block(dashboard_entry, indent=2))
     print("```")
     print()
+    if component_publish or component_notes:
+        print("## Component publish behavior")
+        print()
+        for item in component_publish:
+            component = item.get("component", "")
+            behavior = item.get("publish_behavior", item.get("release_policy", ""))
+            image = item.get("image_name", "")
+            print(f"- `{component}`: {behavior}; image `{image}`")
+        for note in component_notes:
+            print(f"- {note}")
+        print()
     print("## First commands")
     print()
     for command in first_commands:
@@ -3666,11 +3694,372 @@ def cmd_onboard_repo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _multi_component_onboarding_pack(
+    repo: str, *, upstream_name: str, image_name: str
+) -> OnboardingPack:
+    slug = repo.removesuffix("-aio")
+    normalized_upstream = upstream_name.lower().replace(" ", "")
+    if repo == "penpot-aio" or normalized_upstream == "penpot":
+        return _penpot_component_pack(repo, image_name=image_name)
+    if repo == "nanoclaw-aio" or normalized_upstream == "nanoclaw":
+        return _nanoclaw_component_pack(repo, image_name=image_name)
+    return _generic_published_component_pack(
+        repo,
+        slug=slug,
+        upstream_name=upstream_name,
+        image_name=image_name,
+    )
+
+
+def _penpot_component_pack(repo: str, *, image_name: str) -> OnboardingPack:
+    return {
+        "manifest": {
+            "publish_profile": "changelog-version",
+            "upstream_version_key": "PENPOT_VERSION",
+            "upstream_digest_arg": "PENPOT_BACKEND_DIGEST",
+            "generated_template": True,
+            "generator_check_command": (
+                "python3 scripts/generate_penpot_template.py --check"
+            ),
+            "upstream_commit_paths": [
+                "Dockerfile",
+                f"{repo}.xml",
+                "docs/upstream/penpot-config-inventory.json",
+            ],
+            "upstream_monitor": [
+                _digest_monitor(
+                    "frontend",
+                    "Penpot Frontend",
+                    "penpot/penpot",
+                    "penpotapp/frontend",
+                    "PENPOT_VERSION",
+                    "PENPOT_FRONTEND_DIGEST",
+                ),
+                _digest_monitor(
+                    "backend",
+                    "Penpot Backend",
+                    "penpot/penpot",
+                    "penpotapp/backend",
+                    "PENPOT_VERSION",
+                    "PENPOT_BACKEND_DIGEST",
+                ),
+                _digest_monitor(
+                    "exporter",
+                    "Penpot Exporter",
+                    "penpot/penpot",
+                    "penpotapp/exporter",
+                    "PENPOT_VERSION",
+                    "PENPOT_EXPORTER_DIGEST",
+                ),
+                _digest_monitor(
+                    "mcp",
+                    "Penpot MCP",
+                    "penpot/penpot",
+                    "penpotapp/mcp",
+                    "PENPOT_VERSION",
+                    "PENPOT_MCP_DIGEST",
+                ),
+                _digest_monitor(
+                    "mailpit",
+                    "Mailpit",
+                    "axllent/mailpit",
+                    "axllent/mailpit",
+                    "MAILPIT_VERSION",
+                    "MAILPIT_IMAGE_DIGEST",
+                ),
+            ],
+            "extended_integration": {
+                "input_name": "run_extended_integration",
+                "description": (
+                    "Run optional external PostgreSQL/Redis/S3/SMTP "
+                    "integration tests"
+                ),
+                "pytest_args": "tests/integration -m extended_integration",
+            },
+            "xml_paths": ["*.xml", "assets/**"],
+            "catalog_assets": [
+                {"source": f"{repo}.xml", "target": f"{repo}.xml"},
+                {"source": "assets/app-icon.png", "target": "icons/penpot.png"},
+            ],
+            "validation": {
+                "required_targets": [
+                    "/appdata",
+                    "8080",
+                    "8025",
+                    "PENPOT_AIO_DEFAULT_FLAGS",
+                    "PENPOT_AIO_ENABLE_INTERNAL_POSTGRES",
+                    "PENPOT_AIO_ENABLE_INTERNAL_REDIS",
+                    "PENPOT_AIO_ENABLE_MAILPIT",
+                    "PENPOT_AIO_ENABLE_MCP",
+                    "PENPOT_DATABASE_URI",
+                    "PENPOT_PUBLIC_URI",
+                    "PENPOT_SECRET_KEY",
+                ],
+                "required_text_fields": ["ReadMe"],
+                "exact_category_tokens": ["Productivity", "Tools:Utilities"],
+            },
+        },
+        "component_publish": [
+            {
+                "component": "aio",
+                "image_name": image_name,
+                "release_policy": "formal_release_and_registry",
+                "publish_behavior": "published AIO wrapper image",
+            },
+            *[
+                {
+                    "component": component,
+                    "image_name": upstream_image,
+                    "release_policy": "upstream_digest_only",
+                    "publish_behavior": (
+                        "monitored upstream input; not published by aio-fleet"
+                    ),
+                }
+                for component, upstream_image in (
+                    ("frontend", "penpotapp/frontend"),
+                    ("backend", "penpotapp/backend"),
+                    ("exporter", "penpotapp/exporter"),
+                    ("mcp", "penpotapp/mcp"),
+                    ("mailpit", "axllent/mailpit"),
+                )
+            ],
+        ],
+        "notes": [
+            (
+                "Penpot has multiple monitored upstream images but still "
+                "publishes one AIO wrapper image."
+            ),
+            (
+                "Do not add `components` unless the repo is intentionally split "
+                "into separately published images."
+            ),
+        ],
+    }
+
+
+def _nanoclaw_component_pack(repo: str, *, image_name: str) -> OnboardingPack:
+    slug = repo.removesuffix("-aio")
+    agent_image = f"jsonbored/{slug}-agent"
+    agent_dockerfile = f"components/{slug}-agent/Dockerfile"
+    return {
+        "manifest": {
+            "publish_profile": "multi-component",
+            "runtime_supervisor": "tini",
+            "check_upstream_name": "Check NanoClaw Upstream",
+            "upstream_components": [repo, f"{slug}-agent"],
+            "upstream_commit_paths": ["Dockerfile", agent_dockerfile],
+            "upstream_monitor": [
+                {
+                    "component": "aio",
+                    "name": "NanoClaw",
+                    "source": "github-releases",
+                    "repo": "nanocoai/nanoclaw",
+                    "dockerfile": "Dockerfile",
+                    "version_key": "UPSTREAM_VERSION",
+                    "stable_only": True,
+                    "strategy": "pr",
+                    "release_notes_url": (
+                        "https://github.com/nanocoai/nanoclaw/releases"
+                    ),
+                },
+                {
+                    "component": "agent",
+                    "name": "NanoClaw Agent",
+                    "source": "github-releases",
+                    "repo": "nanocoai/nanoclaw",
+                    "dockerfile": agent_dockerfile,
+                    "version_key": "UPSTREAM_VERSION",
+                    "stable_only": True,
+                    "strategy": "pr",
+                    "release_notes_url": (
+                        "https://github.com/nanocoai/nanoclaw/releases"
+                    ),
+                },
+            ],
+            "publish_platforms": "linux/amd64",
+            "catalog_assets": [{"source": f"{repo}.xml", "target": f"{repo}.xml"}],
+            "components": {
+                "aio": {
+                    "image_name": image_name,
+                    "dockerfile": "Dockerfile",
+                    "upstream_config": "upstream.toml",
+                    "docker_cache_scope": f"{repo}-image",
+                    "oci_description": (
+                        "Telegram-first Unraid AIO wrapper for NanoClaw v2"
+                    ),
+                    "release_suffix": "aio",
+                    "floating_tags": ["latest"],
+                    "upstream_version_key": "UPSTREAM_VERSION",
+                    "xml_paths": [f"{repo}.xml"],
+                },
+                "agent": {
+                    "image_name": agent_image,
+                    "dockerfile": agent_dockerfile,
+                    "context": f"components/{slug}-agent",
+                    "upstream_config": "upstream.toml",
+                    "docker_cache_scope": f"{slug}-agent-image",
+                    "oci_description": f"Helper sandbox image spawned by {repo}",
+                    "release_policy": "registry_only",
+                    "release_suffix": "agent",
+                    "registry_revision_arg": "AGENT_REVISION",
+                    "floating_tags": ["latest"],
+                    "upstream_version_key": "UPSTREAM_VERSION",
+                },
+            },
+            "validation": {
+                "docker_socket_required": True,
+                "required_targets": [
+                    "/appdata",
+                    "/var/run/docker.sock",
+                    "TELEGRAM_BOT_TOKEN",
+                    "ANTHROPIC_API_KEY",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_BASE_URL",
+                    "ONECLI_URL",
+                    "ONECLI_API_KEY",
+                    "CONTAINER_IMAGE",
+                    "CONTAINER_IMAGE_BASE",
+                    "CONTAINER_TIMEOUT",
+                    "IDLE_TIMEOUT",
+                    "CONTAINER_MAX_OUTPUT_SIZE",
+                    "MAX_MESSAGES_PER_PROMPT",
+                    "MAX_CONCURRENT_CONTAINERS",
+                    "LOG_LEVEL",
+                ],
+            },
+        },
+        "component_publish": [
+            {
+                "component": "aio",
+                "image_name": image_name,
+                "release_policy": "formal_release_and_registry",
+                "publish_behavior": (
+                    "published Unraid-facing AIO image and release lane"
+                ),
+            },
+            {
+                "component": "agent",
+                "image_name": agent_image,
+                "release_policy": "registry_only",
+                "publish_behavior": (
+                    "published helper image without its own Community Apps XML"
+                ),
+            },
+        ],
+        "notes": [
+            (
+                "NanoClaw publishes a helper image, but only the AIO XML is "
+                "catalog-facing."
+            ),
+            (
+                "`release_policy: registry_only` keeps the helper out of "
+                "formal GitHub Release/changelog flow."
+            ),
+        ],
+    }
+
+
+def _generic_published_component_pack(
+    repo: str, *, slug: str, upstream_name: str, image_name: str
+) -> OnboardingPack:
+    helper = "helper"
+    helper_image = f"jsonbored/{slug}-{helper}"
+    helper_dockerfile = f"components/{slug}-{helper}/Dockerfile"
+    return {
+        "manifest": {
+            "publish_profile": "multi-component",
+            "upstream_components": [repo, f"{slug}-{helper}"],
+            "upstream_commit_paths": ["Dockerfile", helper_dockerfile],
+            "components": {
+                "aio": {
+                    "image_name": image_name,
+                    "dockerfile": "Dockerfile",
+                    "docker_cache_scope": f"{repo}-image",
+                    "release_suffix": "aio",
+                    "floating_tags": ["latest"],
+                    "upstream_version_key": "UPSTREAM_VERSION",
+                    "xml_paths": [f"{repo}.xml"],
+                },
+                helper: {
+                    "image_name": helper_image,
+                    "dockerfile": helper_dockerfile,
+                    "context": f"components/{slug}-{helper}",
+                    "docker_cache_scope": f"{slug}-{helper}-image",
+                    "release_policy": "registry_only",
+                    "release_suffix": helper,
+                    "registry_revision_arg": f"{helper.upper()}_REVISION",
+                    "floating_tags": ["latest"],
+                    "upstream_version_key": "UPSTREAM_VERSION",
+                },
+            },
+        },
+        "component_publish": [
+            {
+                "component": "aio",
+                "image_name": image_name,
+                "release_policy": "formal_release_and_registry",
+                "publish_behavior": "published Unraid-facing AIO image",
+            },
+            {
+                "component": helper,
+                "image_name": helper_image,
+                "release_policy": "registry_only",
+                "publish_behavior": (
+                    "published helper image; replace this placeholder with "
+                    "the real component contract"
+                ),
+            },
+        ],
+        "notes": [
+            (
+                f"Replace the helper component with the actual {upstream_name} "
+                "component name before adding this to fleet.yml."
+            ),
+            (
+                "If the extra components are only upstream images bundled into "
+                "one AIO image, use the Penpot-style monitor-only pack instead."
+            ),
+        ],
+    }
+
+
+def _digest_monitor(
+    component: str,
+    name: str,
+    repo: str,
+    image: str,
+    version_key: str,
+    digest_key: str,
+) -> dict[str, object]:
+    return {
+        "component": component,
+        "name": name,
+        "source": "github-releases",
+        "repo": repo,
+        "image": image,
+        "digest_source": "dockerhub",
+        "dockerfile": "Dockerfile",
+        "version_key": version_key,
+        "digest_key": digest_key,
+        "stable_only": True,
+        "strategy": "pr",
+        "release_notes_url": f"https://github.com/{repo}/releases",
+    }
+
+
 def _onboarding_shape_checklist(shape: str) -> list[str]:
     if shape == "multi-component":
         return [
-            "each component has a declared image, XML path, registry tags, and publish policy",
-            "multi-component registry verify passes for every component",
+            (
+                "published components have declared images, Dockerfile/context, "
+                "registry tags, and publish policy"
+            ),
+            (
+                "upstream-only components are monitored but not treated as "
+                "separately published images"
+            ),
+            "component-specific registry verify passes for every published component",
         ]
     if shape == "submodule-backed":
         return [
@@ -3711,7 +4100,13 @@ def _onboarding_creation_steps(repo: str, mode: str, shape: str) -> list[str]:
     return []
 
 
-def _onboarding_first_commands(repo: str, mode: str, shape: str) -> list[str]:
+def _onboarding_first_commands(
+    repo: str,
+    mode: str,
+    shape: str,
+    *,
+    component_publish: list[dict[str, object]] | None = None,
+) -> list[str]:
     commands = []
     if mode == "rehab":
         commands.extend(
@@ -3734,16 +4129,41 @@ def _onboarding_first_commands(repo: str, mode: str, shape: str) -> list[str]:
             f"python -m aio_fleet validate-repo --repo {repo} --repo-path ../{repo}",
             f"python -m aio_fleet sync-catalog --repo {repo} --catalog-path ../awesome-unraid --dry-run",
             f"python -m aio_fleet upstream monitor --repo {repo} --dry-run",
-            f"python -m aio_fleet registry verify --repo {repo} --sha <commit-sha> --dry-run --verbose",
-            f"python -m aio_fleet support-thread render --repo {repo}",
         ]
     )
+    publish_components = _onboarding_publish_components(component_publish or [])
+    if shape == "multi-component" and publish_components:
+        for component in publish_components:
+            commands.append(
+                "python -m aio_fleet registry verify "
+                f"--repo {repo} --component {component} "
+                "--sha <commit-sha> --dry-run --verbose"
+            )
+    else:
+        commands.append(
+            f"python -m aio_fleet registry verify --repo {repo} --sha <commit-sha> --dry-run --verbose"
+        )
+    commands.append(f"python -m aio_fleet support-thread render --repo {repo}")
     if mode == "new-from-template":
         commands.insert(
             0,
             f"gh repo create JSONbored/{repo} --template JSONbored/unraid-aio-template --public",
         )
     return commands
+
+
+def _onboarding_publish_components(
+    component_publish: list[dict[str, object]],
+) -> list[str]:
+    publish_components: list[str] = []
+    for item in component_publish:
+        policy = str(item.get("release_policy", ""))
+        if policy == "upstream_digest_only":
+            continue
+        component = str(item.get("component", "")).strip()
+        if component:
+            publish_components.append(component)
+    return publish_components
 
 
 def cmd_export_app_manifest(args: argparse.Namespace) -> int:
@@ -3781,6 +4201,18 @@ def _yaml_line(key: str, value: object, *, indent: int) -> str:
     if isinstance(value, bool):
         return f"{prefix}{key}: {str(value).lower()}"
     return f"{prefix}{key}: {value}"
+
+
+def _yaml_block(value: object, *, indent: int) -> str:
+    rendered = yaml.safe_dump(
+        value,
+        sort_keys=False,
+        default_flow_style=False,
+    ).rstrip()
+    prefix = " " * indent
+    return "\n".join(
+        f"{prefix}{line}" if line else line for line in rendered.splitlines()
+    )
 
 
 def cmd_support_thread_render(args: argparse.Namespace) -> int:
