@@ -119,7 +119,9 @@ python -m aio_fleet fleet-report validate --input fleet-report.json
 
 Use `fleet-report generate` for future GitHub Pages, Discord, Raycast, or
 GitHub Action surfaces. Those surfaces should consume the versioned report
-object and avoid scraping the rendered issue body.
+object and avoid scraping the rendered issue body. The generated report and the
+dashboard body are public-text guarded, so local paths, webhook URLs, and similar
+operator-only strings are redacted before output.
 
 `nanoclaw-aio` is an active multi-component fleet repo. It participates in
 dashboard state, upstream monitoring, registry verification, publish planning,

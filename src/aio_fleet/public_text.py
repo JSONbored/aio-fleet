@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 _PUBLIC_TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("macOS home path", re.compile(r"/Users/[^`\s)>'\"]+")),
@@ -24,6 +25,30 @@ def public_text_findings(text: str) -> list[str]:
         if pattern.search(text):
             findings.append(label)
     return findings
+
+
+def redact_public_text(text: str) -> str:
+    redacted = text
+    for label, pattern in _PUBLIC_TEXT_PATTERNS:
+        redacted = pattern.sub(f"<redacted: {label}>", redacted)
+    return redacted
+
+
+def public_text_safe_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_public_text(value)
+    if isinstance(value, list):
+        return [public_text_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [public_text_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            (
+                redact_public_text(key) if isinstance(key, str) else key
+            ): public_text_safe_value(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def assert_public_text(text: str, *, context: str = "public text") -> None:

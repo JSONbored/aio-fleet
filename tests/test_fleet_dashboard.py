@@ -10,6 +10,7 @@ import pytest
 
 from aio_fleet import fleet_dashboard
 from aio_fleet.manifest import load_manifest
+from aio_fleet.public_text import assert_public_text
 from aio_fleet.upstream import UpstreamMonitorResult
 
 
@@ -1226,6 +1227,75 @@ def test_dashboard_state_comment_is_safe_for_pr_titles() -> None:
     assert "-->" not in hidden_block  # nosec B101
     assert "<a href='https://evil.example'>" not in body  # nosec B101
     assert "evil.example" in _hidden_dashboard_state(body)  # nosec B101
+
+
+def test_dashboard_redacts_non_public_text_from_body_and_hidden_state() -> None:
+    unsafe_path = "/Users/shadowbook/Documents/aio-fleet/.venv/bin/python"
+    unsafe_worktree = ".codex/worktrees/2551/aio-fleet"
+    unsafe_webhook = "https://discord.com/api/webhooks/123/secret"
+    state = {
+        "schema_version": 3,
+        "generated_at": "2026-05-05T00:00:00+00:00",
+        "issue_repo": "JSONbored/aio-fleet",
+        "summary": {"posture": "blocked"},
+        "warnings": [f"debug command used {unsafe_path}"],
+        "rows": [
+            {
+                "repo": "example-aio",
+                "component": "aio",
+                "current": "1.0.0",
+                "latest": "1.1.0",
+                "strategy": "pr",
+                "update": True,
+                "pr": "",
+                "check": "missing",
+                "signed": "missing",
+                "registry": "failed:1",
+                "release": "blocked",
+                "safety": "blocked",
+                "config_delta": "unknown",
+                "template_impact": "unknown",
+                "runtime_smoke": "unknown",
+                "safety_failures": [unsafe_webhook],
+                "next_action": f"rerun {unsafe_path}",
+            }
+        ],
+        "activity": [],
+        "destination_repos": [],
+        "rehab_repos": [],
+        "registry": [
+            {
+                "repo": "example-aio",
+                "component": "aio",
+                "sha": "a" * 40,
+                "dockerhub": [],
+                "ghcr": [],
+                "failures": [f"artifact came from {unsafe_worktree}"],
+                "state": "failed",
+                "verified_at": "2026-05-05T00:00:00+00:00",
+            }
+        ],
+        "releases": [],
+        "cleanup": [
+            {
+                "repo": "example-aio",
+                "findings_count": 1,
+                "findings": [{"path": unsafe_path, "reason": unsafe_webhook}],
+            }
+        ],
+        "workflow": {},
+    }
+
+    body = fleet_dashboard.render_dashboard(state)
+    hidden = _hidden_dashboard_state(body)
+
+    for unsafe in (unsafe_path, unsafe_worktree, unsafe_webhook):
+        assert unsafe not in body  # nosec B101
+        assert unsafe not in hidden  # nosec B101
+    assert_public_text(body, context="dashboard body")
+    assert_public_text(hidden, context="dashboard hidden state")
+    assert "<redacted: macOS home path>" in body  # nosec B101
+    assert "<redacted: Discord webhook URL>" in hidden  # nosec B101
 
 
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:

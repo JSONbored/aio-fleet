@@ -746,6 +746,58 @@ def test_fleet_report_generate_outputs_stable_state(
     assert report["rows"][0]["repo"] == "example-aio"  # nosec B101
 
 
+def test_fleet_report_generate_redacts_public_text(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    unsafe_path = "/Users/shadowbook/Documents/aio-fleet/.venv/bin/python"
+    unsafe_webhook = "https://discord.com/api/webhooks/123/secret"
+
+    monkeypatch.setattr(
+        cli,
+        "dashboard_report",
+        lambda *_args, **_kwargs: {
+            "body": "# Dashboard\n",
+            "state": {
+                "schema_version": 3,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "issue_repo": "JSONbored/aio-fleet",
+                "warnings": [unsafe_webhook],
+                "summary": {"posture": "blocked"},
+                "rows": [{"repo": "example-aio", "next_action": unsafe_path}],
+                "activity": [],
+                "destination_repos": [],
+                "rehab_repos": [],
+                "registry": [],
+                "releases": [],
+                "cleanup": [],
+                "workflow": {},
+            },
+        },
+    )
+
+    result = cmd_fleet_report_generate(
+        Namespace(
+            manifest=str(manifest),
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=True,
+            stale_days=7,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert unsafe_path not in output  # nosec B101
+    assert unsafe_webhook not in output  # nosec B101
+    report = json.loads(output)
+    assert report["warnings"] == ["<redacted: Discord webhook URL>"]  # nosec B101
+    assert (  # nosec B101
+        report["rows"][0]["next_action"] == "<redacted: macOS home path>"
+    )
+
+
 def test_fleet_report_schema_and_validate(tmp_path: Path, capsys) -> None:
     result = cmd_fleet_report_schema(Namespace())
 
@@ -2653,13 +2705,13 @@ def test_onboard_repo_new_from_template_outputs_creation_steps(capsys) -> None:
     assert payload["first_commands"][0].startswith("gh repo create")  # nosec B101
 
 
-def test_onboard_repo_multi_component_shape_outputs_component_pack(capsys) -> None:
+def test_onboard_repo_multi_component_shape_outputs_nanoclaw_pack(capsys) -> None:
     result = cmd_onboard_repo(
         Namespace(
-            repo="signoz-aio",
-            profile="signoz-suite",
-            image_name="jsonbored/signoz-aio",
-            upstream_name="SigNoz",
+            repo="nanoclaw-aio",
+            profile="changelog-version",
+            image_name="jsonbored/nanoclaw-aio",
+            upstream_name="NanoClaw",
             local_path_base="/Users/shadowbook/Documents",
             format="json",
             dry_run=True,
@@ -2671,10 +2723,68 @@ def test_onboard_repo_multi_component_shape_outputs_component_pack(capsys) -> No
     assert result == 0  # nosec B101
     payload = json.loads(capsys.readouterr().out)
     assert payload["shape"] == "multi-component"  # nosec B101
-    assert payload["manifest_entry"]["components"][1]["name"] == "agent"  # nosec B101
+    assert (
+        payload["manifest_entry"]["publish_profile"] == "multi-component"
+    )  # nosec B101
+    components = payload["manifest_entry"]["components"]
+    assert components["agent"]["release_policy"] == "registry_only"  # nosec B101
+    assert components["agent"]["dockerfile"] == (  # nosec B101
+        "components/nanoclaw-agent/Dockerfile"
+    )
+    assert payload["manifest_entry"]["catalog_assets"] == [  # nosec B101
+        {"source": "nanoclaw-aio.xml", "target": "nanoclaw-aio.xml"}
+    ]
+    assert "nanoclaw-agent.xml" not in json.dumps(payload)  # nosec B101
     assert any(
-        "multi-component registry verify" in item
+        item["component"] == "agent" and item["release_policy"] == "registry_only"
+        for item in payload["component_publish"]
+    )  # nosec B101
+    assert any(
+        "--component agent" in command for command in payload["first_commands"]
+    )  # nosec B101
+    assert any(
+        "component-specific registry verify" in item
         for item in payload["acceptance_checklist"]
+    )  # nosec B101
+
+
+def test_onboard_repo_multi_component_shape_outputs_penpot_monitor_pack(capsys) -> None:
+    result = cmd_onboard_repo(
+        Namespace(
+            repo="penpot-aio",
+            profile="multi-component",
+            image_name="jsonbored/penpot-aio",
+            upstream_name="Penpot",
+            local_path_base="/Users/shadowbook/Documents",
+            format="json",
+            dry_run=True,
+            mode="existing",
+            shape="multi-component",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    entry = payload["manifest_entry"]
+    assert entry["publish_profile"] == "changelog-version"  # nosec B101
+    assert "components" not in entry  # nosec B101
+    assert {item["component"] for item in entry["upstream_monitor"]} == {  # nosec B101
+        "frontend",
+        "backend",
+        "exporter",
+        "mcp",
+        "mailpit",
+    }
+    assert any(
+        item["component"] == "frontend"
+        and item["release_policy"] == "upstream_digest_only"
+        for item in payload["component_publish"]
+    )  # nosec B101
+    assert all(
+        "--component frontend" not in command for command in payload["first_commands"]
+    )  # nosec B101
+    assert any(
+        "--component aio" in command for command in payload["first_commands"]
     )  # nosec B101
 
 

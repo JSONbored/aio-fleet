@@ -91,7 +91,8 @@ python -m aio_fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml
 python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
 python -m aio_fleet infra doctor --skip-tofu
 python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
-python -m aio_fleet onboard-repo --repo signoz-aio --shape multi-component --format json
+python -m aio_fleet onboard-repo --repo nanoclaw-aio --shape multi-component --format json
+python -m aio_fleet onboard-repo --repo penpot-aio --shape multi-component --format json
 python -m aio_fleet support-thread render --repo sure-aio
 python -m aio_fleet validate --all
 python -m aio_fleet validate-derived --repo-path ../sure-aio

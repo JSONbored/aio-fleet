@@ -10,7 +10,7 @@ Required manifest fields:
 - `image_name`: image path without registry, for example `jsonbored/example-aio`.
 - `docker_cache_scope`: GitHub Actions cache scope for the main image.
 - `pytest_image_tag`: local image tag used by integration tests.
-- `publish_profile`: one of `template`, `upstream-aio-track`, `changelog-version`, `dify`, or `signoz-suite`.
+- `publish_profile`: one of `template`, `upstream-aio-track`, `changelog-version`, `dify`, `multi-component`, or `signoz-suite`.
 - `release_name`: user-facing release workflow name.
 - `upstream_name` and `image_description`: OCI metadata labels.
 - `xml_paths`: XML/template paths watched by CI.
@@ -23,7 +23,8 @@ Optional fields:
 - `checkout_submodules`: required for repos like `mem0-aio`.
 - `extra_publish_paths`: paths that should trigger image publishing.
 - `extended_integration`: manual extended integration test input and pytest args.
-- `components`: component-aware publish lanes, currently used by `signoz-aio`.
+- `components`: component-aware publish lanes, used when a repo publishes more
+  than one AIO-managed image.
 - `upstream_components`: matrix values for component-aware upstream checks.
 - `upstream_commit_paths`: files committed by an upstream monitor PR.
 - `upstream_monitor`: version/digest sources used by central upstream PR automation.
@@ -55,9 +56,10 @@ fleet model, `new-from-template` for a brand new repo created from
 on the dashboard without blocking active fleet validation. `nanoclaw-aio` is an
 active multi-component repo now, not a rehab example.
 Use `--shape` to generate the acceptance pack for the repo surface: normal
-single-image apps, multi-component repos such as `signoz-aio`, future
-submodule-backed apps, dashboard-only catalog/destination repos, and rehab-only
-repos that must stay non-blocking.
+single-image apps, multi-component repos such as `nanoclaw-aio`, bundled
+multi-upstream apps such as `penpot-aio`, future submodule-backed apps,
+dashboard-only catalog/destination repos, and rehab-only repos that must stay
+non-blocking.
 
 1. Create the repo from `unraid-aio-template`.
 2. Keep only app-specific source/runtime/template/docs/tests in the app repo.
@@ -111,14 +113,20 @@ checkout, dirty worktree, and retired shared files, and it prints the exact
 manifest entry and first central validation commands needed for the promotion
 PR.
 
-## Multi-Image Repos
+## Multi-Component Repos
 
-Use `signoz-aio` as the reference when a repo publishes more than one image.
-Declare each image under `components`, give each component its own cache scope,
-Dockerfile/context, upstream version key, release suffix, and integration test
-args, then add matching `upstream_monitor` entries. `aio-fleet` will publish and
-verify each component separately while keeping one app repo and one required
-fleet check.
+Use `nanoclaw-aio` as the reference when a repo publishes more than one
+AIO-managed image. Declare each published image under `components`, give each
+component its own cache scope, Dockerfile/context, upstream version key, release
+suffix, and publish policy, then add matching `upstream_monitor` entries. The
+NanoClaw helper image is `registry_only`, so it gets registry tags but does not
+pretend to have its own Community Apps XML or formal release lane.
+
+Use `penpot-aio` as the reference when several upstream images are monitored but
+the repo still publishes one AIO wrapper image. In that shape, keep
+`publish_profile: changelog-version`, add separate `upstream_monitor` entries
+for the upstream images and digests, and do not add `components` unless the AIO
+repo is intentionally split into separately published images.
 
 ## Submodule-Backed Repos
 

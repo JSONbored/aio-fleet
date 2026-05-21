@@ -14,9 +14,10 @@ from aio_fleet.catalog import sync_catalog_assets
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
 from aio_fleet.manifest import FleetManifest, RepoConfig
+from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
 from aio_fleet.release_plan import release_plan_for_manifest
-from aio_fleet.report import FleetReport
+from aio_fleet.report import FleetReport, public_fleet_report_state, stable_report_json
 from aio_fleet.safety import assess_upstream_pr
 from aio_fleet.upstream import UpstreamMonitorResult, monitor_repo, upstream_branch
 from aio_fleet.validators import catalog_repo_failures
@@ -163,6 +164,7 @@ def dashboard_report(
     ).to_state()
     state = _redact_private_dashboard_state(manifest, state)
     state = _with_refreshed_dashboard_summary(state)
+    state = public_fleet_report_state(state)
     return {"state": state, "body": render_dashboard(state)}
 
 
@@ -243,6 +245,7 @@ def dashboard_summary(
 
 
 def render_dashboard(state: dict[str, Any]) -> str:
+    state = public_fleet_report_state(state)
     rows = list(state.get("rows", []))
     activity = list(state.get("activity", []))
     destination_rows = list(state.get("destination_repos", []))
@@ -301,7 +304,12 @@ def render_dashboard(state: dict[str, Any]) -> str:
             "",
         ]
     )
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    assert_public_text(
+        stable_report_json(state), context="Fleet Update Dashboard state"
+    )
+    assert_public_text(body, context="Fleet Update Dashboard body")
+    return body
 
 
 def _encoded_dashboard_state(state: dict[str, Any]) -> str:
@@ -418,6 +426,7 @@ def upsert_dashboard_issue(
     label: str = DASHBOARD_LABEL,
     dry_run: bool,
 ) -> DashboardIssueResult:
+    assert_public_text(body, context="Fleet Update Dashboard body")
     existing = (
         _dashboard_issue_by_number(issue_repo, issue_number)
         if issue_number
