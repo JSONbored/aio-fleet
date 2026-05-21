@@ -392,7 +392,12 @@ def _verify_dockerhub_tag(
                 if response.status == 200:
                     try:
                         json.load(response)
-                    except (json.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as error:
+                    except (
+                        json.JSONDecodeError,
+                        UnicodeDecodeError,
+                        OSError,
+                        ValueError,
+                    ) as error:
                         last_error = f"invalid Docker Hub JSON response: {error}"
                         if attempt < attempts:
                             time.sleep(2 * attempt)
@@ -640,6 +645,17 @@ def _release_tag_sha_allowed(
     changed_paths = [
         path.strip() for path in changed_files.splitlines() if path.strip()
     ]
+    non_publish_patterns = _non_publish_patterns(repo)
+    if (
+        not _component_bool(repo, component, "include_sha_tag", True)
+        and non_publish_patterns
+        and changed_paths
+        and all(
+            _matches_release_pattern(path, non_publish_patterns)
+            for path in changed_paths
+        )
+    ):
+        return True
     if not subject_lines:
         return False
     if _cleanup_followup_allowed(
@@ -669,6 +685,8 @@ def _cleanup_followup_allowed(
     return bool(patterns) and all(
         _matches_release_pattern(path, patterns) for path in paths
     )
+
+
 def _non_publish_patterns(repo: RepoConfig) -> set[str]:
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
