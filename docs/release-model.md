@@ -31,8 +31,10 @@ does not change.
 
 Publish jobs push and verify Docker Hub plus GHCR tags. Docker Hub remains the
 template/catalog-preferred image reference; GHCR is a second registry surface
-for package availability and operator fallback. Central GHCR publishing should
-use `AIO_FLEET_GHCR_TOKEN`.
+for package availability and operator fallback. Central GHCR publishing uses
+the protected job's short-lived `GITHUB_TOKEN` with `packages: write`. If GHCR
+returns `permission_denied: write_package`, grant the `aio-fleet` repository
+write access under the package's **Manage Actions access** settings.
 
 Publish jobs still require:
 
@@ -74,14 +76,15 @@ python -m aio_fleet registry preflight --mode cleanup --image jsonbored/sure-aio
 Local publish preflight requires `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and
 `AIO_FLEET_GHCR_TOKEN`, then checks the current Docker Hub `/v2/auth/token`
 flow before an expensive build starts. The GitHub control plane instead logs in
-inside the protected `registry-publish` environment and runs publish code with
-only a preauthenticated `DOCKER_CONFIG`, so app validation and long-running
-Python control code never receive the raw Docker Hub token. Cleanup preflight
-requires a separate `DOCKERHUB_DELETE_TOKEN`; it should not fall back to the
-normal publish token for real tag cleanup because tag deletion needs Docker Hub
-delete/admin permission. The delete-scope probe targets a random nonexistent
-tag so it can distinguish a missing tag from a token that authenticates but
-cannot delete.
+inside the protected `registry-publish` environment with
+`DOCKERHUB_PUBLISH_TOKEN` and the job-scoped `GITHUB_TOKEN`, then runs publish
+code with only a preauthenticated `DOCKER_CONFIG`. App validation and
+long-running Python control code never receive the raw registry tokens. Cleanup
+preflight requires a separate `DOCKERHUB_DELETE_TOKEN`; it should not fall back
+to the normal publish token for real tag cleanup because tag deletion needs
+Docker Hub delete/admin permission. The delete-scope probe targets a random
+nonexistent tag so it can distinguish a missing tag from a token that
+authenticates but cannot delete.
 
 GitHub prerelease publishing is guarded by the same control-check attestation.
 `publish-github-prereleases` requires a matching control report or
