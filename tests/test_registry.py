@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -10,6 +11,10 @@ from aio_fleet.control_plane import registry_publish_command
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _git(path: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=path, check=True)  # nosec B603 B607
 
 
 def test_compute_registry_tags_preserves_docker_hub_and_ghcr_tags(monkeypatch) -> None:
@@ -153,7 +158,9 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.2" in tags.ghcr  # nosec B101
 
 
-def test_registry_sha_tag_required_for_non_publish_manifest_followup(monkeypatch) -> None:
+def test_registry_sha_tag_required_for_non_publish_manifest_followup(
+    monkeypatch,
+) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
     release_sha = "c" * 40
     publish_sha = "d" * 40
@@ -318,6 +325,69 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
     assert tags.ghcr == [  # nosec B101
         "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
+    ]
+
+
+def test_registry_only_component_keeps_tags_after_non_release_followup(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.9\n" "ARG AIO_REVISION=2\n"
+    )
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.alpha.md").write_text("## 0.7.1-alpha.9-aio.2\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.1-alpha.9-aio.2")
+    (repo_path / ".aio-fleet.yml").write_text("schema_version: 1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile app manifest")
+    sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "upstream_config": "upstream.toml",
+                    "release_policy": "registry_only",
+                    "release_suffix": "aio",
+                    "registry_revision_arg": "AIO_REVISION",
+                    "floating_tags": ["latest-alpha"],
+                    "include_upstream_version_tag": False,
+                    "include_sha_tag": False,
+                }
+            },
+        },
+        defaults={"non_release_paths": [".aio-fleet.yml"]},
+        owner="JSONbored",
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
+
+    assert tags.release_package_tag == "0.7.1-alpha.9-aio.2"  # nosec B101
+    assert tags.dockerhub == [  # nosec B101
+        "jsonbored/sure-aio-alpha:latest-alpha",
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.9-aio.2",
+    ]
+    assert tags.ghcr == [  # nosec B101
+        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.9-aio.2",
     ]
 
 
