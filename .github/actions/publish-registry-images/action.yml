@@ -63,9 +63,14 @@ runs:
         done < <(python - <<'PY'
         import json
         import os
+        import sys
 
         value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
-        for component in json.loads(value):
+        components = json.loads(value)
+        if not isinstance(components, list):
+            print("publish-components-json must be a JSON array", file=sys.stderr)
+            raise SystemExit(1)
+        for component in components:
             print(component)
         PY
         )

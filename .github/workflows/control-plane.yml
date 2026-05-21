@@ -653,14 +653,16 @@ jobs:
 
   manual-registry-publish:
     name: manual-registry-publish
+    # Kept inline with poll-registry-publish because both jobs must bind their
+    # own protected registry-publish environment and job-scoped package writer.
     needs: control-plane
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && needs.control-plane.outputs.manual_control_check_outcome == 'success' }}
     runs-on: ubuntu-latest
     environment: registry-publish
     permissions:
-      contents: read
-      checks: write
-      packages: write
+      contents: read # checkout trusted fleet code and the reviewed app ref
+      checks: write # complete the required aio-fleet check-run
+      packages: write # publish GHCR images with the short-lived GITHUB_TOKEN
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -698,6 +700,33 @@ jobs:
           echo "::add-mask::${token}"
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
+      - name: Prepare Docker auth config
+        run: |
+          set -euo pipefail
+          install -d -m 700 "${RUNNER_TEMP}/aio-fleet-docker-config"
+          printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/aio-fleet-docker-config" >> "${GITHUB_ENV}"
+
+      - name: Log in to Docker Hub
+        id: dockerhub-login
+        continue-on-error: true
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+
+      - name: Log in to GHCR
+        id: ghcr-login
+        continue-on-error: true
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
       - name: Validate publish credentials
         id: registry-preflight
         continue-on-error: true
@@ -707,17 +736,19 @@ jobs:
           TARGET_SOURCE: workflow_dispatch
           TARGET_EVENT: ${{ inputs.event }}
           PUBLISH_COMPONENT: ${{ inputs.publish_component }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          # DOCKERHUB_PUBLISH_TOKEN must be a least-privilege secret on the protected registry-publish environment.
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ github.token }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+          DOCKERHUB_LOGIN_OUTCOME: ${{ steps.dockerhub-login.outcome }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr-login.outcome }}
           CONTROL_REPORT: ${{ runner.temp }}/central-control-report.json
         run: |
           set +e
-          python -m aio_fleet registry preflight --mode publish --format json \
+          python -I -m aio_fleet registry preflight --mode publish --format json \
             | tee registry-preflight-report.json
           status=${PIPESTATUS[0]}
           set -euo pipefail
+          if [[ "${DOCKERHUB_LOGIN_OUTCOME}" != "success" || "${GHCR_LOGIN_OUTCOME}" != "success" ]]; then
+            status=1
+          fi
           if [[ ${status} -ne 0 ]]; then
             args=(
               workflow control-report
@@ -792,11 +823,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/publish-registry-images
         env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          # DOCKERHUB_PUBLISH_TOKEN must be a least-privilege secret on the protected registry-publish environment.
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ github.token }}
-          AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
         with:
           repo: ${{ inputs.repo }}
           repo-path: app-repo
@@ -1000,9 +1027,14 @@ jobs:
             done < <(python - <<'PY'
           import json
           import os
+          import sys
 
           value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
-          for component in json.loads(value):
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
               print(component)
           PY
           )
@@ -1057,9 +1089,14 @@ jobs:
           done < <(python - <<'PY'
           import json
           import os
+          import sys
 
           value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
-          for component in json.loads(value):
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
               print(component)
           PY
           )
@@ -1163,6 +1200,8 @@ jobs:
 
   poll-registry-publish:
     name: poll-registry-publish (${{ matrix.target.repo }} / ${{ matrix.target.source }})
+    # Kept inline with manual-registry-publish because both jobs must bind their
+    # own protected registry-publish environment and job-scoped package writer.
     needs:
       - control-plane
       - poll-checks
@@ -1170,9 +1209,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: registry-publish
     permissions:
-      contents: read
-      checks: write
-      packages: write
+      contents: read # checkout trusted fleet code and the reviewed app ref
+      checks: write # complete the required aio-fleet check-run
+      packages: write # publish GHCR images with the short-lived GITHUB_TOKEN
     concurrency:
       group: aio-fleet-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}-${{ join(matrix.target.publish_components, '-') || 'all' }}
       cancel-in-progress: false
@@ -1198,6 +1237,33 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install -e ".[dev]"
+
+      - name: Prepare Docker auth config
+        run: |
+          set -euo pipefail
+          install -d -m 700 "${RUNNER_TEMP}/aio-fleet-docker-config"
+          printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/aio-fleet-docker-config" >> "${GITHUB_ENV}"
+
+      - name: Log in to Docker Hub
+        id: dockerhub-login
+        continue-on-error: true
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+
+      - name: Log in to GHCR
+        id: ghcr-login
+        continue-on-error: true
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
 
       - name: Resolve GitHub App token
         id: app-token
@@ -1266,19 +1332,21 @@ jobs:
           TARGET_SOURCE: ${{ matrix.target.source }}
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          # DOCKERHUB_PUBLISH_TOKEN must be a least-privilege secret on the protected registry-publish environment.
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ github.token }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
+          DOCKERHUB_LOGIN_OUTCOME: ${{ steps.dockerhub-login.outcome }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr-login.outcome }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
           set -euo pipefail
           install -m 600 poll-check-artifacts/poll-central-control-report.json "${CONTROL_REPORT}"
           set +e
-          python -m aio_fleet registry preflight --mode publish --format json \
+          python -I -m aio_fleet registry preflight --mode publish --format json \
             | tee registry-preflight-report.json
           status=${PIPESTATUS[0]}
           set -euo pipefail
+          if [[ "${DOCKERHUB_LOGIN_OUTCOME}" != "success" || "${GHCR_LOGIN_OUTCOME}" != "success" ]]; then
+            status=1
+          fi
           if [[ ${status} -ne 0 ]]; then
             args=(
               workflow control-report
@@ -1299,9 +1367,14 @@ jobs:
             done < <(python - <<'PY'
           import json
           import os
+          import sys
 
           value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
-          for component in json.loads(value):
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
               print(component)
           PY
           )
@@ -1344,11 +1417,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/publish-registry-images
         env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          # DOCKERHUB_PUBLISH_TOKEN must be a least-privilege secret on the protected registry-publish environment.
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
-          AIO_FLEET_GHCR_TOKEN: ${{ github.token }}
-          AIO_FLEET_GHCR_USERNAME: ${{ github.repository_owner }}
+          AIO_FLEET_REGISTRY_AUTH_MODE: preauthenticated
         with:
           repo: ${{ matrix.target.repo }}
           repo-path: app-repo
@@ -1385,9 +1454,14 @@ jobs:
           done < <(python - <<'PY'
           import json
           import os
+          import sys
 
           value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
-          for component in json.loads(value):
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components:
               print(component)
           PY
           )

@@ -26,6 +26,9 @@ APP_CODE_SECRET_ENV_KEYS = SECRET_ENV_KEYS - {
     "AIO_FLEET_GHCR_TOKEN",
 }
 REGISTRY_PUBLISH_ENV_KEYS = {
+    "AIO_FLEET_REGISTRY_AUTH_MODE",
+}
+REGISTRY_PUBLISH_SECRET_ENV_KEYS = {
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
     "AIO_FLEET_GHCR_TOKEN",
@@ -50,6 +53,9 @@ def test_poll_checks_job_does_not_export_secrets_to_app_code_step() -> None:
         run_step.get("env", {})
     )  # nosec B101
     assert REGISTRY_PUBLISH_ENV_KEYS.issubset(publish_step.get("env", {}))  # nosec B101
+    assert not REGISTRY_PUBLISH_SECRET_ENV_KEYS.intersection(
+        publish_step.get("env", {})
+    )  # nosec B101
     assert "--check-run" not in run_step["run"]  # nosec B101
 
 
@@ -271,6 +277,9 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
         "${{ inputs.publish_component }}"
     )
     assert REGISTRY_PUBLISH_ENV_KEYS.issubset(manual_publish["env"])  # nosec B101
+    assert not REGISTRY_PUBLISH_SECRET_ENV_KEYS.intersection(
+        manual_publish["env"]
+    )  # nosec B101
     assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(manual["env"])  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in manual["env"]  # nosec B101
     assert "--report-json" in manual["run"]  # nosec B101
@@ -289,11 +298,22 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
         "${{ toJSON(matrix.target.publish_components) }}"
     )
     assert REGISTRY_PUBLISH_ENV_KEYS.issubset(poll_publish["env"])  # nosec B101
+    assert not REGISTRY_PUBLISH_SECRET_ENV_KEYS.intersection(
+        poll_publish["env"]
+    )  # nosec B101
     assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(poll["env"])  # nosec B101
     assert "--publish-only" in PUBLISH_ACTION.read_text()  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in poll["env"]  # nosec B101
     assert "--report-json" in poll["run"]  # nosec B101
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
+
+
+def test_registry_publish_action_validates_component_json_array() -> None:
+    text = PUBLISH_ACTION.read_text()
+
+    assert "components = json.loads(value)" in text  # nosec B101
+    assert "isinstance(components, list)" in text  # nosec B101
+    assert "publish-components-json must be a JSON array" in text  # nosec B101
 
 
 def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token() -> (
@@ -305,8 +325,12 @@ def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token(
     poll_job = workflow["jobs"]["poll-registry-publish"]
     manual_preflight = _step(manual_job, "Validate publish credentials")
     manual_publish = _step(manual_job, "Publish registry images")
+    manual_dockerhub_login = _step(manual_job, "Log in to Docker Hub")
+    manual_ghcr_login = _step(manual_job, "Log in to GHCR")
     poll_preflight = _step(poll_job, "Validate publish credentials")
     poll_publish = _step(poll_job, "Publish registry images")
+    poll_dockerhub_login = _step(poll_job, "Log in to Docker Hub")
+    poll_ghcr_login = _step(poll_job, "Log in to GHCR")
 
     assert "packages" not in permissions  # nosec B101
     assert manual_job["permissions"]["packages"] == "write"  # nosec B101
@@ -330,12 +354,31 @@ def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token(
     )
 
     for step in (manual_preflight, manual_publish, poll_preflight, poll_publish):
-        assert step["env"]["AIO_FLEET_GHCR_TOKEN"] == (  # nosec B101
-            "${{ github.token }}"
+        assert step["env"]["AIO_FLEET_REGISTRY_AUTH_MODE"] == (  # nosec B101
+            "preauthenticated"
         )
-        assert step["env"]["DOCKERHUB_TOKEN"] == (  # nosec B101
-            "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
+        assert "DOCKERHUB_TOKEN" not in step["env"]  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in step["env"]  # nosec B101
+
+    for step in (
+        manual_dockerhub_login,
+        manual_ghcr_login,
+        poll_dockerhub_login,
+        poll_ghcr_login,
+    ):
+        assert step["uses"].startswith("docker/login-action@")  # nosec B101
+        assert step.get("continue-on-error") is True  # nosec B101
+        assert step["env"]["DOCKER_CONFIG"] == (  # nosec B101
+            "${{ runner.temp }}/aio-fleet-docker-config"
         )
+    assert manual_dockerhub_login["with"]["password"] == (  # nosec B101
+        "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
+    )
+    assert poll_dockerhub_login["with"]["password"] == (  # nosec B101
+        "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
+    )
+    assert manual_ghcr_login["with"]["password"] == "${{ github.token }}"  # nosec B101
+    assert poll_ghcr_login["with"]["password"] == "${{ github.token }}"  # nosec B101
 
     for job in (manual_job, poll_job):
         setup = _step(job, "Set up Python")
