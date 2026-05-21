@@ -180,6 +180,17 @@ def latest_component_release_tag(repo_path: Path, suffix: str = "aio") -> str | 
     return tag or None
 
 
+def _aio_release_match_pattern(
+    upstream_version: str, suffix: str, tag_prefix: str = ""
+) -> re.Pattern[str]:
+    version = re.escape(upstream_version)
+    optional_v = "v?" if not upstream_version.startswith("v") else ""
+    return re.compile(
+        rf"^{re.escape(tag_prefix)}(?P<vprefix>{optional_v}){version}-"
+        rf"{re.escape(suffix)}\.(?P<revision>\d+)$"
+    )
+
+
 def latest_aio_release_tag(
     repo_path: Path,
     dockerfile: Path,
@@ -191,15 +202,12 @@ def latest_aio_release_tag(
     upstream_version = read_upstream_version(
         dockerfile, upstream_config, version_key=version_key
     )
-    pattern = re.compile(
-        rf"^{re.escape(tag_prefix)}{re.escape(upstream_version)}-"
-        rf"{re.escape(suffix)}\.(\d+)$"
-    )
+    pattern = _aio_release_match_pattern(upstream_version, suffix, tag_prefix)
     matches: list[tuple[int, str]] = []
     for tag in git_tags(repo_path):
         match = pattern.match(tag)
         if match:
-            matches.append((int(match.group(1)), tag))
+            matches.append((int(match.group("revision")), tag))
     if not matches:
         return None
     matches.sort(key=lambda item: item[0])
@@ -224,16 +232,16 @@ def next_aio_release_version(
     upstream_version = read_upstream_version(
         dockerfile, upstream_config, version_key=version_key
     )
-    pattern = re.compile(
-        rf"^{re.escape(tag_prefix)}{re.escape(upstream_version)}-"
-        rf"{re.escape(suffix)}\.(\d+)$"
-    )
-    revisions = []
+    pattern = _aio_release_match_pattern(upstream_version, suffix, tag_prefix)
+    revisions: list[tuple[int, str]] = []
     for tag in git_tags(repo_path):
         match = pattern.match(tag)
         if match:
-            revisions.append(int(match.group(1)))
-    return f"{upstream_version}-{suffix}.{max(revisions, default=0) + 1}"
+            revisions.append((int(match.group("revision")), match.group("vprefix")))
+    if not revisions:
+        return f"{upstream_version}-{suffix}.1"
+    revision, version_prefix = max(revisions, key=lambda item: item[0])
+    return f"{version_prefix}{upstream_version}-{suffix}.{revision + 1}"
 
 
 def latest_semver_tag(repo_path: Path) -> str | None:
@@ -310,7 +318,7 @@ def latest_changelog_version(changelog: Path, *, semver: bool = False) -> str:
 def latest_component_changelog_version(
     changelog: Path, *, upstream_version: str, suffix: str = "aio"
 ) -> str:
-    pattern = re.compile(rf"^{re.escape(upstream_version)}-{re.escape(suffix)}\.(\d+)$")
+    pattern = _aio_release_match_pattern(upstream_version, suffix)
     for version in changelog_versions(changelog):
         if pattern.match(version):
             return version
