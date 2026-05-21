@@ -326,6 +326,7 @@ def test_control_plane_can_reconcile_standards_drift() -> None:
     assert "--github" in reconcile["run"]  # nosec B101
     assert "--release" in reconcile["run"]  # nosec B101
     assert "--allow-drift" in reconcile["run"]  # nosec B101
+    assert "fleet-dashboard.manifest.yml" in reconcile["run"]  # nosec B101
     assert "GH_TOKEN" in reconcile["env"]  # nosec B101
     assert "standards-reconcile-report.json" in upload["with"]["path"]  # nosec B101
 
