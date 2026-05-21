@@ -663,6 +663,82 @@ repos:
     ]
 
 
+def test_release_plan_reports_component_specific_aio_metadata_after_agent_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "signoz-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_SIGNOZ_VERSION=v0.125.1\n")
+    (repo_path / "signoz-aio.xml").write_text("<Container></Container>\n")
+    (repo_path / "CHANGELOG.md").write_text(
+        "## v0.125.1-aio.1\n\n" "- SigNoz AIO release.\n"
+    )
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v0.125.1-aio.1")
+    _git(repo_path, "tag", "v0.125.1-aio.1")
+    (repo_path / "CHANGELOG.md").write_text(
+        "## 0.152.0-agent.2\n\n"
+        "- SigNoz agent release.\n\n"
+        "## v0.125.1-aio.1\n\n"
+        "- SigNoz AIO release.\n"
+    )
+    (repo_path / "signoz-agent.xml").write_text("<Container></Container>\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.152.0-agent.2")
+    git = shutil.which("git")
+    assert git is not None  # nosec B101
+    head = subprocess.check_output(  # nosec B603
+        [git, "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    repo = RepoConfig(
+        name="signoz-aio",
+        raw={
+            "path": str(repo_path),
+            "public": False,
+            "app_slug": "signoz-aio",
+            "image_name": "jsonbored/signoz-aio",
+            "docker_cache_scope": "signoz-aio-image",
+            "pytest_image_tag": "signoz-aio:pytest",
+            "publish_profile": "signoz-suite",
+            "components": {
+                "aio": {
+                    "xml_paths": ["signoz-aio.xml"],
+                    "upstream_version_key": "UPSTREAM_SIGNOZ_VERSION",
+                    "release_suffix": "aio",
+                },
+                "agent": {
+                    "xml_paths": ["signoz-agent.xml"],
+                    "release_suffix": "agent",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo: {
+            "state": "ok",
+            "tag": "0.152.0-agent.2",
+            "target_commitish": head,
+        },
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["component"] == "aio"  # nosec B101
+    assert plan["latest_release_tag"] == "v0.125.1-aio.1"  # nosec B101
+    assert plan["latest_changelog_version"] == "v0.125.1-aio.1"  # nosec B101
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
 def _git(path: Path, *args: str) -> None:
     git = shutil.which("git")
     assert git is not None  # nosec B101

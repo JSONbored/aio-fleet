@@ -280,9 +280,15 @@ def _safe_latest_aio_tag(repo: RepoConfig) -> str:
     try:
         if repo.publish_profile == "changelog-version":
             return latest_component_release_tag(repo.path) or ""
+        config = component_config(repo, "aio")
         return (
             latest_aio_release_tag(
-                repo.path, repo.path / "Dockerfile", repo.path / "upstream.toml"
+                repo.path,
+                repo.path / str(config.get("dockerfile", "Dockerfile")),
+                repo.path / str(config.get("upstream_config", "upstream.toml")),
+                suffix=str(config.get("release_suffix", "aio")),
+                version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+                tag_prefix=str(config.get("release_tag_prefix", "") or ""),
             )
             or ""
         )
@@ -343,8 +349,14 @@ def _safe_has_component_changes(repo: RepoConfig, component: str) -> bool:
 
 def _safe_next_aio(repo: RepoConfig) -> str:
     try:
+        config = component_config(repo, "aio")
         return next_aio_release_version(
-            repo.path, repo.path / "Dockerfile", repo.path / "upstream.toml"
+            repo.path,
+            repo.path / str(config.get("dockerfile", "Dockerfile")),
+            repo.path / str(config.get("upstream_config", "upstream.toml")),
+            suffix=str(config.get("release_suffix", "aio")),
+            version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+            tag_prefix=str(config.get("release_tag_prefix", "") or ""),
         )
     except (Exception, SystemExit):
         return ""
@@ -356,7 +368,10 @@ def _safe_has_aio_changes(repo: RepoConfig) -> bool:
             return False
         if _only_registry_only_component_changes(repo):
             return False
-        return has_aio_unreleased_changes(repo.path)
+        config = component_config(repo, "aio")
+        return has_aio_unreleased_changes(
+            repo.path, suffix=str(config.get("release_suffix", "aio"))
+        )
     except (Exception, SystemExit):
         return False
 
@@ -478,24 +493,22 @@ def _safe_changelog_version(repo: RepoConfig, *, component: str = "aio") -> str:
     try:
         config = component_config(repo, component)
         changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
-        return latest_changelog_version(
-            changelog, semver=repo.publish_profile == "template"
+        if repo.publish_profile == "template":
+            return latest_changelog_version(changelog, semver=True)
+        if repo.publish_profile == "changelog-version":
+            return latest_changelog_version(changelog)
+        upstream_version = read_upstream_version(
+            repo.path / str(config.get("dockerfile", "Dockerfile")),
+            repo.path / str(config.get("upstream_config", "upstream.toml")),
+            version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
+        )
+        return latest_component_changelog_version(
+            changelog,
+            upstream_version=upstream_version,
+            suffix=str(config.get("release_suffix", "aio")),
         )
     except (Exception, SystemExit):
-        try:
-            config = component_config(repo, component)
-            upstream_version = read_upstream_version(
-                repo.path / str(config.get("dockerfile", "Dockerfile")),
-                repo.path / str(config.get("upstream_config", "upstream.toml")),
-                version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
-            )
-            return latest_component_changelog_version(
-                repo.path / str(config.get("release_changelog", "CHANGELOG.md")),
-                upstream_version=upstream_version,
-                suffix=str(config.get("release_suffix", "aio")),
-            )
-        except (Exception, SystemExit):
-            return ""
+        return ""
 
 
 def _latest_github_release(repo: RepoConfig) -> dict[str, str]:
