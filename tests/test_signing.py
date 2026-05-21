@@ -91,7 +91,7 @@ def test_signing_doctor_fails_unsigned_generated_pr(
         if command[0] == "api" and command[1].endswith("/protection"):
             return {"required_signatures": {"enabled": True}}
         if command[:2] == ["pr", "list"]:
-            return [{"number": 12, "headRefName": "codex/update-example"}]
+            return [{"number": 12, "headRefName": "codex/update-example", "isCrossRepository": False}]
         if command[0] == "api" and command[1].endswith("/pulls/12/commits"):
             return [
                 {
@@ -114,6 +114,24 @@ def test_signing_doctor_fails_unsigned_generated_pr(
     assert report["status"] == "failed"  # nosec B101
     assert "unsigned-generated-pr" in report["failure_classes"]  # nosec B101
 
+
+
+
+def test_generated_pr_signature_blockers_ignores_cross_repo_prs(monkeypatch) -> None:
+    def fake_gh_json(command: list[str], *, check: bool):  # noqa: ARG001
+        if command[:2] == ["pr", "list"]:
+            return [
+                {
+                    "number": 99,
+                    "headRefName": "codex/block-release",
+                    "isCrossRepository": True,
+                }
+            ]
+        raise AssertionError(command)
+
+    monkeypatch.setattr(signing, "_gh_json", fake_gh_json)
+
+    assert signing.generated_pr_signature_blockers("JSONbored/example-aio") == []  # nosec B101
 
 def test_workflow_writer_accepts_signed_github_app_create_pull_request(
     tmp_path: Path,
