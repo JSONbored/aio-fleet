@@ -392,9 +392,16 @@ jobs:
               | tee release-plan-report.json
             exit 0
           fi
-          args=(release plan --all --format json)
+          args=(release plan --all --registry --format json)
           args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          set +e
           python -m aio_fleet "${args[@]}" | tee release-plan-report.json
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "${status}" != "0" ]]; then
+            echo "release plan found publish-missing packages; continuing so the transaction queue is still generated" >&2
+          fi
+          exit 0
 
       - name: Generate release transaction queue report
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}

@@ -131,7 +131,7 @@ def dashboard_report(
     cleanup_rows = _cleanup_rows(manifest)
     release_rows = release_plan_for_manifest(
         manifest,
-        include_registry=False,
+        include_registry=include_registry,
         catalog_sync=_catalog_sync_map(manifest),
         redact_private=True,
     )

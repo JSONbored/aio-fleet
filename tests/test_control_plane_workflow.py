@@ -479,6 +479,10 @@ def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> No
     assert "actions/upload-artifact@" in control["uses"]  # nosec B101
     assert "actions/upload-artifact@" in poll["uses"]  # nosec B101
     assert "release-plan-report.json" in release_plan["run"]  # nosec B101
+    assert (
+        "release plan --all --registry --format json" in release_plan["run"]
+    )  # nosec B101
+    assert "PIPESTATUS[0]" in release_plan["run"]  # nosec B101
     assert "release reconcile" in transaction_queue["run"]  # nosec B101
     assert "fleet-dashboard-report.json" in control["with"]["path"]  # nosec B101
     assert "release-plan-report.json" in control["with"]["path"]  # nosec B101
