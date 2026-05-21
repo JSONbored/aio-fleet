@@ -1459,12 +1459,15 @@ def cmd_registry_verify(args: argparse.Namespace) -> int:
 def cmd_registry_delete_dockerhub_tags(args: argparse.Namespace) -> int:
     tags = _tag_list_arg(args.tag_list, args.tag)
     username = os.environ.get("DOCKERHUB_USERNAME", "")
-    token = os.environ.get("DOCKERHUB_DELETE_TOKEN") or os.environ.get(
-        "DOCKERHUB_TOKEN", ""
-    )
+    token = os.environ.get("DOCKERHUB_DELETE_TOKEN", "")
+    try:
+        image = _dockerhub_cleanup_image(args)
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     try:
         results = delete_dockerhub_tags(
-            image=args.image,
+            image=image,
             tags=tags,
             username=username,
             token=token,
@@ -1474,13 +1477,41 @@ def cmd_registry_delete_dockerhub_tags(args: argparse.Namespace) -> int:
     except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    report = {"image": args.image, "results": results}
+    report = {"image": image, "results": results}
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         for item in results:
-            print(f"{args.image}:{item['tag']}: {item['state']}")
+            print(f"{image}:{item['tag']}: {item['state']}")
     return 0
+
+
+def _dockerhub_cleanup_image(args: argparse.Namespace) -> str:
+    image = str(getattr(args, "image", "") or "").strip()
+    repo_name = str(getattr(args, "repo", "") or "").strip()
+    component = str(getattr(args, "component", "aio") or "aio").strip()
+    if repo_name:
+        manifest = load_manifest(Path(args.manifest))
+        repo = _repo_for_identifier(manifest, repo_name)
+        if getattr(args, "repo_path", None):
+            repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+        resolved = str(component_config(repo, component).get("image_name") or "")
+        if not resolved:
+            resolved = repo.image_name
+        if not resolved:
+            raise ValueError(f"{repo.name}:{component}: no Docker Hub image configured")
+        if image and image != resolved:
+            raise ValueError(
+                f"{image}: cleanup image does not match manifest target {resolved}"
+            )
+        return resolved
+    if not image:
+        raise ValueError("--image is required for dry-run cleanup without --repo")
+    if not getattr(args, "dry_run", False):
+        raise ValueError(
+            "non-dry-run Docker Hub cleanup must target a manifest repo/component"
+        )
+    return image
 
 
 def cmd_registry_preflight(args: argparse.Namespace) -> int:
@@ -1596,19 +1627,13 @@ def _registry_cleanup_preflight_checks(
 ) -> list[dict[str, str]]:
     username = os.environ.get("DOCKERHUB_USERNAME", "")
     delete_token = os.environ.get("DOCKERHUB_DELETE_TOKEN", "")
-    fallback_token = os.environ.get("DOCKERHUB_TOKEN", "")
     token = delete_token
-    if not token and allow_publish_token_fallback:
-        token = fallback_token
+    del allow_publish_token_fallback
     missing = []
     if not username:
         missing.append("DOCKERHUB_USERNAME")
     if not token:
-        missing.append(
-            "DOCKERHUB_DELETE_TOKEN"
-            if not allow_publish_token_fallback
-            else "DOCKERHUB_DELETE_TOKEN or DOCKERHUB_TOKEN"
-        )
+        missing.append("DOCKERHUB_DELETE_TOKEN")
     checks = [
         _preflight_check(
             "cleanup-credentials",
@@ -1616,11 +1641,7 @@ def _registry_cleanup_preflight_checks(
             (
                 "missing " + ", ".join(missing)
                 if missing
-                else (
-                    "Docker Hub delete credentials are present"
-                    if delete_token
-                    else "using DOCKERHUB_TOKEN fallback for delete credentials"
-                )
+                else "Docker Hub delete credentials are present"
             ),
         )
     ]
@@ -4951,7 +4972,7 @@ def build_parser() -> argparse.ArgumentParser:
     registry_preflight.add_argument(
         "--allow-publish-token-delete-fallback",
         action="store_true",
-        help="Allow DOCKERHUB_TOKEN as a legacy cleanup fallback.",
+        help="Deprecated; cleanup always requires DOCKERHUB_DELETE_TOKEN.",
     )
     registry_preflight.add_argument(
         "--format", choices=["text", "json"], default="text"
@@ -4981,7 +5002,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     registry_publish.set_defaults(func=cmd_registry_publish)
     registry_delete = registry_sub.add_parser("delete-dockerhub-tags")
-    registry_delete.add_argument("--image", required=True)
+    registry_delete.add_argument("--manifest", default="fleet.yml")
+    registry_delete.add_argument("--repo")
+    registry_delete.add_argument("--repo-path")
+    registry_delete.add_argument("--component", default="aio")
+    registry_delete.add_argument("--image")
     registry_delete.add_argument("--tag", action="append", default=[])
     registry_delete.add_argument("--tag-list", default="")
     registry_delete.add_argument("--required-substring", default="")
