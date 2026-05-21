@@ -1129,7 +1129,7 @@ def test_runtime_contract_rejects_required_docker_socket_without_manifest_flag(
     )  # nosec B101
 
 
-def test_runtime_contract_accepts_required_docker_socket_with_manifest_flag(
+def test_runtime_contract_rejects_required_docker_socket_with_manifest_flag(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "Dockerfile").write_text(
@@ -1150,8 +1150,11 @@ def test_runtime_contract_accepts_required_docker_socket_with_manifest_flag(
         _repo(tmp_path, validation={"docker_socket_required": True})
     )
 
-    assert not any(
-        "Docker socket mount" in failure for failure in failures
+    assert any(
+        "Docker socket mount must be advanced" in failure for failure in failures
+    )  # nosec B101
+    assert any(
+        "Docker socket mount must be optional" in failure for failure in failures
     )  # nosec B101
 
 
@@ -1177,19 +1180,5 @@ def test_runtime_contract_rejects_hidden_required_docker_socket_with_manifest_fl
     )
 
     assert any(
-        "required Docker socket mount must be always visible" in failure
-        for failure in failures
+        "Docker socket mount" in failure for failure in failures
     )  # nosec B101
-
-
-def test_fleet_manifest_limits_required_docker_socket_exception_to_nanoclaw() -> None:
-    manifest = load_manifest(Path(__file__).resolve().parents[1] / "fleet.yml")
-
-    flagged = sorted(
-        name
-        for name, repo in manifest.repos.items()
-        if isinstance(repo.get("validation", {}), dict)
-        and repo.get("validation", {}).get("docker_socket_required") is True
-    )
-
-    assert flagged == ["nanoclaw-aio"]  # nosec B101
