@@ -13,6 +13,7 @@ import yaml
 
 from aio_fleet.control_plane import _secret_environment_key
 from aio_fleet.manifest import load_manifest
+from aio_fleet.poll import publish_components_required
 
 
 def _sanitized_subprocess_env() -> dict[str, str]:
@@ -299,7 +300,7 @@ def registry_audit_checkouts(
             env=_minimal_env(),
             text=True,
         ).strip()
-        components = _publish_components(repo_config.raw)
+        components = publish_components_required(repo_config, sha=sha, event="push")
         for component in components:
             verify = subprocess.run(  # nosec B603
                 [
