@@ -181,10 +181,9 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     assert "--report-json" in manual["run"]  # nosec B101
     assert "registry preflight --mode publish" in poll_preflight["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
-    assert "args+=(--publish --no-github-prereleases)" in poll["run"]  # nosec B101
+    assert "args+=(--publish --no-github-prereleases --no-integration)" in poll["run"]  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in poll["env"]  # nosec B101
     assert "--report-json" in poll["run"]  # nosec B101
-    assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
 
 
 def test_publish_preflight_runs_before_docker_setup_and_writes_artifact() -> None:

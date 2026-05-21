@@ -851,7 +851,7 @@ jobs:
             --event "${TARGET_EVENT}"
           )
           if [[ "${TARGET_PUBLISH}" == "true" ]]; then
-            args+=(--publish --no-github-prereleases)
+            args+=(--publish --no-github-prereleases --no-integration)
           fi
           while IFS= read -r component; do
             if [[ -n "${component}" ]]; then
