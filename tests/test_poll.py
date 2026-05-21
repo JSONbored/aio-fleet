@@ -353,6 +353,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image

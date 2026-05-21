@@ -1,5 +1,9 @@
 owner: JSONbored
 default_branch: main
+# Required check producer IDs captured from live check runs:
+# - GitHub Actions: 15368
+# - JSONbored AIO Fleet: 3565017
+# - Superagent Security: 3287076
 defaults:
   repository:
     visibility: public
@@ -27,46 +31,128 @@ defaults:
     patterns_allowed:
       - peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
 repositories:
+  aio-fleet:
+    required_checks:
+      - test
+      - infra
+      - Analyze (actions)
+      - Analyze (python)
+      - Security scan
+      - Contributor trust
+    required_check_app_ids:
+      test: 15368
+      infra: 15368
+      Analyze (actions): 15368
+      Analyze (python): 15368
+      Security scan: 3287076
+      Contributor trust: 3287076
   awesome-unraid:
     required_checks:
       - validate-catalog
       - CodeQL
       - Analyze (actions)
+      - Security scan
+      - Contributor trust
+    required_check_app_ids:
+      validate-catalog: 15368
+      CodeQL: 15368
+      Analyze (actions): 15368
+      Security scan: 3287076
+      Contributor trust: 3287076
     required_secrets:
       - AIO_FLEET_BOT_TOKEN
+  unraid-aio-template:
+    repository:
+      visibility: private
+      homepage_url: ""
+      allow_rebase_merge: true
+    branch_protection: null
+    required_checks:
+      - aio-fleet / required
+      - Security scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   sure-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   simplelogin-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   khoj-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   mem0-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   infisical-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   dify-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   signoz-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   nanoclaw-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
   penpot-aio:
     required_checks:
       - aio-fleet / required
+      - Security scan
+      - Contributor trust
     required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076

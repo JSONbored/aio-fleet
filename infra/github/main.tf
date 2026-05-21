@@ -56,7 +56,9 @@ resource "github_branch_protection" "main" {
   require_conversation_resolution = each.value.require_conversation_resolution
 
   dynamic "required_status_checks" {
-    for_each = each.value.required_check_app_id == null ? [each.value] : []
+    for_each = (
+      each.value.required_check_app_id == null && length(each.value.required_check_app_ids) == 0
+    ) ? [each.value] : []
     content {
       strict   = required_status_checks.value.strict_required_checks
       contexts = required_status_checks.value.required_checks
@@ -74,7 +76,9 @@ resource "github_branch_protection" "main" {
 resource "github_repository_ruleset" "trusted_required_checks" {
   for_each = {
     for name, repo in var.repositories : name => repo
-    if repo.required_check_app_id != null && length(repo.required_checks) > 0
+    if length(repo.required_checks) > 0 && (
+      repo.required_check_app_id != null || length(repo.required_check_app_ids) > 0
+    )
   }
 
   repository  = github_repository.aio[each.key].name
@@ -96,8 +100,12 @@ resource "github_repository_ruleset" "trusted_required_checks" {
       dynamic "required_check" {
         for_each = each.value.required_checks
         content {
-          context        = required_check.value
-          integration_id = each.value.required_check_app_id
+          context = required_check.value
+          integration_id = lookup(
+            each.value.required_check_app_ids,
+            required_check.value,
+            each.value.required_check_app_id,
+          )
         }
       }
     }

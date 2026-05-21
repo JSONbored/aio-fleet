@@ -411,6 +411,7 @@ repos:
         image_name: jsonbored/nanoclaw-aio
       agent:
         image_name: jsonbored/nanoclaw-agent
+        dockerfile: components/nanoclaw-agent/Dockerfile
         release_policy: registry_only
 """)
 

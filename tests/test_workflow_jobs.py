@@ -128,6 +128,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: /tmp/sure-aio
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio
@@ -137,6 +138,7 @@ repos:
       aio: {}
       sure-alpha:
         image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
 """)
 
     def fake_checkout_refs(refs, *, token: str, submodules: str):

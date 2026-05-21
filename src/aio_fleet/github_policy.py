@@ -79,7 +79,10 @@ def _repository_failures(
 def _branch_protection_failures(
     owner: str, repo_name: str, policy: dict[str, Any]
 ) -> list[str]:
-    expected = dict(policy.get("branch_protection", {}))
+    branch_protection = policy.get("branch_protection", {})
+    if not isinstance(branch_protection, dict):
+        return []
+    expected = dict(branch_protection)
     if not expected:
         return []
     branch = str(policy.get("branch", policy.get("default_branch", "main")))
@@ -93,14 +96,28 @@ def _branch_protection_failures(
             f"{repo_name}: required checks drift: expected {sorted(expected_checks)}, got {sorted(actual_checks)}"
         )
     expected_check_app_id = policy.get("required_check_app_id")
-    if expected_check_app_id is not None:
+    expected_check_app_ids = _expected_check_app_ids(policy, expected_checks)
+    unknown_expected_check_app_ids = sorted(
+        set(expected_check_app_ids) - set(expected_checks)
+    )
+    for context in unknown_expected_check_app_ids:
+        failures.append(
+            f"{repo_name}: required_check_app_ids declares unknown required check {context!r}"
+        )
+    known_expected_check_app_ids = {
+        context: app_id
+        for context, app_id in expected_check_app_ids.items()
+        if context in expected_checks
+    }
+    if known_expected_check_app_ids:
         check_app_failures = _required_check_app_failures(
             repo_name,
             data.get("required_status_checks", {}).get("checks", []),
-            expected_checks,
-            int(expected_check_app_id),
+            known_expected_check_app_ids,
         )
         failures.extend(check_app_failures)
+    elif expected_check_app_id is not None:
+        failures.append(f"{repo_name}: required_check_app_id must be numeric")
 
     strict = data.get("required_status_checks", {}).get("strict")
     if (
@@ -132,8 +149,7 @@ def _branch_protection_failures(
 def _required_check_app_failures(
     repo_name: str,
     checks: Any,
-    expected_contexts: list[str],
-    expected_app_id: int,
+    expected_app_ids: dict[str, int],
 ) -> list[str]:
     if not isinstance(checks, list):
         checks = []
@@ -143,13 +159,38 @@ def _required_check_app_failures(
         if isinstance(check, dict)
     }
     failures: list[str] = []
-    for context in expected_contexts:
+    for context, expected_app_id in expected_app_ids.items():
         actual = by_context.get(context)
         if actual != expected_app_id:
             failures.append(
                 f"{repo_name}: required check {context!r} app_id expected {expected_app_id}, got {actual!r}"
             )
     return failures
+
+
+def _expected_check_app_ids(
+    policy: dict[str, Any], expected_checks: list[str]
+) -> dict[str, int]:
+    expected: dict[str, int] = {}
+    fallback = policy.get("required_check_app_id")
+    if fallback is not None:
+        try:
+            fallback = int(fallback)
+        except (TypeError, ValueError):
+            return expected
+        expected.update({context: fallback for context in expected_checks})
+
+    per_check = policy.get("required_check_app_ids", {})
+    if per_check is None:
+        return expected
+    if not isinstance(per_check, dict):
+        return expected
+    for context, app_id in per_check.items():
+        try:
+            expected[str(context)] = int(app_id)
+        except (TypeError, ValueError):
+            continue
+    return expected
 
 
 def _action_permission_failures(

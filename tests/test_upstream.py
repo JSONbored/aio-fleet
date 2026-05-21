@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from aio_fleet import upstream
 from aio_fleet.github_writer import BranchCommitResult
 from aio_fleet.manifest import load_manifest
@@ -26,6 +28,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -73,6 +76,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -162,6 +166,7 @@ owner: JSONbored
 repos:
   dify-aio:
     path: {repo_path}
+    public: true
     app_slug: dify-aio
     image_name: jsonbored/dify-aio
     docker_cache_scope: dify-aio-image
@@ -228,6 +233,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -277,6 +283,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -357,6 +364,7 @@ owner: JSONbored
 repos:
   mem0-aio:
     path: {repo_path}
+    public: true
     app_slug: mem0-aio
     image_name: jsonbored/mem0-aio
     docker_cache_scope: mem0-aio-image
@@ -417,6 +425,7 @@ owner: JSONbored
 repos:
   submodule-aio:
     path: {repo_path}
+    public: true
     app_slug: submodule-aio
     image_name: jsonbored/submodule-aio
     docker_cache_scope: submodule-aio-image
@@ -502,6 +511,7 @@ owner: JSONbored
 repos:
   mem0-aio:
     path: {repo_path}
+    public: true
     app_slug: mem0-aio
     image_name: jsonbored/mem0-aio
     docker_cache_scope: mem0-aio-image
@@ -549,6 +559,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -640,6 +651,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -708,6 +720,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -859,6 +872,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -926,6 +940,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -994,6 +1009,7 @@ owner: JSONbored
 repos:
   nanoclaw-aio:
     path: {repo_path}
+    public: true
     app_slug: nanoclaw-aio
     image_name: jsonbored/nanoclaw-aio
     docker_cache_scope: nanoclaw-aio-image
@@ -1085,6 +1101,34 @@ def test_upstream_body_mentions_source_first_catalog_sync(tmp_path: Path) -> Non
     assert "Release notes: https://example.invalid/releases" in body  # nosec B101
 
 
+def test_upstream_body_rejects_non_public_changed_paths(tmp_path: Path) -> None:
+    repo = load_manifest(_minimal_manifest(tmp_path)).repo("example-aio")
+    result = upstream.UpstreamMonitorResult(
+        repo="example-aio",
+        component="aio",
+        name="Example",
+        strategy="pr",
+        source="github-tags",
+        current_version="1.0.0",
+        latest_version="1.1.0",
+        current_digest="",
+        latest_digest="",
+        version_update=True,
+        digest_update=False,
+        dockerfile=repo.path / "Dockerfile",
+        version_key="UPSTREAM_VERSION",
+        digest_key="",
+        release_notes_url="https://example.invalid/releases",
+    )
+
+    with pytest.raises(ValueError, match="upstream PR body"):
+        upstream.upstream_body(
+            repo,
+            [result],
+            changed_paths=["/Users/shadowbook/Documents/example-aio/Dockerfile"],
+        )
+
+
 def test_github_token_uses_app_token_without_standard_gh_env(monkeypatch) -> None:
     upstream.github_token.cache_clear()
     for env_name in (
@@ -1121,6 +1165,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image

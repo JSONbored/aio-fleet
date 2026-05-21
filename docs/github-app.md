@@ -58,11 +58,12 @@ migration waits until the App identity posts a real `aio-fleet / required`
 check on an app PR.
 
 Branch protection should require the `aio-fleet / required` check from the
-GitHub App's app ID, not just a matching check name. The GitHub branch
-protection API exposes this as `required_status_checks.checks[].app_id`, and
-`aio-fleet validate-github` fails when the required check is present but tied to
-the wrong producer. This prevents a same-name workflow or status from
-accidentally satisfying the fleet gate.
+GitHub App's app ID, plus Superagent's `Security scan` and `Contributor trust`
+checks from the Superagent Security app ID. The GitHub branch protection API
+exposes this as `required_status_checks.checks[].app_id`, and `aio-fleet
+validate-github` fails when a required check is present but tied to the wrong
+producer. This prevents a same-name workflow or status from accidentally
+satisfying the fleet gate.
 
 Required signed commits stay enabled. Generated commits use the GitHub App
 contents API with no custom author, committer, or signature fields so GitHub can
@@ -115,8 +116,8 @@ the App client ID, private key, and short-lived installation tokens.
 6. Verify generated PRs and catalog syncs pass required checks using the app
    identity and report `pull-request-commits-verified=true`.
 7. Run `aio-fleet poll --create-checks --dry-run`, then a real Sure PR check.
-8. Update branch protection to require only `aio-fleet / required` from the
-   GitHub App app ID.
+8. Update branch protection to require `aio-fleet / required` from the GitHub
+   App app ID plus Superagent's `Security scan` and `Contributor trust` checks.
 9. Run `aio-fleet cleanup-repo --verify`, or `aio-fleet cleanup-repo --fix --verify`
    when removing known retired shared files.
 

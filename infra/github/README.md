@@ -24,18 +24,22 @@ tofu plan -var-file=repos.tfvars
 
 `imports.tf` declares imports for the public active fleet:
 
+- `aio-fleet`
 - `awesome-unraid`
 - `sure-aio`
 - `simplelogin-aio`
 - `khoj-aio`
 - `mem0-aio`
 - `infisical-aio`
+- `penpot-aio`
 - `dify-aio`
 - `signoz-aio`
+- `nanoclaw-aio`
 
 Run `tofu plan` once after `tofu init`; OpenTofu will adopt those resources into
-local state. The private `unraid-aio-template` repo is intentionally documented
-outside this v1 module until branch-protection API access is available for it.
+local state. The private `unraid-aio-template` repo is tracked in
+`github-policy.yml` for standards visibility, but its branch protection remains
+manual while the GitHub plan/API refuses private branch-protection inspection.
 
 ## Managed State
 
@@ -69,10 +73,17 @@ calls are pinned.
 
 ## Required Check Source
 
-App repos should require one check: `aio-fleet / required`. The policy also
-records the GitHub App ID that must produce that check. `validate-github` checks
-`required_status_checks.checks[].app_id`, not only the context name, so a
-same-name workflow cannot satisfy branch protection by accident.
+App repos should require `aio-fleet / required`, `Security scan`, and
+`Contributor trust`. The policy records the GitHub App ID that must produce each
+check. `validate-github` checks `required_status_checks.checks[].app_id`, not
+only the context name, so a same-name workflow cannot satisfy branch protection
+by accident.
+
+Known required-check producers:
+
+- GitHub Actions: `15368`
+- JSONbored AIO Fleet: `3565017`
+- Superagent Security: `3287076`
 
 The `github_branch_protection` provider resource only supports name-based
 contexts, so app-bound required checks are enforced through the
