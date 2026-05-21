@@ -302,15 +302,60 @@ def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
 
     assert payload.status == "success"  # nosec B101
     assert "release history" in payload.summary  # nosec B101
+    assert payload.annotations == [  # nosec B101
+        "sure-aio:sure-alpha package 0.7.1-alpha.7-aio.1"
+    ]
     assert payload.details["notify_success"] is True  # nosec B101
     assert alerts.should_send_webhook(payload) is True  # nosec B101
     fields = payload.details["discord_fields"]
+    field_values = {field["name"]: field["value"] for field in fields}
+    assert field_values["sure-alpha package tag"] == "0.7.1-alpha.7-aio.1"  # nosec B101
     values = "\n".join(field["value"] for field in fields)
     assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values  # nosec B101
     assert (
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" in values
     )  # nosec B101
     assert "sure-alpha%2F0.7.1-alpha.7-aio.1" in values  # nosec B101
+
+
+def test_publish_alert_warns_when_release_package_tag_is_missing() -> None:
+    payload = alerts.payload_from_report(
+        event="publish",
+        status="auto",
+        report={
+            "repo": "dify-aio",
+            "status": "success",
+            "components": [
+                {
+                    "component": "aio",
+                    "dockerhub": [
+                        "jsonbored/dify-aio:latest",
+                        "jsonbored/dify-aio:sha-abc123",
+                    ],
+                    "ghcr": [
+                        "ghcr.io/jsonbored/dify-aio:latest",
+                        "ghcr.io/jsonbored/dify-aio:sha-abc123",
+                    ],
+                    "upstream_version": "1.14.2",
+                    "release_package_tag": "",
+                }
+            ],
+        },
+    )
+
+    assert payload.status == "warning"  # nosec B101
+    assert (
+        payload.summary == "Published unversioned images for dify-aio:aio"
+    )  # nosec B101
+    assert payload.annotations == [  # nosec B101
+        "dify-aio:aio no package tag; upstream 1.14.2"
+    ]
+    fields = payload.details["discord_fields"]
+    field_values = {field["name"]: field["value"] for field in fields}
+    assert (  # nosec B101
+        field_values["aio package tag"] == "missing; upstream version is 1.14.2"
+    )
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
 
 
 def test_publish_failure_alert_keeps_component_context() -> None:
