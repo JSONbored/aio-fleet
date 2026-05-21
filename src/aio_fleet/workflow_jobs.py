@@ -600,8 +600,9 @@ def _safe_commit_paths(repo: RepoConfig, paths: set[str]) -> set[str]:
 
 def _changed_paths(repo_path: Path) -> set[str]:
     run = subprocess.run(  # nosec B603
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        ["git", "-c", "core.fsmonitor=", "status", "--porcelain", "--untracked-files=all"],
         cwd=repo_path,
+        env=_safe_git_env(),
         check=False,
         text=True,
         capture_output=True,
@@ -829,6 +830,18 @@ def _minimal_env() -> dict[str, str]:
         for key in ("HOME", "PATH", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
         if key in os.environ
     }
+
+
+def _safe_git_env() -> dict[str, str]:
+    env = _minimal_env()
+    env.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return env
 
 
 def _verify_env() -> dict[str, str]:

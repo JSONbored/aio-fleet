@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import urllib.error
 from pathlib import Path
 
@@ -238,9 +241,31 @@ def test_api_writer_commits_submodule_gitlinks(tmp_path: Path, monkeypatch) -> N
     assert result.sha == "c" * 40  # nosec B101
     assert result.verified is True  # nosec B101
     assert result.committed_paths == ["Dockerfile", "openmemory"]  # nosec B101
-    assert any(
-        url.endswith("/git/trees") for _method, url, _payload in calls
-    )  # nosec B101
+
+
+def test_run_git_uses_safe_git_invocation(monkeypatch, tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(github_writer.subprocess, "run", fake_run)
+    github_writer._run_git(repo_path, ["status"], check=True)
+
+    assert captured["args"] == [  # nosec B101
+        shutil.which("git"),
+        "-c",
+        "core.fsmonitor=",
+        "status",
+    ]
+    env = captured["env"]
+    assert isinstance(env, dict)  # nosec B101
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"  # nosec B101
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull  # nosec B101
 
 
 def test_api_writer_commits_multiple_submodule_gitlinks(
