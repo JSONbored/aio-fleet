@@ -1109,6 +1109,109 @@ repos:
     assert "Registry Verification" in str(report["body"])  # nosec B101
 
 
+def test_dashboard_registry_mode_marks_publish_missing_release_queue(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app_path = tmp_path / "example-aio"
+    app_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {app_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="example-aio",
+                component="aio",
+                name="Example",
+                strategy="pr",
+                source="github-tags",
+                current_version="1.0.0",
+                latest_version="1.0.0",
+                current_digest="",
+                latest_digest="",
+                version_update=False,
+                digest_update=False,
+                dockerfile=app_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+                release_notes_url="https://example.invalid/releases",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_repo_registry_states",
+        lambda _repo: {
+            "aio": {
+                "repo": "example-aio",
+                "component": "aio",
+                "sha": "a" * 40,
+                "dockerhub": ["jsonbored/example-aio:latest"],
+                "ghcr": ["ghcr.io/jsonbored/example-aio:latest"],
+                "failures": ["jsonbored/example-aio:latest: missing"],
+                "state": "failed",
+                "verified_at": "2026-05-05T00:00:00+00:00",
+            }
+        },
+    )
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_release_plan(manifest, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [
+            {
+                "repo": "example-aio",
+                "component": "aio",
+                "state": "publish-missing",
+                "profile": "upstream-aio-track",
+                "sha": "a" * 40,
+                "latest_release_tag": "1.0.0-aio.1",
+                "latest_github_release": {"state": "ok", "tag": "1.0.0-aio.1"},
+                "next_version": "1.0.0-aio.1",
+                "release_due": False,
+                "registry_failures": ["jsonbored/example-aio:latest: missing"],
+                "next_action": (
+                    "python -m aio_fleet release transaction "
+                    "--repo example-aio --sha " + "a" * 40 + " --dry-run"
+                ),
+                "operator_commands": {
+                    "release_transaction": (
+                        "python -m aio_fleet release transaction "
+                        "--repo example-aio --sha " + "a" * 40 + " --dry-run"
+                    )
+                },
+            }
+        ]
+
+    monkeypatch.setattr(fleet_dashboard, "release_plan_for_manifest", fake_release_plan)
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_activity=False,
+        include_registry=True,
+        env={"AIO_FLEET_ALERT_WEBHOOK_URL": "https://hook"},
+    )
+
+    row = report["state"]["rows"][0]
+    assert captured_kwargs["include_registry"] is True  # nosec B101
+    assert row["registry"] == "failed:1"  # nosec B101
+    assert row["release"] == "publish-missing"  # nosec B101
+    assert report["state"]["summary"]["publish_missing"] == 1  # nosec B101
+    assert report["state"]["summary"]["posture"] == "blocked"  # nosec B101
+    assert "publish-missing" in str(report["body"])  # nosec B101
+
+
 def test_dashboard_routes_safety_warning_to_triage(tmp_path: Path, monkeypatch) -> None:
     app_path = tmp_path / "example-aio"
     app_path.mkdir()
