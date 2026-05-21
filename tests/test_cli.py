@@ -3039,6 +3039,7 @@ repos:
     monkeypatch.setattr(cli, "_run", fake_run)
     monkeypatch.setenv("APP_TOKEN", "app")
     monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
     monkeypatch.setenv("GH_TOKEN", "gh")
     monkeypatch.setenv("GITHUB_TOKEN", "github")
 
@@ -3046,6 +3047,7 @@ repos:
 
     assert "APP_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in observed  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed  # nosec B101
     assert "GH_TOKEN" not in observed  # nosec B101
     assert "GITHUB_TOKEN" not in observed  # nosec B101
 
