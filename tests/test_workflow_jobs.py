@@ -276,7 +276,7 @@ repos:
     assert "GITHUB_TOKEN" not in observed_env  # nosec B101
 
 
-def test_upstream_monitor_checkouts_uses_minimal_mutation_auth_env(
+def test_upstream_monitor_checkouts_mutate_mode_keeps_sanitized_env(
     monkeypatch, tmp_path: Path
 ) -> None:
     manifest = tmp_path / "fleet.yml"
@@ -336,8 +336,8 @@ repos:
 
     assert report["status"] == 0  # nosec B101
     assert observed_env.get("SAFE_TEST_KEY") == "present"  # nosec B101
-    assert observed_env.get("AIO_FLEET_UPSTREAM_TOKEN") == "workflow"  # nosec B101
-    assert observed_env.get("AIO_FLEET_CHECK_TOKEN") == "check"  # nosec B101
+    assert "AIO_FLEET_UPSTREAM_TOKEN" not in observed_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in observed_env  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed_env  # nosec B101
     assert "AIO_FLEET_APP_PRIVATE_KEY" not in observed_env  # nosec B101
     assert "DOCKERHUB_TOKEN" not in observed_env  # nosec B101
