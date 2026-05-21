@@ -3090,7 +3090,7 @@ def _publish_github_prerelease(
             "--repo",
             repo.github_repo,
             "--json",
-            "targetCommitish,name,body,isPrerelease",
+            "targetCommitish,name,body,isPrerelease,isLatest",
         ],
         cwd=repo.path,
         env=env,
