@@ -114,12 +114,15 @@ from aio_fleet.validators import (
     tracked_artifact_failures,
 )
 from aio_fleet.workflow_jobs import (
+    apply_upstream_monitor_actions,
     checkout_dashboard_repos,
+    checkout_upstream_monitor_repos,
     poll_outputs,
     registry_audit_checkouts,
     render_registry_summary,
     render_upstream_summary,
     upstream_monitor_checkouts,
+    validate_upstream_monitor_report,
 )
 from aio_fleet.workflow_security import audit_workflows
 
@@ -3450,14 +3453,46 @@ def cmd_workflow_checkout_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_workflow_checkout_upstream(args: argparse.Namespace) -> int:
+    report = checkout_upstream_monitor_repos(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        output_manifest=Path(args.output_manifest),
+        output_path=Path(args.output) if args.output else None,
+        token=args.token or _workflow_token(),
+    )
+    print(stable_report_json(report))
+    return 0
+
+
 def cmd_workflow_upstream_monitor(args: argparse.Namespace) -> int:
     report = upstream_monitor_checkouts(
         manifest_path=Path(args.manifest),
-        checkout_root=Path(args.checkout_root),
         output_path=Path(args.output),
-        token=args.token or _workflow_token(),
         mutate=args.mutate,
         dry_run=args.dry_run,
+    )
+    print(stable_report_json(report))
+    return int(report.get("status", 0))
+
+
+def cmd_workflow_upstream_actions(args: argparse.Namespace) -> int:
+    report = apply_upstream_monitor_actions(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        report_path=Path(args.input),
+        output_path=Path(args.output),
+    )
+    print(stable_report_json(report))
+    return int(report.get("status", 0))
+
+
+def cmd_workflow_upstream_validate(args: argparse.Namespace) -> int:
+    report = validate_upstream_monitor_report(
+        manifest_path=Path(args.manifest),
+        checkout_root=Path(args.checkout_root),
+        report_path=Path(args.input),
+        output_path=Path(args.output),
     )
     print(stable_report_json(report))
     return int(report.get("status", 0))
@@ -5302,13 +5337,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workflow_dashboard_checkout.add_argument("--token")
     workflow_dashboard_checkout.set_defaults(func=cmd_workflow_checkout_dashboard)
+    workflow_upstream_checkout = workflow_sub.add_parser("checkout-upstream")
+    workflow_upstream_checkout.add_argument(
+        "--checkout-root", default="upstream-checkouts"
+    )
+    workflow_upstream_checkout.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_checkout.add_argument(
+        "--output-manifest", default="upstream-monitor.manifest.yml"
+    )
+    workflow_upstream_checkout.add_argument("--output")
+    workflow_upstream_checkout.add_argument("--token")
+    workflow_upstream_checkout.set_defaults(func=cmd_workflow_checkout_upstream)
     workflow_upstream = workflow_sub.add_parser("upstream-monitor")
-    workflow_upstream.add_argument("--checkout-root", default="upstream-checkouts")
+    workflow_upstream.add_argument("--manifest", default="fleet.yml")
     workflow_upstream.add_argument("--output", default="upstream-report.json")
-    workflow_upstream.add_argument("--token")
     workflow_upstream.add_argument("--mutate", action="store_true")
     workflow_upstream.add_argument("--dry-run", action="store_true")
     workflow_upstream.set_defaults(func=cmd_workflow_upstream_monitor)
+    workflow_upstream_validate = workflow_sub.add_parser("upstream-validate")
+    workflow_upstream_validate.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_validate.add_argument(
+        "--checkout-root", default="upstream-checkouts"
+    )
+    workflow_upstream_validate.add_argument("--input", default="upstream-report.json")
+    workflow_upstream_validate.add_argument("--output", default="upstream-report.json")
+    workflow_upstream_validate.set_defaults(func=cmd_workflow_upstream_validate)
+    workflow_upstream_actions = workflow_sub.add_parser("upstream-actions")
+    workflow_upstream_actions.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_actions.add_argument(
+        "--checkout-root", default="upstream-checkouts"
+    )
+    workflow_upstream_actions.add_argument("--input", default="upstream-report.json")
+    workflow_upstream_actions.add_argument("--output", default="upstream-report.json")
+    workflow_upstream_actions.set_defaults(func=cmd_workflow_upstream_actions)
     workflow_registry = workflow_sub.add_parser("registry-audit")
     workflow_registry.add_argument("--checkout-root", default="registry-checkouts")
     workflow_registry.add_argument("--output", default="registry-report.json")
