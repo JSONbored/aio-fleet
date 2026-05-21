@@ -179,6 +179,11 @@ repos:
         )
 
     monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(
+        workflow_jobs,
+        "publish_components_required",
+        lambda _repo, *, sha, event: ["aio"],
+    )
     monkeypatch.setattr(workflow_jobs.subprocess, "check_output", fake_check_output)
     monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
     report = registry_audit_checkouts(
@@ -189,11 +194,11 @@ repos:
         github_output=None,
     )
 
-    assert verify_components == ["aio", "sure-alpha"]  # nosec B101
+    assert verify_components == ["aio"]  # nosec B101
     assert report["status"] == 0  # nosec B101
     rows = {row["component"] for row in report["repos"]}
     assert "aio" in rows  # nosec B101
-    assert "sure-alpha" in rows  # nosec B101
+    assert "sure-alpha" not in rows  # nosec B101
 
 
 def test_upstream_monitor_checkouts_sanitizes_subprocess_tokens(
