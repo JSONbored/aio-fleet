@@ -316,9 +316,7 @@ def test_registry_publish_action_validates_component_json_array() -> None:
     assert "publish-components-json must be a JSON array" in text  # nosec B101
 
 
-def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token() -> (
-    None
-):
+def test_registry_publish_uses_protected_environment_and_github_token() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     permissions = workflow["permissions"]
     manual_job = workflow["jobs"]["manual-registry-publish"]
@@ -335,8 +333,10 @@ def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token(
     assert "packages" not in permissions  # nosec B101
     assert manual_job["permissions"]["packages"] == "write"  # nosec B101
     assert poll_job["permissions"]["packages"] == "write"  # nosec B101
-    assert manual_job["environment"] == "registry-publish"  # nosec B101
-    assert poll_job["environment"] == "registry-publish"  # nosec B101
+    assert manual_job["environment"]["name"] == "registry-publish"  # nosec B101
+    assert poll_job["environment"]["name"] == "registry-publish"  # nosec B101
+    assert "github.run_id" in manual_job["environment"]["url"]  # nosec B101
+    assert "github.run_id" in poll_job["environment"]["url"]  # nosec B101
     assert (
         "needs.control-plane.outputs.manual_control_check_outcome == 'success'"
         in manual_job["if"]
@@ -366,23 +366,45 @@ def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token(
         poll_dockerhub_login,
         poll_ghcr_login,
     ):
-        assert step["uses"].startswith("docker/login-action@")  # nosec B101
         assert step.get("continue-on-error") is True  # nosec B101
         assert step["env"]["DOCKER_CONFIG"] == (  # nosec B101
             "${{ runner.temp }}/aio-fleet-docker-config"
         )
-    assert manual_dockerhub_login["with"]["password"] == (  # nosec B101
-        "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
-    )
-    assert poll_dockerhub_login["with"]["password"] == (  # nosec B101
-        "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
-    )
-    assert manual_ghcr_login["with"]["password"] == "${{ github.token }}"  # nosec B101
-    assert poll_ghcr_login["with"]["password"] == "${{ github.token }}"  # nosec B101
+        assert "--password-stdin" in step["run"]  # nosec B101
+
+    for step in (manual_dockerhub_login, poll_dockerhub_login):
+        assert step["env"]["DOCKERHUB_PUBLISH_TOKEN"] == (  # nosec B101
+            "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
+        )
+        assert "docker login docker.io" in step["run"]  # nosec B101
+
+    for step in (manual_ghcr_login, poll_ghcr_login):
+        assert step["env"]["GHCR_TOKEN"] == ("${{ github.token }}")  # nosec B101
+        assert "docker login ghcr.io" in step["run"]  # nosec B101
 
     for job in (manual_job, poll_job):
         setup = _step(job, "Set up Python")
         assert "cache" not in setup["with"]  # nosec B101
+
+
+def test_registry_publish_approval_context_is_visible() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    control = workflow["jobs"]["control-plane"]
+    manual_job = workflow["jobs"]["manual-registry-publish"]
+    poll_job = workflow["jobs"]["poll-registry-publish"]
+    summary = _step(control, "Summarize registry publish approval")
+
+    assert "inputs.repo" in manual_job["name"]  # nosec B101
+    assert "inputs.publish_component" in manual_job["name"]  # nosec B101
+    assert "inputs.sha" in manual_job["name"]  # nosec B101
+    assert "matrix.target.repo" in poll_job["name"]  # nosec B101
+    assert "matrix.target.publish_components" in poll_job["name"]  # nosec B101
+    assert "matrix.target.sha" in poll_job["name"]  # nosec B101
+    assert "inputs.publish" in summary["if"]  # nosec B101
+    assert "GITHUB_STEP_SUMMARY" in summary["run"]  # nosec B101
+    assert "TARGET_REPO" in summary["env"]  # nosec B101
+    assert "PUBLISH_COMPONENT" in summary["env"]  # nosec B101
+    assert "TARGET_SHA" in summary["env"]  # nosec B101
 
 
 def test_publish_preflight_runs_before_docker_setup_and_writes_artifact() -> None:

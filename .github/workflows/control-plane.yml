@@ -616,6 +616,26 @@ jobs:
             exit 1
           fi
 
+      - name: Summarize registry publish approval
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && steps.central-control-check.outcome == 'success' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          TARGET_SHA: ${{ inputs.sha }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+        run: |
+          set -euo pipefail
+          component="${PUBLISH_COMPONENT:-all}"
+          {
+            echo "## Registry publish approval"
+            echo
+            echo "- Repo: \`${TARGET_REPO}\`"
+            echo "- Component: \`${component}\`"
+            echo "- SHA: \`${TARGET_SHA}\`"
+            echo "- Environment: \`registry-publish\`"
+            echo
+            echo "Approve only if this matches the intended package and release."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Fail central control check bootstrap
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'failure' }}
         run: |
@@ -659,17 +679,19 @@ jobs:
             ${{ runner.temp }}/central-control-report.json
 
   manual-registry-publish:
-    name: manual-registry-publish
+    name: manual-registry-publish (${{ inputs.repo }} / ${{ inputs.publish_component || 'all' }} / ${{ inputs.sha }})
     # Kept inline with poll-registry-publish because both jobs must bind their
     # own protected registry-publish environment and job-scoped package writer.
     needs: control-plane
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.publish && !inputs.dry_run && needs.control-plane.outputs.manual_control_check_outcome == 'success' }}
     runs-on: ubuntu-latest
-    environment: registry-publish
+    environment:
+      name: registry-publish
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     permissions:
       contents: read # checkout trusted fleet code and the reviewed app ref
       checks: write # complete the required aio-fleet check-run
-      packages: write # publish GHCR images with the short-lived GITHUB_TOKEN
+      packages: write # publish GHCR images from the protected registry environment
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -716,23 +738,40 @@ jobs:
       - name: Log in to Docker Hub
         id: dockerhub-login
         continue-on-error: true
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUBLISH_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_PUBLISH_TOKEN}" ]]; then
+            echo "Docker Hub publish credentials are missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${DOCKERHUB_PUBLISH_TOKEN}"
+          printf '%s\n' "${DOCKERHUB_PUBLISH_TOKEN}" \
+            | docker login docker.io \
+                --username "${DOCKERHUB_USERNAME}" \
+                --password-stdin
 
       - name: Log in to GHCR
         id: ghcr-login
         continue-on-error: true
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GHCR_TOKEN}" ]]; then
+            echo "GHCR publish token is missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${GHCR_TOKEN}"
+          printf '%s\n' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${GHCR_USERNAME}" \
+                --password-stdin
 
       - name: Validate publish credentials
         id: registry-preflight
@@ -1206,7 +1245,7 @@ jobs:
             ${{ runner.temp }}/poll-central-control-report.json
 
   poll-registry-publish:
-    name: poll-registry-publish (${{ matrix.target.repo }} / ${{ matrix.target.source }})
+    name: poll-registry-publish (${{ matrix.target.repo }} / ${{ join(matrix.target.publish_components, ',') || 'all' }} / ${{ matrix.target.sha }})
     # Kept inline with manual-registry-publish because both jobs must bind their
     # own protected registry-publish environment and job-scoped package writer.
     needs:
@@ -1214,11 +1253,13 @@ jobs:
       - poll-checks
     if: ${{ always() && needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_publish_targets == 'true' && needs.poll-checks.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: registry-publish
+    environment:
+      name: registry-publish
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     permissions:
       contents: read # checkout trusted fleet code and the reviewed app ref
       checks: write # complete the required aio-fleet check-run
-      packages: write # publish GHCR images with the short-lived GITHUB_TOKEN
+      packages: write # publish GHCR images from the protected registry environment
     concurrency:
       group: aio-fleet-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}-${{ join(matrix.target.publish_components, '-') || 'all' }}
       cancel-in-progress: false
@@ -1254,23 +1295,40 @@ jobs:
       - name: Log in to Docker Hub
         id: dockerhub-login
         continue-on-error: true
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PUBLISH_TOKEN: ${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_PUBLISH_TOKEN}" ]]; then
+            echo "Docker Hub publish credentials are missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${DOCKERHUB_PUBLISH_TOKEN}"
+          printf '%s\n' "${DOCKERHUB_PUBLISH_TOKEN}" \
+            | docker login docker.io \
+                --username "${DOCKERHUB_USERNAME}" \
+                --password-stdin
 
       - name: Log in to GHCR
         id: ghcr-login
         continue-on-error: true
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/aio-fleet-docker-config
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GHCR_TOKEN}" ]]; then
+            echo "GHCR publish token is missing" >&2
+            exit 1
+          fi
+          echo "::add-mask::${GHCR_TOKEN}"
+          printf '%s\n' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${GHCR_USERNAME}" \
+                --password-stdin
 
       - name: Resolve GitHub App token
         id: app-token

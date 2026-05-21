@@ -86,13 +86,13 @@ With required signed commits enabled, the secure merge methods are squash or
 merge commit through GitHub's signed web flow, or a local signed merge pushed by
 an authorized maintainer.
 
-GHCR package publishing is separate from GitHub App check-runs. Use
-`AIO_FLEET_GHCR_TOKEN` for the central publish identity.
+GHCR package publishing is separate from GitHub App check-runs. The central
+publish jobs use the short-lived workflow `GITHUB_TOKEN` with `packages: write`.
+If a package is associated with an app repository rather than `aio-fleet`, add
+`aio-fleet` to the package's **Manage Actions access** list with Write access.
 
-GitHub Container Registry still expects either workflow-scoped `GITHUB_TOKEN`
-permission for the repository/package relationship or a classic package token.
-For the central build path, `AIO_FLEET_GHCR_TOKEN` is the explicit operator
-credential until a narrower App-only package path is proven.
+Keep `AIO_FLEET_GHCR_TOKEN` available for local/operator preflight only. Do not
+route it into app validation runs or normal protected publish jobs.
 
 The private key secret should contain the PEM text. Escaped `\n` sequences are
 accepted so the value can be stored in GitHub Secrets without preserving literal
