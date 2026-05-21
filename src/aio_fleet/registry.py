@@ -243,7 +243,7 @@ def delete_dockerhub_tags(
         return [{"tag": tag, "state": "would-delete"} for tag in cleaned_tags]
 
     if not username or not token:
-        raise ValueError("DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required")
+        raise ValueError("DOCKERHUB_USERNAME and DOCKERHUB_DELETE_TOKEN are required")
 
     auth_token = _dockerhub_login_token(username=username, token=token)
     results: list[dict[str, str]] = []

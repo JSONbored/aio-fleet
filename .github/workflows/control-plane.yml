@@ -218,24 +218,44 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_DELETE_TOKEN: ${{ secrets.DOCKERHUB_DELETE_TOKEN }}
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
           DOCKERHUB_IMAGE: ${{ inputs.dockerhub_image }}
           DOCKERHUB_TAGS: ${{ inputs.dockerhub_tags }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          cleanup_component="${PUBLISH_COMPONENT:-aio}"
           if [[ "${DRY_RUN}" != "true" ]]; then
+            if [[ -z "${TARGET_REPO}" ]]; then
+              echo "repo is required for live Docker Hub cleanup." >&2
+              exit 1
+            fi
+            if [[ -n "${DOCKERHUB_IMAGE}" ]]; then
+              echo "dockerhub_image is dry-run only; live cleanup must use repo/component." >&2
+              exit 1
+            fi
             python -m aio_fleet registry preflight \
               --mode cleanup \
-              --image "${DOCKERHUB_IMAGE}" \
+              --repo "${TARGET_REPO}" \
+              --component "${cleanup_component}" \
               --check-delete-scope \
               --format json
           fi
           args=(
             registry delete-dockerhub-tags
-            --image "${DOCKERHUB_IMAGE}"
             --tag-list "${DOCKERHUB_TAGS}"
             --required-substring alpha
           )
+          if [[ -n "${DOCKERHUB_IMAGE}" ]]; then
+            args+=(--image "${DOCKERHUB_IMAGE}")
+          else
+            if [[ -z "${TARGET_REPO}" ]]; then
+              echo "repo or dockerhub_image is required for Docker Hub cleanup." >&2
+              exit 1
+            fi
+            args+=(--repo "${TARGET_REPO}" --component "${cleanup_component}")
+          fi
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
           fi

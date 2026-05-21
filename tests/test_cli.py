@@ -2253,8 +2253,9 @@ def test_registry_delete_dockerhub_tags_dry_run_without_credentials(
 
 
 def test_registry_delete_dockerhub_tags_prefers_delete_token(
-    monkeypatch, capsys
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
     seen: dict[str, str] = {}
 
     def fake_delete(**kwargs):
@@ -2268,7 +2269,11 @@ def test_registry_delete_dockerhub_tags_prefers_delete_token(
 
     result = cmd_registry_delete_dockerhub_tags(
         Namespace(
-            image="jsonbored/sure-aio",
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            component="aio",
+            image=None,
             tag=["latest-alpha"],
             tag_list="",
             required_substring="alpha",
@@ -2280,8 +2285,60 @@ def test_registry_delete_dockerhub_tags_prefers_delete_token(
     assert result == 0  # nosec B101
     assert seen["token"] == "delete-token"  # nosec B101
     assert (
-        "jsonbored/sure-aio:latest-alpha: deleted" in capsys.readouterr().out
+        "jsonbored/example-aio:latest-alpha: deleted" in capsys.readouterr().out
     )  # nosec B101
+
+
+def test_registry_delete_dockerhub_tags_rejects_live_freeform_image(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_DELETE_TOKEN", "delete-token")
+
+    result = cmd_registry_delete_dockerhub_tags(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image="jsonbored/not-in-fleet",
+            tag=["latest-alpha"],
+            tag_list="",
+            required_substring="alpha",
+            dry_run=False,
+            format="text",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert "manifest repo/component" in capsys.readouterr().err  # nosec B101
+
+
+def test_registry_delete_dockerhub_tags_rejects_manifest_image_mismatch(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_DELETE_TOKEN", "delete-token")
+
+    result = cmd_registry_delete_dockerhub_tags(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=None,
+            component="aio",
+            image="jsonbored/not-in-fleet",
+            tag=["latest-alpha"],
+            tag_list="",
+            required_substring="alpha",
+            dry_run=False,
+            format="text",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert "does not match manifest target" in capsys.readouterr().err  # nosec B101
 
 
 def test_registry_preflight_reports_publish_credential_gaps(
@@ -2377,6 +2434,36 @@ def test_registry_preflight_cleanup_requires_delete_token(
     report = json.loads(capsys.readouterr().out)
     assert report["checks"][0]["name"] == "cleanup-credentials"  # nosec B101
     assert "DOCKERHUB_DELETE_TOKEN" in report["checks"][0]["detail"]  # nosec B101
+
+
+def test_registry_preflight_cleanup_ignores_publish_token_fallback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    monkeypatch.setenv("DOCKERHUB_USERNAME", "jsonbored")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "publish-token")
+    monkeypatch.delenv("DOCKERHUB_DELETE_TOKEN", raising=False)
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["cleanup"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image="jsonbored/example-aio",
+            live_auth=False,
+            check_delete_scope=False,
+            allow_publish_token_delete_fallback=True,
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["checks"][0]["name"] == "cleanup-credentials"  # nosec B101
+    assert "DOCKERHUB_DELETE_TOKEN" in report["checks"][0]["detail"]  # nosec B101
+    assert "DOCKERHUB_TOKEN" not in report["checks"][0]["detail"]  # nosec B101
 
 
 def test_registry_preflight_delete_scope_reports_forbidden(

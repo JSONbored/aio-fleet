@@ -920,6 +920,21 @@ def test_delete_dockerhub_tags_refuses_unguarded_tag() -> None:
         raise AssertionError("expected guarded delete to reject stable tag")
 
 
+def test_delete_dockerhub_tags_requires_delete_token() -> None:
+    try:
+        registry.delete_dockerhub_tags(
+            image="jsonbored/sure-aio",
+            tags=["latest-alpha"],
+            username="jsonbored",
+            token="",
+            required_substring="alpha",
+        )
+    except ValueError as error:
+        assert "DOCKERHUB_DELETE_TOKEN" in str(error)  # nosec B101
+    else:
+        raise AssertionError("expected cleanup credential refusal")
+
+
 def test_delete_dockerhub_tags_rejects_image_with_url_metacharacters() -> None:
     for image in ["jsonbored/sure-aio#", "jsonbored/sure-aio?x=1"]:
         try:

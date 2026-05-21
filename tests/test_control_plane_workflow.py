@@ -156,8 +156,11 @@ def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
         "${{ secrets.DOCKERHUB_DELETE_TOKEN }}"
     )
     assert "registry preflight" in cleanup["run"]  # nosec B101
+    assert "--repo" in cleanup["run"]  # nosec B101
+    assert "--component" in cleanup["run"]  # nosec B101
     assert "--check-delete-scope" in cleanup["run"]  # nosec B101
     assert "registry delete-dockerhub-tags" in cleanup["run"]  # nosec B101
+    assert "dockerhub_image is dry-run only" in cleanup["run"]  # nosec B101
     assert "--required-substring" in cleanup["run"]  # nosec B101
     assert "--required-substring alpha" in cleanup["run"]  # nosec B101
 
