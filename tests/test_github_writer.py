@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import urllib.error
 from pathlib import Path
 
@@ -241,6 +244,39 @@ def test_api_writer_commits_submodule_gitlinks(tmp_path: Path, monkeypatch) -> N
     assert any(
         url.endswith("/git/trees") for _method, url, _payload in calls
     )  # nosec B101
+
+
+def test_run_git_uses_secretless_git_invocation(tmp_path: Path, monkeypatch) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow-token")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setattr(github_writer.subprocess, "run", fake_run)
+
+    github_writer._run_git(repo_path, ["ls-files"], check=True)
+
+    assert captured["args"] == [  # nosec B101
+        shutil.which("git"),
+        "-c",
+        "core.fsmonitor=",
+        "ls-files",
+    ]
+    env = captured["env"]
+    assert isinstance(env, dict)  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in env  # nosec B101
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull  # nosec B101
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"  # nosec B101
+    assert env["GIT_TERMINAL_PROMPT"] == "0"  # nosec B101
 
 
 def test_api_writer_commits_multiple_submodule_gitlinks(

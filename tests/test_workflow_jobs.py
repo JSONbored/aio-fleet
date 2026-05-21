@@ -110,6 +110,47 @@ def test_upstream_summary_renders_updates(tmp_path: Path) -> None:
     assert "0.7.0 -> 0.7.1" in text  # nosec B101
 
 
+def test_changed_paths_uses_secretless_git_invocation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=" M Dockerfile\n",
+            stderr="",
+        )
+
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow-token")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check-token")
+    monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
+
+    changed = workflow_jobs._changed_paths(repo_path)
+
+    assert changed == {"Dockerfile"}  # nosec B101
+    assert captured["args"] == [  # nosec B101
+        "git",
+        "-c",
+        "core.fsmonitor=",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+    ]
+    env = captured["env"]
+    assert isinstance(env, dict)  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in env  # nosec B101
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull  # nosec B101
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"  # nosec B101
+    assert env["GIT_TERMINAL_PROMPT"] == "0"  # nosec B101
+
+
 def test_upstream_summary_renders_blocked_submodule_ref(tmp_path: Path) -> None:
     report = tmp_path / "upstream-report.json"
     report.write_text(
