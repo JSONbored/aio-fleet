@@ -1,4 +1,24 @@
 import {
+  to = github_repository.aio["aio-fleet"]
+  id = "aio-fleet"
+}
+
+import {
+  to = github_branch_protection.main["aio-fleet"]
+  id = "aio-fleet:main"
+}
+
+import {
+  to = github_actions_repository_permissions.aio["aio-fleet"]
+  id = "aio-fleet"
+}
+
+import {
+  to = github_repository_vulnerability_alerts.aio["aio-fleet"]
+  id = "aio-fleet"
+}
+
+import {
   to = github_repository.aio["awesome-unraid"]
   id = "awesome-unraid"
 }
@@ -119,6 +139,26 @@ import {
 }
 
 import {
+  to = github_repository.aio["penpot-aio"]
+  id = "penpot-aio"
+}
+
+import {
+  to = github_branch_protection.main["penpot-aio"]
+  id = "penpot-aio:main"
+}
+
+import {
+  to = github_actions_repository_permissions.aio["penpot-aio"]
+  id = "penpot-aio"
+}
+
+import {
+  to = github_repository_vulnerability_alerts.aio["penpot-aio"]
+  id = "penpot-aio"
+}
+
+import {
   to = github_repository.aio["dify-aio"]
   id = "dify-aio"
 }
@@ -156,4 +196,24 @@ import {
 import {
   to = github_repository_vulnerability_alerts.aio["signoz-aio"]
   id = "signoz-aio"
+}
+
+import {
+  to = github_repository.aio["nanoclaw-aio"]
+  id = "nanoclaw-aio"
+}
+
+import {
+  to = github_branch_protection.main["nanoclaw-aio"]
+  id = "nanoclaw-aio:main"
+}
+
+import {
+  to = github_actions_repository_permissions.aio["nanoclaw-aio"]
+  id = "nanoclaw-aio"
+}
+
+import {
+  to = github_repository_vulnerability_alerts.aio["nanoclaw-aio"]
+  id = "nanoclaw-aio"
 }

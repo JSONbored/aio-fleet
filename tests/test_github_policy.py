@@ -6,6 +6,34 @@ from typing import Any
 from aio_fleet import github_policy
 
 
+def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
+    root = Path(__file__).resolve().parents[1]
+    manifest = github_policy.load_policy(root / "infra/github/github-policy.yml")
+    repos = manifest["repositories"]
+
+    expected_repos = {
+        "aio-fleet",
+        "awesome-unraid",
+        "unraid-aio-template",
+        "sure-aio",
+        "simplelogin-aio",
+        "khoj-aio",
+        "mem0-aio",
+        "infisical-aio",
+        "penpot-aio",
+        "dify-aio",
+        "signoz-aio",
+        "nanoclaw-aio",
+    }
+    assert set(repos) == expected_repos  # nosec B101
+    for name in expected_repos:
+        checks = set(repos[name]["required_checks"])
+        app_ids = repos[name].get("required_check_app_ids", {})
+        assert {"Security scan", "Contributor trust"} <= checks  # nosec B101
+        assert app_ids["Security scan"] == 3287076  # nosec B101
+        assert app_ids["Contributor trust"] == 3287076  # nosec B101
+
+
 def test_validate_github_policy_detects_required_check_and_action_drift(
     tmp_path: Path,
     monkeypatch,
@@ -164,6 +192,126 @@ repositories:
     )
 
 
+def test_validate_github_policy_accepts_per_check_app_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+      - Security scan
+      - Contributor trust
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+      Contributor trust: 3287076
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": [
+                        "aio-fleet / required",
+                        "Security scan",
+                        "Contributor trust",
+                    ],
+                    "checks": [
+                        {"context": "aio-fleet / required", "app_id": 3565017},
+                        {"context": "Security scan", "app_id": 3287076},
+                        {"context": "Contributor trust", "app_id": 3287076},
+                    ],
+                    "strict": True,
+                }
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {"enabled": True}
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    assert (  # nosec B101
+        github_policy.validate_github_policy(
+            policy, repos=["example-aio"], check_secrets=False
+        )
+        == []
+    )
+
+
+def test_validate_github_policy_rejects_unknown_per_check_app_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 3565017
+    required_check_app_ids:
+      Security scan: 3287076
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": ["aio-fleet / required"],
+                    "checks": [{"context": "aio-fleet / required", "app_id": 3565017}],
+                    "strict": True,
+                }
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {"enabled": True}
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    failures = github_policy.validate_github_policy(
+        policy, repos=["example-aio"], check_secrets=False
+    )
+
+    assert failures == [  # nosec B101
+        "example-aio: required_check_app_ids declares unknown required check 'Security scan'"
+    ]
+
+
 def test_validate_github_policy_rejects_same_context_wrong_app_id(
     tmp_path: Path,
     monkeypatch,
@@ -223,6 +371,7 @@ def test_infra_uses_rulesets_for_app_bound_required_checks() -> None:
     assert (  # nosec B101
         'resource "github_repository_ruleset" "trusted_required_checks"' in main_tf
     )
-    assert "integration_id = each.value.required_check_app_id" in main_tf  # nosec B101
+    assert "required_check_app_ids" in main_tf  # nosec B101
+    assert "integration_id = lookup(" in main_tf  # nosec B101
     assert 'dynamic "required_status_checks"' in main_tf  # nosec B101
-    assert "required_check_app_id == null" in main_tf  # nosec B101
+    assert "length(each.value.required_check_app_ids) == 0" in main_tf  # nosec B101

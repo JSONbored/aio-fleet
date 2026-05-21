@@ -1247,7 +1247,9 @@ def upstream_body(
             "- Dashboard safety state is authoritative after this PR and its checks are visible to `aio-fleet`.",
         ]
     )
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    assert_public_text(body, context="upstream PR body")
+    return body
 
 
 def run_git(

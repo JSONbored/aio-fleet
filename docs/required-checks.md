@@ -4,13 +4,15 @@ Use these as the control-plane map for required checks.
 
 ## App Repos
 
-App repos should require only:
+App repos should require:
 
 - `aio-fleet / required`
+- `Security scan`
+- `Contributor trust`
 
 `aio-fleet` may still post detail checks for validation, tests, registry, and
 catalog work, but those are diagnostic. Branch protection should key on the
-single required control-plane check.
+single required control-plane check plus the two Superagent checks.
 
 The check must be created by a GitHub App or another token with Checks write
 permission. GitHub documents that check-run write access is available for GitHub
@@ -20,6 +22,24 @@ The required check should also be pinned to the GitHub App producer. The live
 branch protection API should report `aio-fleet / required` with app ID
 `3565017`; `validate-github` treats any other app ID as drift.
 
+Superagent is a blocking fleet gate. The live PR check suite reports both
+`Security scan` and `Contributor trust` from the `Superagent Security` app, app
+ID `3287076`; `validate-github` should pin those contexts to that producer.
+
+## aio-fleet
+
+Require:
+
+- `test`
+- `infra`
+- `Analyze (actions)`
+- `Analyze (python)`
+- `Security scan`
+- `Contributor trust`
+
+The GitHub Actions contexts should be pinned to app ID `15368`. The Superagent
+contexts should be pinned to app ID `3287076`.
+
 ## awesome-unraid
 
 Require:
@@ -27,6 +47,19 @@ Require:
 - `validate-catalog`
 - `CodeQL`
 - `Analyze (actions)`
+- `Security scan`
+- `Contributor trust`
+
+The GitHub Actions contexts should be pinned to app ID `15368`. The Superagent
+contexts should be pinned to app ID `3287076`.
+
+## unraid-aio-template
+
+Require the same logical gates as app repos: `aio-fleet / required`, `Security
+scan`, and `Contributor trust`. The repo is private, so branch protection may
+remain manually enforced when the GitHub plan/API cannot expose private branch
+protection. Keep the expected check map in `infra/github/github-policy.yml` so
+the drift is visible instead of implicit.
 
 ## Selected Actions
 

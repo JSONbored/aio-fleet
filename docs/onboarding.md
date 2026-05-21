@@ -71,8 +71,8 @@ non-blocking.
 7. Run upstream-monitor and registry dry-runs.
 8. Sync catalog assets into `awesome-unraid` with a PR when the source repo is ready.
 9. Render the support-thread draft and complete CA-facing metadata review.
-10. Prove `aio-fleet / required` appears on a real app PR before branch protection
-    depends on it.
+10. Prove `aio-fleet / required`, `Security scan`, and `Contributor trust`
+    appear on a real app PR before branch protection depends on them.
 
 Acceptance commands:
 
@@ -105,7 +105,8 @@ Promote a rehab repo only after:
 - `.aio-fleet.yml` has been exported from `fleet.yml`;
 - legacy workflows/config/scripts that `aio-fleet` replaces are removed;
 - central validation and cleanup verification pass;
-- `aio-fleet / required` appears on a real PR.
+- `aio-fleet / required`, `Security scan`, and `Contributor trust` appear on a
+  real PR.
 
 `promote-rehab` does not mutate `fleet.yml`; it produces the acceptance pack
 for moving a rehab repo into the active `repos` map. It blocks on missing local

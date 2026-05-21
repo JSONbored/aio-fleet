@@ -16,6 +16,16 @@ python -m aio_fleet upstream monitor --all --dry-run --format json
 python -m aio_fleet upstream monitor --all --write --create-pr --post-check
 ```
 
+`validate --all` is the fast local conformance gate for active fleet repos. It
+checks the exported app manifest, source/catalog policy, workflow policy, tracked
+artifact drift, and required manifest shape before any heavier registry or
+runtime path runs.
+
+```bash
+python -m aio_fleet validate --all
+python -m aio_fleet validate-github --repo sure-aio
+```
+
 `strategy: pr` opens or updates one source repo PR for the generated upstream
 branch. The commit must be verified before the PR is considered actionable
 under branch protection. `strategy: notify` never opens a PR; it appears in the
@@ -267,7 +277,7 @@ the heartbeat without sending a separate webhook digest.
   signing key is available, then verify with the commit API.
 - Required check spoof/drift: run `python -m aio_fleet validate-github`; app
   repos should require `aio-fleet / required` from the configured GitHub App
-  app ID.
+  app ID plus `Security scan` and `Contributor trust` from Superagent Security.
 - Signed-commit merge failure: do not use GitHub rebase-merge. Use squash,
   merge commit, or a local signed merge from an authorized maintainer.
 - Stale upstream PR: rerun upstream monitor; older generated upstream PRs are

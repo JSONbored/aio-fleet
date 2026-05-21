@@ -1,4 +1,34 @@
 repositories = {
+  "aio-fleet" = {
+    description = "Central control plane for JSONbored Unraid AIO repository policy, release checks, dashboard reporting, and fleet automation."
+    topics = [
+      "automation",
+      "ci",
+      "github-actions",
+      "homelab",
+      "release-automation",
+      "self-hosted",
+      "unraid",
+      "unraid-templates",
+    ]
+    required_checks = [
+      "test",
+      "infra",
+      "Analyze (actions)",
+      "Analyze (python)",
+      "Security scan",
+      "Contributor trust",
+    ]
+    required_check_app_ids = {
+      "test"              = 15368
+      "infra"             = 15368
+      "Analyze (actions)" = 15368
+      "Analyze (python)"  = 15368
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
   "awesome-unraid" = {
     description = "Production-grade Unraid CA templates for self-hosters tired of half-baked XML files — every env var documented, sane defaults, working init scripts, and actually maintained."
     topics = [
@@ -21,7 +51,16 @@ repositories = {
       "validate-catalog",
       "CodeQL",
       "Analyze (actions)",
+      "Security scan",
+      "Contributor trust",
     ]
+    required_check_app_ids = {
+      "validate-catalog"  = 15368
+      "CodeQL"            = 15368
+      "Analyze (actions)" = 15368
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
     required_secrets = [
       "AIO_FLEET_BOT_TOKEN",
     ]
@@ -53,8 +92,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "simplelogin-aio" = {
@@ -83,8 +128,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "khoj-aio" = {
@@ -113,8 +164,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "mem0-aio" = {
@@ -143,8 +200,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "infisical-aio" = {
@@ -173,8 +236,38 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
+  "penpot-aio" = {
+    description = "Unraid-first AIO wrapper for Penpot, bundling the app stack into a practical single-container homelab deployment."
+    topics = [
+      "design",
+      "docker",
+      "homelab",
+      "penpot",
+      "self-hosted",
+      "unraid",
+      "unraid-ca",
+      "unraid-template",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "dify-aio" = {
@@ -203,8 +296,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "signoz-aio" = {
@@ -233,8 +332,14 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 
   "nanoclaw-aio" = {
@@ -258,7 +363,13 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
     ]
     required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
   }
 }

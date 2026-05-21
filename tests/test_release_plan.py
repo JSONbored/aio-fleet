@@ -641,6 +641,7 @@ repos:
         image_name: jsonbored/sure-aio
       sure-alpha:
         image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
         release_policy: registry_only
 """)
 

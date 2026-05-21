@@ -8,6 +8,8 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from aio_fleet import cli
 from aio_fleet.cli import (
     _repo_python,
@@ -42,6 +44,7 @@ from aio_fleet.cli import (
     cmd_trunk_run,
     cmd_upstream_assess,
     cmd_upstream_monitor,
+    cmd_validate,
     cmd_validate_template_common,
     cmd_workflow_control_report,
 )
@@ -75,6 +78,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -352,6 +356,7 @@ dashboard:
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -430,6 +435,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -970,6 +976,7 @@ dashboard:
 repos:
   example-aio:
     path: {active_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -1031,6 +1038,7 @@ owner: JSONbored
 repos:
   unraid-aio-template:
     path: {repo_path}
+    public: true
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template
     docker_cache_scope: unraid-aio-template-image
@@ -1095,6 +1103,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -1123,6 +1132,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1240,6 +1250,7 @@ owner: JSONbored
 repos:
   penpot-aio:
     path: {repo_path}
+    public: true
     app_slug: penpot-aio
     image_name: jsonbored/penpot-aio
     docker_cache_scope: penpot-aio-image
@@ -1290,6 +1301,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1368,6 +1380,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1443,6 +1456,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1520,6 +1534,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1858,6 +1873,7 @@ owner: JSONbored
 repos:
   sure-aio:
     path: {repo_path}
+    public: true
     app_slug: sure-aio
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
@@ -1867,6 +1883,7 @@ repos:
     components:
       sure-alpha:
         image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
         release_changelog: CHANGELOG.alpha.md
         floating_tags:
           - latest-alpha
@@ -1934,6 +1951,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2064,6 +2082,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2116,6 +2135,7 @@ owner: JSONbored
 repos:
   unraid-aio-template:
     path: {repo_path}
+    public: true
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template
     docker_cache_scope: unraid-aio-template-image
@@ -2439,6 +2459,7 @@ owner: JSONbored
 repos:
   unraid-aio-template:
     path: {template_path}
+    public: true
     app_slug: unraid-aio-template
     image_name: jsonbored/unraid-aio-template
     docker_cache_scope: unraid-aio-template-image
@@ -2446,6 +2467,7 @@ repos:
     publish_profile: template
   example-aio:
     path: {app_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2495,6 +2517,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2563,6 +2586,7 @@ awesome_unraid_repository: JSONbored/awesome-unraid
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2578,6 +2602,37 @@ repos:
 
     assert result == 0  # nosec B101
     assert "common template validation passed" in capsys.readouterr().out  # nosec B101
+
+
+def test_validate_all_includes_manifest_shape_failures(tmp_path: Path, capsys) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    catalog_assets: []
+""")
+
+    result = cmd_validate(Namespace(manifest=str(manifest), all=True, repo=None))
+
+    assert result == 1  # nosec B101
+    assert "example-aio: missing Dockerfile" in capsys.readouterr().err  # nosec B101
+
+
+def test_catalog_pr_body_rejects_non_public_repo_text() -> None:
+    with pytest.raises(ValueError, match="catalog PR body"):
+        cli._catalog_body(  # noqa: SLF001
+            "/Users/shadowbook/Documents/example-aio",
+            icon_only=False,
+        )
 
 
 def test_infra_doctor_checks_local_policy_without_tofu(
@@ -2614,6 +2669,7 @@ defaults:
     patterns_allowed:
       - JSONbored/aio-fleet/.github/workflows/aio-*.yml@*
 repositories:
+  aio-fleet: {}
   awesome-unraid: {}
   example-aio: {}
 """)
@@ -2933,6 +2989,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image
@@ -2959,6 +3016,7 @@ owner: JSONbored
 repos:
   example-aio:
     path: {repo_path}
+    public: true
     app_slug: example-aio
     image_name: jsonbored/example-aio
     docker_cache_scope: example-aio-image

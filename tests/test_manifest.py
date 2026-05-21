@@ -58,6 +58,7 @@ owner: JSONbored
 repos:
   broken-aio:
     path: /tmp/broken-aio
+    public: true
     app_slug: broken-aio
     image_name: jsonbored/broken-aio
     docker_cache_scope: broken-aio-image
@@ -78,6 +79,7 @@ owner: JSONbored
 repos:
   broken-aio:
     path: /tmp/broken-aio
+    public: true
     app_slug: broken-aio
     image_name: jsonbored/broken-aio
     docker_cache_scope: broken-aio-image
@@ -87,5 +89,52 @@ repos:
 
     with pytest.raises(
         ManifestError, match="multi-component profile requires components"
+    ):
+        load_manifest(manifest_path)
+
+
+def test_manifest_requires_explicit_public_flag(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "fleet.yml"
+    manifest_path.write_text("""
+owner: JSONbored
+repos:
+  broken-aio:
+    path: /tmp/broken-aio
+    app_slug: broken-aio
+    image_name: jsonbored/broken-aio
+    docker_cache_scope: broken-aio-image
+    pytest_image_tag: broken-aio:pytest
+""")
+
+    with pytest.raises(ManifestError, match="missing required key: public"):
+        load_manifest(manifest_path)
+
+
+def test_manifest_validates_registry_only_component_publish_shape(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "fleet.yml"
+    manifest_path.write_text("""
+owner: JSONbored
+repos:
+  broken-aio:
+    path: /tmp/broken-aio
+    public: true
+    app_slug: broken-aio
+    image_name: jsonbored/broken-aio
+    docker_cache_scope: broken-aio-image
+    pytest_image_tag: broken-aio:pytest
+    publish_profile: multi-component
+    components:
+      aio:
+        dockerfile: Dockerfile
+      helper:
+        image_name: jsonbored/broken-helper
+        release_policy: registry_only
+""")
+
+    with pytest.raises(
+        ManifestError,
+        match="component helper missing required key: dockerfile",
     ):
         load_manifest(manifest_path)

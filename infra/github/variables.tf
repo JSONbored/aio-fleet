@@ -26,6 +26,7 @@ variable "repositories" {
     branch                          = optional(string, "main")
     required_checks                 = optional(list(string), [])
     required_check_app_id           = optional(number)
+    required_check_app_ids          = optional(map(number), {})
     strict_required_checks          = optional(bool, true)
     enforce_admins                  = optional(bool, false)
     require_signed_commits          = optional(bool, true)

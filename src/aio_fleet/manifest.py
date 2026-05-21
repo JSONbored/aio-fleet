@@ -124,6 +124,10 @@ def validate_manifest(manifest: FleetManifest) -> None:
         raise ManifestError("fleet.yml must define at least one repo")
 
     for name, repo in manifest.repos.items():
+        if "public" not in repo.raw:
+            raise ManifestError(f"{name} missing required key: public")
+        if not isinstance(repo.raw["public"], bool):
+            raise ManifestError(f"{name} public must be true or false")
         for key in [
             "path",
             "app_slug",
@@ -148,3 +152,29 @@ def validate_manifest(manifest: FleetManifest) -> None:
             raise ManifestError(
                 f"{name} {repo.publish_profile} profile requires components"
             )
+        _validate_components(name, repo)
+
+
+def _validate_components(name: str, repo: RepoConfig) -> None:
+    components = repo.raw.get("components")
+    if components is None:
+        return
+    if not isinstance(components, dict) or not components:
+        raise ManifestError(f"{name} components must be a non-empty mapping")
+
+    for component_name, config in components.items():
+        if not isinstance(config, dict):
+            raise ManifestError(f"{name} component {component_name} must be a mapping")
+
+        release_policy = str(config.get("release_policy", "standard"))
+        if release_policy not in {"standard", "registry_only"}:
+            raise ManifestError(
+                f"{name} component {component_name} has unsupported release_policy: {release_policy}"
+            )
+
+        if component_name != "aio" or release_policy == "registry_only":
+            for key in ["image_name", "dockerfile"]:
+                if key not in config:
+                    raise ManifestError(
+                        f"{name} component {component_name} missing required key: {key}"
+                    )
