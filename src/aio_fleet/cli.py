@@ -1720,7 +1720,7 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
     tags = compute_registry_tags(repo, sha=sha, component=args.component)
     if not getattr(args, "force", False):
         existing_failures = verify_registry_tags(tags.all_tags)
-        if not existing_failures:
+        if not existing_failures and _registry_tags_match_sha_digest(tags.all_tags):
             label = (
                 repo.name
                 if args.component == "aio"
@@ -1761,6 +1761,22 @@ def cmd_registry_publish(args: argparse.Namespace) -> int:
         )
         return 1
     return 0
+
+
+def _registry_tags_match_sha_digest(tags: list[str]) -> bool:
+    sha_tags = [tag for tag in tags if ":sha-" in tag]
+    if not sha_tags:
+        return False
+    for sha_tag in sha_tags:
+        image = sha_tag.rsplit(":", 1)[0]
+        expected = _registry_tag_digest(sha_tag, env=None)
+        if not expected:
+            return False
+        related_tags = [tag for tag in tags if tag.rsplit(":", 1)[0] == image]
+        for tag in related_tags:
+            if _registry_tag_digest(tag, env=None) != expected:
+                return False
+    return True
 
 
 def _tag_list_arg(value: str, repeated: list[str] | None) -> list[str]:

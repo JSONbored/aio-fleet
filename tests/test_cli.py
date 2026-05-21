@@ -2118,6 +2118,9 @@ def test_registry_publish_skips_when_tags_are_current(
         ),
     )
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, **_kwargs: [])
+    monkeypatch.setattr(
+        cli, "_registry_tags_match_sha_digest", lambda _tags: True
+    )
 
     result = cmd_registry_publish(
         Namespace(
