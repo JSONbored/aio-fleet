@@ -269,3 +269,31 @@ repos:
     assert "APP_TOKEN" not in observed_env  # nosec B101
     assert "GH_TOKEN" not in observed_env  # nosec B101
     assert "GITHUB_TOKEN" not in observed_env  # nosec B101
+
+
+def test_checkout_refs_uses_bounded_single_branch_clone(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
+
+    checkout = tmp_path / "checkouts" / "sure-aio"
+    results = workflow_jobs._checkout_refs(
+        [("sure-aio", "JSONbored/sure-aio", checkout)],
+        token="token",  # nosec B106
+        submodules="none",
+    )
+
+    assert len(results) == 1  # nosec B101
+    assert calls[0][:5] == [  # nosec B101
+        "git",
+        "clone",
+        "--single-branch",
+        "--filter=blob:none",
+        "https://github.com/JSONbored/sure-aio.git",
+    ]
