@@ -1151,12 +1151,6 @@ def _xml_runtime_contract_failures(
     failures: list[str] = []
     volumes = _dockerfile_volumes(dockerfile_text)
     exposed_ports = _dockerfile_exposed_ports(dockerfile_text)
-    validation = repo.get("validation", {})
-    docker_socket_required = (
-        isinstance(validation, dict)
-        and validation.get("docker_socket_required") is True
-    )
-
     for config in root.findall(".//Config"):
         target = (config.attrib.get("Target") or "").strip()
         if not target:
@@ -1171,24 +1165,14 @@ def _xml_runtime_contract_failures(
             )
         if target == "/var/run/docker.sock":
             description = (config.attrib.get("Description") or "").lower()
-            if docker_socket_required:
-                if config.attrib.get("Display") != "always":
-                    failures.append(
-                        f"{repo.name}: {source} required Docker socket mount must be always visible"
-                    )
-                if config.attrib.get("Required") != "true":
-                    failures.append(
-                        f"{repo.name}: {source} Docker socket mount must be required when validation.docker_socket_required is true"
-                    )
-            else:
-                if config.attrib.get("Display") != "advanced":
-                    failures.append(
-                        f"{repo.name}: {source} Docker socket mount must be advanced"
-                    )
-                if config.attrib.get("Required") != "false":
-                    failures.append(
-                        f"{repo.name}: {source} Docker socket mount must be optional"
-                    )
+            if config.attrib.get("Display") != "advanced":
+                failures.append(
+                    f"{repo.name}: {source} Docker socket mount must be advanced"
+                )
+            if config.attrib.get("Required") != "false":
+                failures.append(
+                    f"{repo.name}: {source} Docker socket mount must be optional"
+                )
             if not any(term in description for term in ["socket", "docker"]) or (
                 "security" not in description and "control access" not in description
             ):
