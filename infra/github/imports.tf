@@ -19,6 +19,11 @@ import {
 }
 
 import {
+  to = github_repository_environment.registry_publish
+  id = "aio-fleet:registry-publish"
+}
+
+import {
   to = github_repository.aio["awesome-unraid"]
   id = "awesome-unraid"
 }

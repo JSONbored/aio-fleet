@@ -71,13 +71,17 @@ python -m aio_fleet registry preflight --mode publish --format json
 python -m aio_fleet registry preflight --mode cleanup --image jsonbored/sure-aio-alpha --check-delete-scope --format json
 ```
 
-Publish preflight requires `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and
+Local publish preflight requires `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and
 `AIO_FLEET_GHCR_TOKEN`, then checks the current Docker Hub `/v2/auth/token`
-flow before an expensive build starts. Cleanup preflight requires a separate
-`DOCKERHUB_DELETE_TOKEN`; it should not fall back to the normal publish token
-for real tag cleanup because tag deletion needs Docker Hub delete/admin
-permission. The delete-scope probe targets a random nonexistent tag so it can
-distinguish a missing tag from a token that authenticates but cannot delete.
+flow before an expensive build starts. The GitHub control plane instead logs in
+inside the protected `registry-publish` environment and runs publish code with
+only a preauthenticated `DOCKER_CONFIG`, so app validation and long-running
+Python control code never receive the raw Docker Hub token. Cleanup preflight
+requires a separate `DOCKERHUB_DELETE_TOKEN`; it should not fall back to the
+normal publish token for real tag cleanup because tag deletion needs Docker Hub
+delete/admin permission. The delete-scope probe targets a random nonexistent
+tag so it can distinguish a missing tag from a token that authenticates but
+cannot delete.
 
 GitHub prerelease publishing is guarded by the same control-check attestation.
 `publish-github-prereleases` requires a matching control report or

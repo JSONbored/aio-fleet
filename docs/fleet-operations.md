@@ -213,10 +213,14 @@ python -m aio_fleet registry preflight \
   --format json
 ```
 
-`DOCKERHUB_TOKEN` is the publish token. `DOCKERHUB_DELETE_TOKEN` is the cleanup
-token and must have Docker Hub tag delete/admin permission. Keeping them
-separate prevents normal publish credentials from silently passing preflight and
-then failing during cleanup.
+In local CLI runs, `DOCKERHUB_TOKEN` is the publish token. In GitHub Actions,
+live Docker Hub publishing uses the protected `registry-publish` environment
+secret `DOCKERHUB_PUBLISH_TOKEN`, logs in with a pinned Docker action, and then
+passes only the resulting `DOCKER_CONFIG` to trusted publish code.
+`DOCKERHUB_DELETE_TOKEN` is the cleanup token and must have Docker Hub tag
+delete/admin permission. Keeping publish and delete credentials separate
+prevents normal publish credentials from silently passing preflight and then
+failing during cleanup.
 
 `release-due` means there are commits since the latest formal release tag.
 `publish-missing` means expected Docker Hub or GHCR tags are absent or
