@@ -3060,8 +3060,14 @@ def _publish_github_prerelease(
     version = _component_release_version(repo, component=component)
     tag = f"{str(config.get('release_tag_prefix', '') or '')}{version}"
     release_package_tag = component_registry_release_tag(repo, component)
+    normalized_version = version[1:] if version.startswith("v") else version
+    normalized_release_package_tag = (
+        release_package_tag[1:]
+        if release_package_tag.startswith("v")
+        else release_package_tag
+    )
     if str(config.get("registry_revision_arg", "") or "").strip() and (
-        release_package_tag != version
+        normalized_release_package_tag != normalized_version
     ):
         print(
             f"{repo.name}:{component}: release changelog version {version} does "
