@@ -431,6 +431,8 @@ def test_changed_paths_since_rejects_untrusted_option_like_ref(tmp_path: Path) -
     repo_path = tmp_path / "safe-repo"
     repo_path.mkdir()
     _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
     _git(repo_path, "config", "user.email", "tests@example.invalid")
     _git(repo_path, "config", "user.name", "Tests")
     (repo_path / "tracked.txt").write_text("one\n")
@@ -616,6 +618,69 @@ def test_release_plan_ignores_manifest_only_component_commit(
 
     assert plan["release_due"] is False  # nosec B101
     assert plan["state"] == "current"  # nosec B101
+
+
+def test_release_plan_warns_instead_of_due_for_tagless_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=0.7.0-hotfix.3\n")
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.md").write_text("## 0.7.0-hotfix.3-aio.2\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.0-hotfix.3-aio.2")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    (repo_path / ".aio-fleet.yml").write_text("schema_version: 1\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile app manifest")
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={"non_release_paths": [".aio-fleet.yml"]},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo, **_kwargs: {
+            "state": "ok",
+            "tag": "0.7.0-hotfix.3-aio.2",
+            "target_commitish": release_sha,
+        },
+    )
+    monkeypatch.setattr(release_plan_module, "_safe_latest_aio_tag", lambda _repo: "")
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_next_aio",
+        lambda _repo: "0.7.0-hotfix.3-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module, "_safe_has_aio_changes", lambda _repo: True
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "watch"  # nosec B101
+    assert plan["warnings"] == [  # nosec B101
+        "release tag 0.7.0-hotfix.3-aio.2 is missing locally; "
+        "fetch tags before trusting release due"
+    ]
 
 
 def test_release_plan_outputs_component_specific_alpha_publish_action(
