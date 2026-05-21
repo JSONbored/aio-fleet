@@ -197,7 +197,7 @@ def test_run_local_trunk_overlay_cleans_temporary_config(
     assert not (repo_path / ".trunk").exists()  # nosec B101
 
 
-def test_run_local_trunk_overlay_uses_central_config_when_trunk_dir_exists(
+def test_run_local_trunk_overlay_uses_central_config_when_repo_trunk_exists(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest, repo_path = _write_minimal_manifest(tmp_path)
@@ -205,13 +205,18 @@ def test_run_local_trunk_overlay_uses_central_config_when_trunk_dir_exists(
     repo_trunk.mkdir()
     existing = repo_trunk / "runtime-state"
     existing.write_text("keep\n")
+    attacker_config = repo_trunk / "trunk.yaml"
+    attacker_config.write_text("attacker-owned\n")
     fake_trunk = tmp_path / "trunk"
     fake_trunk.write_text(
         f"#!{sys.executable}\n"
         "from pathlib import Path\n"
         "import sys\n"
-        "if not Path('.trunk/trunk.yaml').exists():\n"
-        "    sys.exit(2)\n"
+        "config = Path('.trunk/trunk.yaml').read_text()\n"
+        "if 'attacker-owned' in config:\n"
+        "    sys.exit(5)\n"
+        "if 'version: 0.1' not in config:\n"
+        "    sys.exit(6)\n"
         "Path('.trunk/out').mkdir(parents=True, exist_ok=True)\n"
         "Path('.trunk/out/generated').write_text('scratch')\n"
     )
@@ -222,7 +227,7 @@ def test_run_local_trunk_overlay_uses_central_config_when_trunk_dir_exists(
 
     assert result.returncode == 0  # nosec B101
     assert existing.read_text() == "keep\n"  # nosec B101
-    assert not (repo_trunk / "trunk.yaml").exists()  # nosec B101
+    assert attacker_config.read_text() == "attacker-owned\n"  # nosec B101
     assert not (repo_trunk / "out" / "generated").exists()  # nosec B101
 
 

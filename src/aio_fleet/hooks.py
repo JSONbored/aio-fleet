@@ -34,14 +34,12 @@ def run_local_trunk_overlay(
     created_overlay = False
     backup_trunk: Path | None = None
     try:
-        if not repo_trunk.exists():
-            created_overlay = True
-            copy_trunk_overlay(central_trunk, repo_trunk)
-        elif not (repo_trunk / "trunk.yaml").exists():
+        if repo_trunk.exists():
             backup_trunk = _temporary_trunk_backup_path(repo.path)
             repo_trunk.rename(backup_trunk)
-            created_overlay = True
-            copy_trunk_overlay(central_trunk, repo_trunk)
+
+        created_overlay = True
+        copy_trunk_overlay(central_trunk, repo_trunk)
 
         command = [
             trunk,
