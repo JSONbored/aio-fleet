@@ -546,12 +546,29 @@ def _read_component_arg(repo: RepoConfig, component: str, arg_name: str) -> str:
 
 def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     config = component_config(repo, component)
+    release_suffix = str(config.get("release_suffix", "aio"))
     if str(config.get("release_policy", "")).strip() == "registry_only":
-        return component_registry_release_tag(repo, component)
+        release_package_tag = component_registry_release_tag(repo, component)
+        if not release_package_tag:
+            return ""
+        try:
+            release_target_commit = find_release_target_commit(
+                repo.path, release_package_tag
+            )
+        except (Exception, SystemExit):
+            release_target_commit = ""
+        if not _release_tag_sha_allowed(
+            repo,
+            release_target_commit,
+            sha,
+            component=component,
+            release_suffix=release_suffix,
+        ):
+            return ""
+        return release_package_tag
     upstream_version = _read_component_upstream_version(repo, component)
     if not upstream_version:
         return ""
-    release_suffix = str(config.get("release_suffix", "aio"))
     changelog_path = repo.path / "CHANGELOG.md"
     try:
         if repo.publish_profile == "changelog-version":
