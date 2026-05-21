@@ -590,16 +590,19 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     ):
         return ""
 
+    optional_v = "v?" if not upstream_version.startswith("v") else ""
     match = re.match(
-        rf"^{re.escape(upstream_version)}-{re.escape(release_suffix)}\.(\d+)$",
+        rf"^(?P<vprefix>{optional_v}){re.escape(upstream_version)}-"
+        rf"{re.escape(release_suffix)}\.(\d+)$",
         changelog_version,
     )
     if not match:
         return changelog_version if repo.publish_profile == "changelog-version" else ""
 
-    revision = match.group(1)
+    revision = match.group(2)
+    version_prefix = match.group("vprefix")
     if repo.publish_profile == "upstream-aio-track":
-        return f"{upstream_version}-{release_suffix}.{revision}"
+        return f"{version_prefix}{upstream_version}-{release_suffix}.{revision}"
     return changelog_version
 
 

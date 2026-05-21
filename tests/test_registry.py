@@ -88,6 +88,29 @@ def test_upstream_aio_track_release_tag_matches_changelog(monkeypatch) -> None:
     assert "ghcr.io/jsonbored/sure-aio:0.7.0-aio.1" in tags.ghcr  # nosec B101
 
 
+def test_upstream_aio_track_release_tag_allows_existing_v_prefix(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "2.15.3"
+    )
+    monkeypatch.setattr(
+        registry,
+        "latest_component_changelog_version",
+        lambda *_args, **_kwargs: "v2.15.3-aio.2",
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: sha
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha)
+
+    assert tags.release_package_tag == "v2.15.3-aio.2"  # nosec B101
+    assert "jsonbored/sure-aio:v2.15.3-aio.2" in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/sure-aio:v2.15.3-aio.2" in tags.ghcr  # nosec B101
+
+
 def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
     release_sha = "c" * 40
