@@ -57,10 +57,9 @@ contexts should be pinned to app ID `3287076`.
 ## unraid-aio-template
 
 Require the same logical gates as app repos: `aio-fleet / required`, `Security
-scan`, and `Contributor trust`. The repo is private, so branch protection may
-remain manually enforced when the GitHub plan/API cannot expose private branch
-protection. Keep the expected check map in `infra/github/github-policy.yml` so
-the drift is visible instead of implicit.
+scan`, and `Contributor trust`. The repo is public and should use the same
+managed branch-protection/ruleset posture as active app repos so new AIO repos
+start from a protected bootstrap baseline.
 
 ## Selected Actions
 

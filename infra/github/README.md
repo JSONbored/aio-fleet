@@ -26,6 +26,7 @@ tofu plan -var-file=repos.tfvars
 
 - `aio-fleet`
 - `awesome-unraid`
+- `unraid-aio-template`
 - `sure-aio`
 - `simplelogin-aio`
 - `khoj-aio`
@@ -37,9 +38,8 @@ tofu plan -var-file=repos.tfvars
 - `nanoclaw-aio`
 
 Run `tofu plan` once after `tofu init`; OpenTofu will adopt those resources into
-local state. The private `unraid-aio-template` repo is tracked in
-`github-policy.yml` for standards visibility, but its branch protection remains
-manual while the GitHub plan/API refuses private branch-protection inspection.
+local state. `unraid-aio-template` is public and managed with the same branch
+protection and required-check posture as the active app repos.
 
 ## Managed State
 

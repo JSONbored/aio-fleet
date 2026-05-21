@@ -66,6 +66,33 @@ repositories = {
     ]
   }
 
+  "unraid-aio-template" = {
+    description  = "Repo template for all future Unraid CA app templates."
+    homepage_url = ""
+    topics = [
+      "aio",
+      "docker",
+      "homelab",
+      "self-hosted",
+      "template",
+      "unraid",
+      "unraid-community-apps",
+      "unraid-docker-template",
+      "unraid-template",
+      "unraid-templates",
+    ]
+    required_checks = [
+      "aio-fleet / required",
+      "Security scan",
+      "Contributor trust",
+    ]
+    required_check_app_id = 3565017
+    required_check_app_ids = {
+      "Security scan"     = 3287076
+      "Contributor trust" = 3287076
+    }
+  }
+
   "sure-aio" = {
     description = "The absolute easiest way to deploy Sure (Maybe Finance fork) on Unraid. A 100% self-contained mega-container with automated PostgreSQL, Redis, Rails, and Sidekiq orchestration. No external databases required."
     topics = [
