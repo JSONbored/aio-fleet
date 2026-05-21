@@ -3166,14 +3166,24 @@ repos:
 
     monkeypatch.setattr(cli, "_run", fake_run)
     monkeypatch.setenv("APP_TOKEN", "app")
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
     monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
+    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub")
+    monkeypatch.setenv("CUSTOM_WEBHOOK_URL", "webhook")
+    monkeypatch.setenv("SAFE_TEST_FLAG", "present")
     monkeypatch.setenv("GH_TOKEN", "gh")
     monkeypatch.setenv("GITHUB_TOKEN", "github")
 
     cli._run_generator_for_write(load_manifest(manifest).repo("example-aio"))
 
+    assert observed.get("SAFE_TEST_FLAG") == "present"  # nosec B101
     assert "APP_TOKEN" not in observed  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in observed  # nosec B101
+    assert "AIO_FLEET_APP_PRIVATE_KEY" not in observed  # nosec B101
+    assert "DOCKERHUB_TOKEN" not in observed  # nosec B101
+    assert "CUSTOM_WEBHOOK_URL" not in observed  # nosec B101
     assert "GH_TOKEN" not in observed  # nosec B101
     assert "GITHUB_TOKEN" not in observed  # nosec B101
 

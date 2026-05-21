@@ -194,3 +194,78 @@ repos:
     rows = {row["component"] for row in report["repos"]}
     assert "aio" in rows  # nosec B101
     assert "sure-alpha" in rows  # nosec B101
+
+
+def test_upstream_monitor_checkouts_sanitizes_subprocess_tokens(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "fleet.yml"
+    checkout_root = tmp_path / "checkouts"
+    output = tmp_path / "upstream-report.json"
+    manifest.write_text("""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: /tmp/sure-aio
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio
+    pytest_image_tag: sure-aio:pytest
+""")
+
+    def fake_checkout_refs(refs, *, token: str, submodules: str):
+        results = []
+        for name, github_repo, path in refs:
+            path.mkdir(parents=True)
+            results.append(
+                {"repo": name, "github_repo": github_repo, "path": str(path)}
+            )
+        return results
+
+    observed_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        assert args[:3] == [
+            workflow_jobs.sys.executable,
+            "-m",
+            "aio_fleet",
+        ]  # nosec B101
+        env = kwargs.get("env")
+        assert isinstance(env, dict)  # nosec B101
+        observed_env.update(env)
+        return subprocess.CompletedProcess(
+            args, 0, json.dumps({"repos": [{"repo": "sure-aio", "results": []}]}), ""
+        )
+
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
+    monkeypatch.setenv("AIO_FLEET_WORKFLOW_TOKEN", "workflow")
+    monkeypatch.setenv("AIO_FLEET_CHECK_TOKEN", "check")
+    monkeypatch.setenv("AIO_FLEET_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "dockerhub")
+    monkeypatch.setenv("CUSTOM_WEBHOOK_URL", "webhook")
+    monkeypatch.setenv("SAFE_TEST_KEY", "present")
+    monkeypatch.setenv("APP_TOKEN", "app")
+    monkeypatch.setenv("GH_TOKEN", "gh")
+    monkeypatch.setenv("GITHUB_TOKEN", "github")
+
+    report = workflow_jobs.upstream_monitor_checkouts(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_path=output,
+        token="token",  # nosec B106
+        mutate=False,
+        dry_run=False,
+    )
+
+    assert report["status"] == 0  # nosec B101
+    assert observed_env.get("SAFE_TEST_KEY") == "present"  # nosec B101
+    assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed_env  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in observed_env  # nosec B101
+    assert "AIO_FLEET_APP_PRIVATE_KEY" not in observed_env  # nosec B101
+    assert "DOCKERHUB_TOKEN" not in observed_env  # nosec B101
+    assert "CUSTOM_WEBHOOK_URL" not in observed_env  # nosec B101
+    assert "APP_TOKEN" not in observed_env  # nosec B101
+    assert "GH_TOKEN" not in observed_env  # nosec B101
+    assert "GITHUB_TOKEN" not in observed_env  # nosec B101
