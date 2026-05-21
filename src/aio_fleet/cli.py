@@ -1249,6 +1249,18 @@ def cmd_fleet_report_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_control_check(args: argparse.Namespace) -> int:
+    if args.validation_only and args.publish_only:
+        print(
+            "--validation-only and --publish-only cannot be combined",
+            file=sys.stderr,
+        )
+        return 1
+    if (args.validation_only or args.publish_only) and not args.publish:
+        print(
+            "--validation-only and --publish-only require --publish",
+            file=sys.stderr,
+        )
+        return 1
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
@@ -1262,6 +1274,8 @@ def cmd_control_check(args: argparse.Namespace) -> int:
         include_trunk=not args.no_trunk,
         include_integration=not args.no_integration,
         include_github_prereleases=not args.no_github_prereleases,
+        include_app_checks=not args.publish_only,
+        include_publish_steps=args.publish and not args.validation_only,
     )
     if args.check_run:
         status = "completed" if args.dry_run else "in_progress"
@@ -1566,6 +1580,29 @@ def cmd_registry_preflight(args: argparse.Namespace) -> int:
 
 
 def _registry_publish_preflight_checks(*, live_auth: bool) -> list[dict[str, str]]:
+    if os.environ.get("AIO_FLEET_REGISTRY_AUTH_MODE", "") == "preauthenticated":
+        docker_config = os.environ.get("DOCKER_CONFIG", "")
+        missing = [] if docker_config else ["DOCKER_CONFIG"]
+        return [
+            _preflight_check(
+                "publish-credentials",
+                "failed" if missing else "ok",
+                (
+                    "missing " + ", ".join(missing)
+                    if missing
+                    else "preauthenticated Docker config is present"
+                ),
+            ),
+            _preflight_check(
+                "dockerhub-publish-auth",
+                "skipped" if not missing else "failed",
+                (
+                    "Docker Hub auth handled by the publish environment"
+                    if not missing
+                    else "preauthenticated Docker config is required"
+                ),
+            ),
+        ]
     username = os.environ.get("DOCKERHUB_USERNAME", "")
     dockerhub_token = os.environ.get("DOCKERHUB_TOKEN", "")
     ghcr_token = os.environ.get("AIO_FLEET_GHCR_TOKEN", "")
@@ -1851,6 +1888,28 @@ def _registry_tag_digest(tag: str, *, env: dict[str, str] | None) -> str:
 
 @contextmanager
 def _registry_publish_environment(repo: RepoConfig) -> Iterator[dict[str, str] | None]:
+    preauthenticated = os.environ.get("AIO_FLEET_REGISTRY_AUTH_MODE", "")
+    if preauthenticated == "preauthenticated":
+        docker_config = os.environ.get("DOCKER_CONFIG", "")
+        if not docker_config:
+            raise RuntimeError(
+                "preauthenticated registry publish requires DOCKER_CONFIG"
+            )
+        publish_env = {
+            key: value
+            for key, value in os.environ.items()
+            if not _secret_environment_key(key)
+        }
+        publish_env["DOCKER_CONFIG"] = docker_config
+        builder_name = f"aio-fleet-{repo.name}-{uuid.uuid4().hex[:12]}"
+        try:
+            _create_buildx_builder(builder_name, env=publish_env)
+            publish_env["BUILDX_BUILDER"] = builder_name
+            yield publish_env
+        finally:
+            _remove_buildx_builder(builder_name, env=publish_env)
+        return
+
     dockerhub_username = os.environ.get("DOCKERHUB_USERNAME", "")
     dockerhub_token = os.environ.get("DOCKERHUB_TOKEN", "")
     ghcr_token = os.environ.get("AIO_FLEET_GHCR_TOKEN", "")
@@ -4995,6 +5054,16 @@ def build_parser() -> argparse.ArgumentParser:
     control.add_argument("--no-trunk", action="store_true")
     control.add_argument("--no-integration", action="store_true")
     control.add_argument("--no-github-prereleases", action="store_true")
+    control.add_argument(
+        "--validation-only",
+        action="store_true",
+        help="Run app validation with publish-context checks but skip publish steps.",
+    )
+    control.add_argument(
+        "--publish-only",
+        action="store_true",
+        help="Run trusted publish steps after app validation has already passed.",
+    )
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
     control.add_argument("--report-json")

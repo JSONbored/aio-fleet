@@ -2195,9 +2195,7 @@ def test_registry_publish_skips_when_tags_are_current(
         ),
     )
     monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, **_kwargs: [])
-    monkeypatch.setattr(
-        cli, "_registry_tags_match_sha_digest", lambda _tags: True
-    )
+    monkeypatch.setattr(cli, "_registry_tags_match_sha_digest", lambda _tags: True)
 
     result = cmd_registry_publish(
         Namespace(
@@ -2487,6 +2485,40 @@ def test_registry_preflight_checks_live_dockerhub_auth(
     assert "dockerhub-publish-auth: ok" in capsys.readouterr().out  # nosec B101
 
 
+def test_registry_preflight_accepts_preauthenticated_docker_config(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    docker_config = tmp_path / "docker-config"
+    docker_config.mkdir()
+    monkeypatch.setenv("AIO_FLEET_REGISTRY_AUTH_MODE", "preauthenticated")
+    monkeypatch.setenv("DOCKER_CONFIG", str(docker_config))
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AIO_FLEET_GHCR_TOKEN", raising=False)
+
+    result = cmd_registry_preflight(
+        Namespace(
+            manifest=str(manifest),
+            mode=["publish"],
+            repo=None,
+            repo_path=None,
+            component="aio",
+            image=None,
+            live_auth=True,
+            check_delete_scope=False,
+            allow_publish_token_delete_fallback=False,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "ok"  # nosec B101
+    assert report["checks"][0]["detail"] == (  # nosec B101
+        "preauthenticated Docker config is present"
+    )
+
+
 def test_registry_preflight_cleanup_requires_delete_token(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -2677,6 +2709,66 @@ def test_registry_publish_logs_in_with_temporary_scrubbed_docker_config(
     ]
     assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
     assert seen["verify_env"] == seen["publish_env"]  # nosec B101
+
+
+def test_registry_publish_can_use_preauthenticated_docker_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    docker_config = tmp_path / "docker-config"
+    docker_config.mkdir()
+    seen: dict[str, object] = {"buildx_commands": []}
+
+    def fake_docker(command: list[str], **kwargs: object):
+        assert command[:2] != ["docker", "login"]  # nosec B101
+        docker_env = kwargs["env"]
+        assert isinstance(docker_env, dict)  # nosec B101
+        assert docker_env["DOCKER_CONFIG"] == str(docker_config)  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in docker_env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in docker_env  # nosec B101
+        if command[:2] == ["docker", "buildx"]:
+            seen["buildx_commands"].append(command)  # type: ignore[union-attr]
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(f"unexpected docker command: {command}")
+
+    def fake_publish(command: list[str], cwd: Path | None = None, env=None):
+        seen["publish_command"] = command
+        seen["publish_cwd"] = cwd
+        seen["publish_env"] = env
+        assert isinstance(env, dict)  # nosec B101
+        assert env["DOCKER_CONFIG"] == str(docker_config)  # nosec B101
+        assert "DOCKERHUB_TOKEN" not in env  # nosec B101
+        assert "AIO_FLEET_GHCR_TOKEN" not in env  # nosec B101
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("AIO_FLEET_REGISTRY_AUTH_MODE", "preauthenticated")
+    monkeypatch.setenv("DOCKER_CONFIG", str(docker_config))
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "hub-token")
+    monkeypatch.setenv("AIO_FLEET_GHCR_TOKEN", "ghcr-token")
+    monkeypatch.setattr(cli.subprocess, "run", fake_docker)
+    monkeypatch.setattr(cli, "_run_streaming", fake_publish)
+    monkeypatch.setattr(cli, "verify_registry_tags", lambda _tags, *, env=None: [])
+
+    result = cmd_registry_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            repo_path=str(repo_path),
+            sha="a" * 40,
+            component="aio",
+            dry_run=False,
+            force=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    buildx_commands = seen["buildx_commands"]
+    assert [command[:3] for command in buildx_commands] == [  # nosec B101
+        ["docker", "buildx", "create"],
+        ["docker", "buildx", "inspect"],
+        ["docker", "buildx", "rm"],
+    ]
+    assert seen["publish_cwd"] == repo_path.resolve()  # nosec B101
 
 
 def test_registry_verify_all_skips_manual_template_publish(
