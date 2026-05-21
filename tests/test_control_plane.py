@@ -210,6 +210,25 @@ def test_central_check_steps_can_target_alpha_component_publish() -> None:
     assert release.stream_output is False  # nosec B101
 
 
+def test_signoz_agent_pytest_build_uses_component_context() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+
+    steps = central_check_steps(
+        repo,
+        event="push",
+        publish=True,
+        publish_component_names=["agent"],
+    )
+
+    names = [step.name for step in steps]
+    build = steps[names.index("build-pytest-image-agent")]
+    assert (  # nosec B101
+        build.command[build.command.index("-f") + 1]
+        == "components/signoz-agent/Dockerfile"
+    )
+    assert build.command[-1] == "components/signoz-agent"  # nosec B101
+
+
 def test_central_check_steps_can_skip_integration_for_poll_runs() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
 
