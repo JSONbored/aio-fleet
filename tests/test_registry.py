@@ -7,7 +7,7 @@ from urllib.error import HTTPError
 
 from aio_fleet import registry
 from aio_fleet.control_plane import registry_publish_command
-from aio_fleet.manifest import load_manifest
+from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -281,6 +281,9 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
         lambda *_args, **_kwargs: "0.7.1-alpha.7",
     )
     monkeypatch.setattr(registry, "_read_component_arg", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: sha
+    )
 
     tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
 
@@ -293,6 +296,71 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
         "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1",
     ]
+
+
+def test_registry_only_component_release_tag_requires_allowed_sha(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    sha = "a" * 40
+
+    monkeypatch.setattr(
+        registry,
+        "_read_component_upstream_version",
+        lambda *_args, **_kwargs: "0.7.1-alpha.7",
+    )
+    monkeypatch.setattr(registry, "_read_component_arg", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: "b" * 40
+    )
+    monkeypatch.setattr(
+        registry, "_release_tag_sha_allowed", lambda *_args, **_kwargs: False
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/sure-aio-alpha:latest-alpha" not in tags.dockerhub  # nosec B101
+    assert (
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" not in tags.dockerhub
+    )  # nosec B101
+    assert (
+        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha" not in tags.ghcr
+    )  # nosec B101
+    assert (
+        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" not in tags.ghcr
+    )  # nosec B101
+
+
+def test_registry_only_component_omits_upstream_tag_when_release_sha_denied(
+    monkeypatch,
+) -> None:
+    base = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    raw = dict(base.raw)
+    components = dict(raw["components"])
+    sure_alpha = dict(components["sure-alpha"])
+    sure_alpha["include_upstream_version_tag"] = True
+    components["sure-alpha"] = sure_alpha
+    raw["components"] = components
+    repo = RepoConfig(name=base.name, raw=raw, defaults=base.defaults, owner=base.owner)
+    sha = "a" * 40
+
+    monkeypatch.setattr(
+        registry,
+        "_read_component_upstream_version",
+        lambda *_args, **_kwargs: "0.7.1-alpha.7",
+    )
+    monkeypatch.setattr(registry, "_read_component_arg", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(
+        registry, "_release_tag_sha_allowed", lambda *_args, **_kwargs: False
+    )
+
+    tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/sure-aio-alpha:latest-alpha" not in tags.dockerhub  # nosec B101
+    assert "jsonbored/sure-aio-alpha:0.7.1-alpha.7" not in tags.dockerhub  # nosec B101
+    assert (
+        "jsonbored/sure-aio-alpha:0.7.1-alpha.7-aio.1" not in tags.dockerhub
+    )  # nosec B101
 
 
 def test_sure_alpha_and_stable_tags_are_disjoint(monkeypatch) -> None:
