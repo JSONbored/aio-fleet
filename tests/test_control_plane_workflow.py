@@ -6,6 +6,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "control-plane.yml"
+PUBLISH_ACTION = ROOT / ".github" / "actions" / "publish-registry-images" / "action.yml"
 SECRET_ENV_KEYS = {
     "AIO_FLEET_APP_ID",
     "AIO_FLEET_APP_INSTALLATION_ID",
@@ -35,14 +36,20 @@ REGISTRY_PUBLISH_ENV_KEYS = {
 def test_poll_checks_job_does_not_export_secrets_to_app_code_step() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     poll_checks = workflow["jobs"]["poll-checks"]
+    publish_job = workflow["jobs"]["poll-registry-publish"]
 
     assert not SECRET_ENV_KEYS.intersection(poll_checks.get("env", {}))  # nosec B101
 
     run_step = _step(poll_checks, "Run central control check")
+    publish_step = _step(publish_job, "Publish registry images")
     assert run_step.get("continue-on-error") is True  # nosec B101
-    assert not APP_CODE_SECRET_ENV_KEYS.intersection(  # nosec B101
+    assert not APP_CODE_SECRET_ENV_KEYS.intersection(
         run_step.get("env", {})
-    )
+    )  # nosec B101
+    assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(
+        run_step.get("env", {})
+    )  # nosec B101
+    assert REGISTRY_PUBLISH_ENV_KEYS.issubset(publish_step.get("env", {}))  # nosec B101
     assert "--check-run" not in run_step["run"]  # nosec B101
 
 
@@ -182,7 +189,7 @@ def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
         "${{ secrets.DOCKERHUB_USERNAME }}"
     )
     assert cleanup["env"]["DOCKERHUB_DELETE_TOKEN"] == (  # nosec B101
-        "${{ secrets.DOCKERHUB_DELETE_TOKEN }}"
+        "${{ !inputs.dry_run && secrets.DOCKERHUB_DELETE_TOKEN || '' }}"
     )
     assert "registry preflight" in cleanup["run"]  # nosec B101
     assert "--repo" in cleanup["run"]  # nosec B101
@@ -197,7 +204,12 @@ def test_dockerhub_tag_cleanup_mode_is_guarded() -> None:
 def test_app_code_checkouts_do_not_persist_credentials() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    for job_name in ("control-plane", "poll-checks"):
+    for job_name in (
+        "control-plane",
+        "poll-checks",
+        "manual-registry-publish",
+        "poll-registry-publish",
+    ):
         job = workflow["jobs"][job_name]
         checkout = _step(job, "Checkout app repo")
 
@@ -209,6 +221,10 @@ def test_app_code_checkouts_disable_submodules_for_pull_requests() -> None:
 
     manual = _step(workflow["jobs"]["control-plane"], "Checkout app repo")
     poll = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
+    manual_publish = _step(
+        workflow["jobs"]["manual-registry-publish"], "Checkout app repo"
+    )
+    poll_publish = _step(workflow["jobs"]["poll-registry-publish"], "Checkout app repo")
 
     assert "checkout_submodules" in manual["with"]["submodules"]  # nosec B101
     assert (
@@ -218,37 +234,118 @@ def test_app_code_checkouts_disable_submodules_for_pull_requests() -> None:
     assert (
         "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
     )  # nosec B101
+    assert "checkout_submodules" in manual_publish["with"]["submodules"]  # nosec B101
+    assert (
+        "inputs.event != 'pull_request'" in manual_publish["with"]["submodules"]
+    )  # nosec B101
+    assert "checkout_submodules" in poll_publish["with"]["submodules"]  # nosec B101
+    assert (
+        "matrix.target.event != 'pull_request'" in poll_publish["with"]["submodules"]
+    )  # nosec B101
 
 
 def test_control_check_steps_gate_publish_explicitly() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     manual = _step(workflow["jobs"]["control-plane"], "Run central control check")
-    manual_preflight = _step(
-        workflow["jobs"]["control-plane"], "Validate publish credentials"
-    )
+    manual_publish_job = workflow["jobs"]["manual-registry-publish"]
+    manual_publish = _step(manual_publish_job, "Publish registry images")
+    manual_preflight = _step(manual_publish_job, "Validate publish credentials")
     poll = _step(workflow["jobs"]["poll-checks"], "Run central control check")
-    poll_preflight = _step(
-        workflow["jobs"]["poll-checks"], "Validate publish credentials"
-    )
+    poll_publish_job = workflow["jobs"]["poll-registry-publish"]
+    poll_publish = _step(poll_publish_job, "Publish registry images")
+    poll_preflight = _step(poll_publish_job, "Validate publish credentials")
 
     assert "registry preflight --mode publish" in manual_preflight["run"]  # nosec B101
     assert 'if [[ "${PUBLISH}" == "true" ]]' in manual["run"]  # nosec B101
-    assert "args+=(--publish --no-github-prereleases)" in manual["run"]  # nosec B101
+    assert (  # nosec B101
+        "args+=(--publish --validation-only --no-github-prereleases)" in manual["run"]
+    )
+    assert (
+        manual_publish["uses"] == "./.github/actions/publish-registry-images"
+    )  # nosec B101
+    assert (
+        "steps.registry-preflight.outcome == 'success'" in manual_publish["if"]
+    )  # nosec B101
+    assert manual_publish["with"]["publish-component"] == (  # nosec B101
+        "${{ inputs.publish_component }}"
+    )
+    assert REGISTRY_PUBLISH_ENV_KEYS.issubset(manual_publish["env"])  # nosec B101
+    assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(manual["env"])  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in manual["env"]  # nosec B101
     assert "--report-json" in manual["run"]  # nosec B101
     assert "registry preflight --mode publish" in poll_preflight["run"]  # nosec B101
     assert 'if [[ "${TARGET_PUBLISH}" == "true" ]]' in poll["run"]  # nosec B101
-    assert "args+=(--publish --no-github-prereleases)" in poll["run"]  # nosec B101
+    assert (  # nosec B101
+        "args+=(--publish --validation-only --no-github-prereleases)" in poll["run"]
+    )
+    assert (
+        poll_publish["uses"] == "./.github/actions/publish-registry-images"
+    )  # nosec B101
+    assert (
+        "steps.registry-preflight.outcome == 'success'" in poll_publish["if"]
+    )  # nosec B101
+    assert poll_publish["with"]["publish-components-json"] == (  # nosec B101
+        "${{ toJSON(matrix.target.publish_components) }}"
+    )
+    assert REGISTRY_PUBLISH_ENV_KEYS.issubset(poll_publish["env"])  # nosec B101
+    assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(poll["env"])  # nosec B101
+    assert "--publish-only" in PUBLISH_ACTION.read_text()  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in poll["env"]  # nosec B101
     assert "--report-json" in poll["run"]  # nosec B101
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
 
 
+def test_registry_publish_uses_protected_environment_and_short_lived_ghcr_token() -> (
+    None
+):
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    permissions = workflow["permissions"]
+    manual_job = workflow["jobs"]["manual-registry-publish"]
+    poll_job = workflow["jobs"]["poll-registry-publish"]
+    manual_preflight = _step(manual_job, "Validate publish credentials")
+    manual_publish = _step(manual_job, "Publish registry images")
+    poll_preflight = _step(poll_job, "Validate publish credentials")
+    poll_publish = _step(poll_job, "Publish registry images")
+
+    assert "packages" not in permissions  # nosec B101
+    assert manual_job["permissions"]["packages"] == "write"  # nosec B101
+    assert poll_job["permissions"]["packages"] == "write"  # nosec B101
+    assert manual_job["environment"] == "registry-publish"  # nosec B101
+    assert poll_job["environment"] == "registry-publish"  # nosec B101
+    assert (
+        "needs.control-plane.outputs.manual_control_check_outcome == 'success'"
+        in manual_job["if"]
+    )  # nosec B101
+    assert (
+        "needs.control-plane.outputs.poll_has_publish_targets == 'true'"
+        in poll_job["if"]
+    )  # nosec B101
+    assert "needs.poll-checks.result == 'success'" in poll_job["if"]  # nosec B101
+    assert (
+        _step(poll_job, "Validate app control report").get(  # nosec B101
+            "continue-on-error"
+        )
+        is True
+    )
+
+    for step in (manual_preflight, manual_publish, poll_preflight, poll_publish):
+        assert step["env"]["AIO_FLEET_GHCR_TOKEN"] == (  # nosec B101
+            "${{ github.token }}"
+        )
+        assert step["env"]["DOCKERHUB_TOKEN"] == (  # nosec B101
+            "${{ secrets.DOCKERHUB_PUBLISH_TOKEN }}"
+        )
+
+    for job in (manual_job, poll_job):
+        setup = _step(job, "Set up Python")
+        assert "cache" not in setup["with"]  # nosec B101
+
+
 def test_publish_preflight_runs_before_docker_setup_and_writes_artifact() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    for job_name in ("control-plane", "poll-checks"):
+    for job_name in ("manual-registry-publish", "poll-registry-publish"):
         job = workflow["jobs"][job_name]
         names = [step["name"] for step in job["steps"]]
         preflight = _step(job, "Validate publish credentials")
@@ -323,6 +420,12 @@ def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> No
 
     control = _step(workflow["jobs"]["control-plane"], "Upload control-plane artifacts")
     poll = _step(workflow["jobs"]["poll-checks"], "Upload poll-check artifacts")
+    manual_publish = _step(
+        workflow["jobs"]["manual-registry-publish"], "Upload manual publish artifacts"
+    )
+    poll_publish = _step(
+        workflow["jobs"]["poll-registry-publish"], "Upload poll publish artifacts"
+    )
     release_plan = _step(
         workflow["jobs"]["control-plane"], "Generate release plan report"
     )
@@ -337,8 +440,14 @@ def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> No
     assert "fleet-dashboard-report.json" in control["with"]["path"]  # nosec B101
     assert "release-plan-report.json" in control["with"]["path"]  # nosec B101
     assert "release-transaction-report.json" in control["with"]["path"]  # nosec B101
-    assert "registry-preflight-report.json" in control["with"]["path"]  # nosec B101
-    assert "registry-preflight-report.json" in poll["with"]["path"]  # nosec B101
+    assert "registry-preflight-report.json" not in control["with"]["path"]  # nosec B101
+    assert "registry-preflight-report.json" not in poll["with"]["path"]  # nosec B101
+    assert (
+        "registry-preflight-report.json" in manual_publish["with"]["path"]
+    )  # nosec B101
+    assert (
+        "registry-preflight-report.json" in poll_publish["with"]["path"]
+    )  # nosec B101
     assert "central-control-check.log" not in control["with"]["path"]  # nosec B101
     assert "central-control-check.log" not in poll["with"]["path"]  # nosec B101
 
@@ -365,20 +474,22 @@ def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
 
     manual_run = _step(workflow["jobs"]["control-plane"], "Run central control check")
     manual_release = _step(
-        workflow["jobs"]["control-plane"], "Publish GitHub prereleases"
+        workflow["jobs"]["manual-registry-publish"], "Publish GitHub prereleases"
     )
     poll_run = _step(workflow["jobs"]["poll-checks"], "Run central control check")
-    poll_release = _step(workflow["jobs"]["poll-checks"], "Publish GitHub prereleases")
+    poll_release = _step(
+        workflow["jobs"]["poll-registry-publish"], "Publish GitHub prereleases"
+    )
 
     assert "AIO_FLEET_RELEASE_TOKEN" not in manual_run.get("env", {})  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" not in poll_run.get("env", {})  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" in manual_release["env"]  # nosec B101
     assert "AIO_FLEET_RELEASE_TOKEN" in poll_release["env"]  # nosec B101
     assert (
-        "steps.central-control-check.outcome == 'success'" in manual_release["if"]
+        "steps.registry-publish.outcome == 'success'" in manual_release["if"]
     )  # nosec B101
     assert (
-        "steps.poll-central-control-check.outcome == 'success'" in poll_release["if"]
+        "steps.poll-registry-publish.outcome == 'success'" in poll_release["if"]
     )  # nosec B101
     assert "publish-github-prereleases" in manual_release["run"]  # nosec B101
     assert "publish-github-prereleases" in poll_release["run"]  # nosec B101
@@ -393,6 +504,7 @@ def test_publish_workflow_concurrency_is_component_and_sha_scoped() -> None:
 
     top_level = workflow["concurrency"]
     poll = workflow["jobs"]["poll-checks"]["concurrency"]
+    poll_publish = workflow["jobs"]["poll-registry-publish"]["concurrency"]
 
     assert top_level["cancel-in-progress"] is False  # nosec B101
     assert "inputs.sha" in top_level["group"]  # nosec B101
@@ -401,13 +513,21 @@ def test_publish_workflow_concurrency_is_component_and_sha_scoped() -> None:
     assert "matrix.target.repo" in poll["group"]  # nosec B101
     assert "matrix.target.sha" in poll["group"]  # nosec B101
     assert "matrix.target.publish_components" in poll["group"]  # nosec B101
+    assert poll_publish["cancel-in-progress"] is False  # nosec B101
+    assert "matrix.target.repo" in poll_publish["group"]  # nosec B101
+    assert "matrix.target.sha" in poll_publish["group"]  # nosec B101
+    assert "matrix.target.publish_components" in poll_publish["group"]  # nosec B101
 
 
 def test_publish_alert_steps_use_report_json_and_alert_secret() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    manual = _step(workflow["jobs"]["control-plane"], "Alert central publish status")
-    poll = _step(workflow["jobs"]["poll-checks"], "Alert poll-check publish status")
+    manual = _step(
+        workflow["jobs"]["manual-registry-publish"], "Alert central publish status"
+    )
+    poll = _step(
+        workflow["jobs"]["poll-registry-publish"], "Alert poll-check publish status"
+    )
 
     for step in (manual, poll):
         assert step["env"]["AIO_FLEET_ALERT_WEBHOOK_URL"] == (  # nosec B101
@@ -428,7 +548,14 @@ def test_registry_credentials_are_not_logged_in_before_app_checks() -> None:
 
         assert "Login to Docker Hub" not in step_names  # nosec B101
         assert "Login to GHCR" not in step_names  # nosec B101
-        assert REGISTRY_PUBLISH_ENV_KEYS.issubset(set(run_check["env"]))  # nosec B101
+        assert "Publish registry images" not in step_names  # nosec B101
+        assert not REGISTRY_PUBLISH_ENV_KEYS.intersection(
+            run_check["env"]
+        )  # nosec B101
+
+    for job_name in ("manual-registry-publish", "poll-registry-publish"):
+        publish = _step(workflow["jobs"][job_name], "Publish registry images")
+        assert REGISTRY_PUBLISH_ENV_KEYS.issubset(set(publish["env"]))  # nosec B101
 
 
 def test_trunk_setup_actions_do_not_receive_job_scoped_secrets() -> None:
@@ -505,15 +632,20 @@ def test_privileged_completion_restores_trusted_checkout_first() -> None:
             "python -m pip install --force-reinstall ." in restore["run"]
         )  # nosec B101
         assert "python -I -m aio_fleet check run" in complete["run"]  # nosec B101
+
+    for job_name in ("manual-registry-publish", "poll-registry-publish"):
+        complete = _step(workflow["jobs"][job_name], "Complete central control check")
+        assert "PUBLISH_OUTCOME" in complete["env"]  # nosec B101
         assert "RELEASE_OUTCOME" in complete["env"]  # nosec B101
+        assert "registry publish failed" in complete["run"]  # nosec B101
         assert "GitHub prerelease publish failed" in complete["run"]  # nosec B101
 
 
 def test_prerelease_publish_resets_app_checkout_to_reviewed_sha() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
-    manual_job = workflow["jobs"]["control-plane"]
-    poll_job = workflow["jobs"]["poll-checks"]
+    manual_job = workflow["jobs"]["manual-registry-publish"]
+    poll_job = workflow["jobs"]["poll-registry-publish"]
 
     manual_reset = _step(manual_job, "Reset app checkout before prerelease publish")
     manual_release = _step(manual_job, "Publish GitHub prereleases")
@@ -521,10 +653,10 @@ def test_prerelease_publish_resets_app_checkout_to_reviewed_sha() -> None:
     poll_release = _step(poll_job, "Publish GitHub prereleases")
 
     assert (
-        "steps.central-control-check.outcome == 'success'" in manual_reset["if"]
+        "steps.registry-preflight.outcome == 'success'" in manual_reset["if"]
     )  # nosec B101
     assert (
-        "steps.poll-central-control-check.outcome == 'success'" in poll_reset["if"]
+        "steps.registry-preflight.outcome == 'success'" in poll_reset["if"]
     )  # nosec B101
     assert (
         'git -C app-repo reset --hard "${TARGET_SHA}"' in manual_reset["run"]

@@ -111,6 +111,42 @@ def test_central_check_steps_for_push_include_integration_trunk_and_publish() ->
     assert trunk.inherit_secrets is False  # nosec B101
 
 
+def test_central_check_steps_validation_only_keeps_publish_context() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    steps = central_check_steps(
+        repo,
+        event="push",
+        publish=True,
+        publish_component_names=["aio"],
+        include_publish_steps=False,
+    )
+
+    names = [step.name for step in steps]
+    assert "build-pytest-image" in names  # nosec B101
+    assert "integration-tests" in names  # nosec B101
+    assert "trunk" in names  # nosec B101
+    assert "registry-publish-preflight" not in names  # nosec B101
+    assert "registry-publish" not in names  # nosec B101
+
+
+def test_central_check_steps_publish_only_skips_app_code() -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+
+    steps = central_check_steps(
+        repo,
+        event="push",
+        publish=True,
+        publish_component_names=["aio"],
+        include_app_checks=False,
+        include_github_prereleases=False,
+    )
+
+    names = [step.name for step in steps]
+    assert names == ["registry-publish-preflight", "registry-publish"]  # nosec B101
+    assert all(step.inherit_secrets is True for step in steps)  # nosec B101
+
+
 def test_central_check_steps_use_mem0_publish_timeout() -> None:
     repo = load_manifest(ROOT / "fleet.yml").repo("mem0-aio")
 

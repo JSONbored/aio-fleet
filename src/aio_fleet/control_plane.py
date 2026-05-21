@@ -71,6 +71,8 @@ def central_check_steps(
     include_trunk: bool = True,
     include_integration: bool = True,
     include_github_prereleases: bool = True,
+    include_app_checks: bool = True,
+    include_publish_steps: bool = True,
 ) -> list[Step]:
     manifest_args = ["--manifest", str(manifest_path)] if manifest_path else []
     trusted_cwd = _trusted_aio_root()
@@ -80,47 +82,51 @@ def central_check_steps(
         if publish_component_names
         else publish_components(repo)
     )
-    steps = [
-        Step(
-            "validate-repo",
+    steps: list[Step] = []
+    if include_app_checks:
+        steps.extend(
             [
-                sys.executable,
-                "-m",
-                "aio_fleet.cli",
-                *manifest_args,
-                "validate-repo",
-                "--repo",
-                repo.name,
-                "--repo-path",
-                str(repo.path),
-            ],
-            trusted_cwd,
-            inherit_secrets=False,
-        ),
-        Step(
-            "verify-caller",
-            [
-                sys.executable,
-                "-m",
-                "aio_fleet.cli",
-                *manifest_args,
-                "verify-caller",
-                "--repo",
-                repo.name,
-                "--repo-path",
-                str(repo.path),
-            ],
-            trusted_cwd,
-            inherit_secrets=False,
-        ),
-    ]
+                Step(
+                    "validate-repo",
+                    [
+                        sys.executable,
+                        "-m",
+                        "aio_fleet.cli",
+                        *manifest_args,
+                        "validate-repo",
+                        "--repo",
+                        repo.name,
+                        "--repo-path",
+                        str(repo.path),
+                    ],
+                    trusted_cwd,
+                    inherit_secrets=False,
+                ),
+                Step(
+                    "verify-caller",
+                    [
+                        sys.executable,
+                        "-m",
+                        "aio_fleet.cli",
+                        *manifest_args,
+                        "verify-caller",
+                        "--repo",
+                        repo.name,
+                        "--repo-path",
+                        str(repo.path),
+                    ],
+                    trusted_cwd,
+                    inherit_secrets=False,
+                ),
+            ]
+        )
     install = _install_test_dependencies_step(repo.path)
-    if registry_publish_enabled:
+    if registry_publish_enabled and include_publish_steps:
         steps.append(_registry_publish_preflight_step(manifest_args))
-    if install is not None:
+    if include_app_checks and install is not None:
         steps.append(Step(**{**install.__dict__, "inherit_secrets": False}))
     generator = str(repo.get("generator_check_command", "") or "").strip()
-    if generator:
+    if include_app_checks and generator:
         steps.append(
             Step(
                 "generator-check",
@@ -130,7 +136,7 @@ def central_check_steps(
             )
         )
     unit_args = str(repo.get("unit_pytest_args", "") or "").strip()
-    if unit_args:
+    if include_app_checks and unit_args:
         steps.append(
             Step(
                 "unit-tests",
@@ -142,7 +148,8 @@ def central_check_steps(
     integration_args = str(repo.get("integration_pytest_args", "") or "").strip()
     prebuilt_integration_image = False
     if (
-        include_integration
+        include_app_checks
+        and include_integration
         and event in {"pull_request", "push", "release", "workflow_dispatch"}
         and integration_args
     ):
@@ -172,7 +179,7 @@ def central_check_steps(
                 inherit_secrets=False,
             )
         )
-    if include_trunk:
+    if include_app_checks and include_trunk:
         steps.append(
             Step(
                 "trunk",
@@ -193,7 +200,7 @@ def central_check_steps(
                 inherit_secrets=False,
             )
         )
-    if registry_publish_enabled:
+    if registry_publish_enabled and include_publish_steps:
         components = selected_publish_components
         for component in components:
             step_name = (
