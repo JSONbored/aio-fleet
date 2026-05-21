@@ -427,6 +427,30 @@ def test_release_plan_marks_registry_only_component_changes_due(
     assert plan["state"] == "release-due"  # nosec B101
 
 
+def test_changed_paths_since_rejects_untrusted_option_like_ref(tmp_path: Path) -> None:
+    repo_path = tmp_path / "safe-repo"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "tracked.txt").write_text("one\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "init")
+    _git(repo_path, "tag", "v1.0.0")
+    (repo_path / "tracked.txt").write_text("two\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "update tracked file")
+
+    clobber_path = tmp_path / "git-diff-clobber"
+    clobber_path.write_text("keep-me")
+    malicious_ref = f"--output={clobber_path}"
+
+    changed = release_plan_module._changed_paths_since(repo_path, malicious_ref)
+
+    assert changed == []  # nosec B101
+    assert clobber_path.read_text() == "keep-me"  # nosec B101
+
+
 def test_release_plan_ignores_retired_shared_file_cleanup(
     tmp_path: Path, monkeypatch
 ) -> None:
