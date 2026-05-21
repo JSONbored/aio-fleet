@@ -24,6 +24,23 @@ def _sanitized_subprocess_env() -> dict[str, str]:
     }
 
 
+def _upstream_monitor_subprocess_env(*, mutate: bool) -> dict[str, str]:
+    env = _sanitized_subprocess_env()
+    if mutate:
+        upstream_token = (
+            os.environ.get("AIO_FLEET_WORKFLOW_TOKEN", "").strip()
+            or os.environ.get("APP_TOKEN", "").strip()
+            or os.environ.get("AIO_FLEET_CHECK_TOKEN", "").strip()
+            or os.environ.get("GH_TOKEN", "").strip()
+        )
+        check_token = os.environ.get("AIO_FLEET_CHECK_TOKEN", "").strip()
+        if upstream_token:
+            env["AIO_FLEET_UPSTREAM_TOKEN"] = upstream_token
+        if check_token:
+            env["AIO_FLEET_CHECK_TOKEN"] = check_token
+    return env
+
+
 def poll_outputs(
     *, report_path: Path, run_checks: bool, github_output: Path | None
 ) -> dict[str, Any]:
@@ -228,7 +245,7 @@ def upstream_monitor_checkouts(
             check=False,
             text=True,
             capture_output=True,
-            env=_sanitized_subprocess_env(),
+            env=_upstream_monitor_subprocess_env(mutate=mutate),
         )
         if run.stderr:
             print(run.stderr, file=sys.stderr, end="")
