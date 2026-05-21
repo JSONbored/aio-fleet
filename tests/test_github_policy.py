@@ -192,6 +192,67 @@ repositories:
     )
 
 
+def test_validate_github_policy_reports_all_actions_without_selected_endpoint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+  actions:
+    enabled: true
+    allowed_actions: selected
+    github_owned_allowed: true
+    verified_allowed: true
+    sha_pinning_required: true
+    patterns_allowed:
+      - JSONbored/aio-fleet/.github/workflows/aio-*.yml@*
+repositories:
+  example-aio:
+    required_checks:
+      - aio-fleet / required
+    required_check_app_id: 3565017
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": ["aio-fleet / required"],
+                    "checks": [{"context": "aio-fleet / required", "app_id": 3565017}],
+                    "strict": True,
+                }
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {
+                "enabled": True,
+                "allowed_actions": "all",
+                "sha_pinning_required": True,
+            }
+        if "selected-actions" in joined:
+            raise AssertionError("selected-actions endpoint should not be called")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    failures = github_policy.validate_github_policy(
+        policy, repos=["example-aio"], check_secrets=False
+    )
+
+    assert failures == [  # nosec B101
+        "example-aio: actions allowed_actions expected 'selected', got 'all'",
+        "example-aio: selected actions cannot be validated while actions allowed_actions is 'all'",
+    ]
+
+
 def test_validate_github_policy_accepts_per_check_app_ids(
     tmp_path: Path,
     monkeypatch,

@@ -285,6 +285,22 @@ def test_control_plane_uploads_release_dashboard_and_preflight_artifacts() -> No
     assert "central-control-check.log" not in poll["with"]["path"]  # nosec B101
 
 
+def test_control_plane_can_reconcile_standards_drift() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    on_config = workflow.get("on", workflow.get(True))
+    mode = on_config["workflow_dispatch"]["inputs"]["mode"]
+    reconcile = _step(workflow["jobs"]["control-plane"], "Reconcile standards drift")
+    upload = _step(workflow["jobs"]["control-plane"], "Upload control-plane artifacts")
+
+    assert "standards-reconcile" in mode["options"]  # nosec B101
+    assert "standards reconcile" in reconcile["run"]  # nosec B101
+    assert "--github" in reconcile["run"]  # nosec B101
+    assert "--release" in reconcile["run"]  # nosec B101
+    assert "--allow-drift" in reconcile["run"]  # nosec B101
+    assert "GH_TOKEN" in reconcile["env"]  # nosec B101
+    assert "standards-reconcile-report.json" in upload["with"]["path"]  # nosec B101
+
+
 def test_github_prerelease_token_is_scoped_to_trusted_publish_step() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 

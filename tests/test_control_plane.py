@@ -144,6 +144,8 @@ def test_registry_publish_command_uses_plain_progress() -> None:
         "build",
         "--progress=plain",
     ]
+    assert "--attest=type=provenance,mode=max" in command  # nosec B101
+    assert "--attest=type=sbom" in command  # nosec B101
 
 
 def test_central_check_steps_for_push_without_publish_lets_tests_build_image() -> None:

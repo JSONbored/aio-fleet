@@ -13,6 +13,9 @@ It does not replace the existing source-of-truth repos:
 
 - `export-app-manifest` renders the future app-local `.aio-fleet.yml` from the
   central `fleet.yml` entry.
+- `standards reconcile` turns manifest, cleanup, GitHub policy, and release
+  drift into one ordered conformance queue; write mode only applies safe local
+  manifest/cleanup fixes.
 - `poll` scans active repos for open PR heads and current `main` commits.
 - The control-plane workflow turns poll output into a per-repo matrix, so PR
   checks and `main` publishes run independently while still using the same

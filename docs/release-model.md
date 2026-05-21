@@ -54,6 +54,11 @@ control-plane validation and publish rules apply.
 from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
 the Docker Hub tag API so post-push checks do not consume manifest-pull quota;
 GHCR verification continues to use `docker buildx imagetools inspect`.
+
+Publish builds attach BuildKit provenance and SBOM attestations by default via
+`docker buildx build --attest=type=provenance,mode=max --attest=type=sbom`.
+Registry verification still checks the expected image tags, while attestation
+presence gives downstream tooling a stable package-safety surface to inspect.
 `registry publish` verifies the expected tag set first and skips the push when
 all tags are already present; pass `--force` only for intentional republish
 work.

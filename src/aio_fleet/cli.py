@@ -514,6 +514,193 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_standards_reconcile(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    selected = set(args.repo or [])
+    repos = [
+        repo
+        for repo in manifest.repos.values()
+        if not selected or repo.name in selected
+    ]
+    actions: list[dict[str, object]] = []
+    applied: list[dict[str, object]] = []
+    for repo in repos:
+        actions.extend(_standards_manifest_actions(repo))
+        actions.extend(_standards_cleanup_actions(repo))
+        if args.github:
+            actions.extend(_standards_github_actions(repo, Path(args.policy)))
+        if args.release:
+            actions.extend(
+                _standards_release_actions(repo, include_registry=args.registry)
+            )
+
+    if args.write:
+        for action in actions:
+            if action["kind"] == "app-manifest":
+                repo = manifest.repo(str(action["repo"]))
+                output = repo.path / APP_MANIFEST_NAME
+                output.write_text(render_app_manifest(repo))
+                applied.append({**action, "applied": True})
+            elif action["kind"] == "cleanup":
+                repo = manifest.repo(str(action["repo"]))
+                remove_cleanup_findings(cleanup_findings(repo))
+                applied.append({**action, "applied": True})
+
+    actionable = [
+        action for action in actions if action.get("severity") in {"failure", "warning"}
+    ]
+    report = {
+        "status": "actionable" if actionable else "ok",
+        "actions": actions,
+        "applied": applied,
+        "summary": {
+            "repos": len(repos),
+            "actions": len(actions),
+            "actionable": len(actionable),
+            "applied": len(applied),
+            "by_kind": _count_by_key(actions, "kind"),
+            "by_class": _count_by_key(actions, "class"),
+        },
+    }
+    if args.format == "json":
+        print(stable_report_json(report))
+    else:
+        if not actions:
+            print("standards reconcile: no drift")
+        for action in actions:
+            print(
+                "{repo}: {severity}: {class_name}: {detail}".format(
+                    repo=action["repo"],
+                    severity=action["severity"],
+                    class_name=action["class"],
+                    detail=action["detail"],
+                )
+            )
+            command = str(action.get("command", "") or "")
+            if command:
+                print(f"- {command}")
+        if applied:
+            print(f"applied: {len(applied)} safe local fix(es)")
+    return 1 if actionable and not args.allow_drift else 0
+
+
+def _standards_manifest_actions(repo: RepoConfig) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    for failure in _app_manifest_failures(repo):
+        actions.append(
+            _standards_action(
+                repo,
+                kind="app-manifest",
+                cls="manifest-drift",
+                severity="failure",
+                detail=failure,
+                command=f"python -m aio_fleet export-app-manifest --repo {repo.name} --write",
+                can_write=True,
+            )
+        )
+    return actions
+
+
+def _standards_cleanup_actions(repo: RepoConfig) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    for finding in cleanup_findings(repo):
+        relative = str(finding.path.relative_to(repo.path))
+        actions.append(
+            _standards_action(
+                repo,
+                kind="cleanup",
+                cls="retired-shared-path",
+                severity="failure",
+                detail=f"{relative}: {finding.reason}",
+                command=f"python -m aio_fleet cleanup-repo --repo {repo.name} --fix --verify",
+                can_write=True,
+            )
+        )
+    return actions
+
+
+def _standards_github_actions(
+    repo: RepoConfig, policy_path: Path
+) -> list[dict[str, object]]:
+    try:
+        failures = validate_github_policy(
+            policy_path, repos=[repo.name], check_secrets=False
+        )
+    except Exception as exc:
+        failures = [f"{repo.name}: github policy unknown: {exc}"]
+    return [
+        _standards_action(
+            repo,
+            kind="github-policy",
+            cls="github-policy",
+            severity="failure",
+            detail=failure,
+            command=f"python -m aio_fleet validate-github --repo {repo.name}",
+            can_write=False,
+        )
+        for failure in failures
+    ]
+
+
+def _standards_release_actions(
+    repo: RepoConfig, *, include_registry: bool
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    for row in release_plan_rows_for_repo(repo, include_registry=include_registry):
+        state = str(row.get("state", ""))
+        if state in {"current", "private-skipped"}:
+            continue
+        severity = "failure" if state in {"publish-missing", "blocked"} else "warning"
+        component = str(row.get("component", "aio"))
+        actions.append(
+            _standards_action(
+                repo,
+                kind="release",
+                cls=f"release-{state}",
+                severity=severity,
+                detail=(
+                    f"{repo.name}:{component} release state {state}; "
+                    f"warnings={row.get('warnings', [])}; blockers={row.get('blockers', [])}"
+                ),
+                command=str(row.get("next_action", "") or ""),
+                can_write=False,
+                component=component,
+            )
+        )
+    return actions
+
+
+def _standards_action(
+    repo: RepoConfig,
+    *,
+    kind: str,
+    cls: str,
+    severity: str,
+    detail: str,
+    command: str,
+    can_write: bool,
+    component: str = "",
+) -> dict[str, object]:
+    return {
+        "repo": repo.name,
+        "component": component,
+        "kind": kind,
+        "class": cls,
+        "severity": severity,
+        "detail": detail,
+        "command": command,
+        "can_write": can_write,
+    }
+
+
+def _count_by_key(items: list[dict[str, object]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key, "") or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _untracked_artifacts(repo_path: Path) -> list[str]:
     result = _run(
         ["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo_path
@@ -4462,6 +4649,30 @@ def build_parser() -> argparse.ArgumentParser:
     debt.add_argument("--trunk", action="store_true")
     debt.add_argument("--format", choices=["text", "json", "markdown"], default="text")
     debt.set_defaults(func=cmd_debt_report)
+    standards = sub.add_parser("standards")
+    standards_sub = standards.add_subparsers(dest="standards_command", required=True)
+    standards_reconcile = standards_sub.add_parser("reconcile")
+    standards_reconcile.add_argument("--repo", action="append")
+    standards_reconcile.add_argument("--github", action="store_true")
+    standards_reconcile.add_argument(
+        "--policy", default="infra/github/github-policy.yml"
+    )
+    standards_reconcile.add_argument("--release", action="store_true")
+    standards_reconcile.add_argument("--registry", action="store_true")
+    standards_reconcile.add_argument(
+        "--write",
+        action="store_true",
+        help="Apply safe local fixes for generated app manifests and retired shared paths.",
+    )
+    standards_reconcile.add_argument(
+        "--allow-drift",
+        action="store_true",
+        help="Return success while still reporting drift.",
+    )
+    standards_reconcile.add_argument(
+        "--format", choices=["text", "json"], default="json"
+    )
+    standards_reconcile.set_defaults(func=cmd_standards_reconcile)
 
     sync_catalog = sub.add_parser("sync-catalog")
     sync_catalog.add_argument("--repo")
