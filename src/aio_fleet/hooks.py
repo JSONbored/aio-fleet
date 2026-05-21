@@ -32,25 +32,31 @@ def run_local_trunk_overlay(
     original_hooks_path = _git_config_get_optional("core.hooksPath", cwd=repo.path)
     repo_trunk = repo.path / ".trunk"
     created_overlay = False
-    if not repo_trunk.exists():
-        created_overlay = True
-        copy_trunk_overlay(central_trunk, repo_trunk)
-
-    command = [
-        trunk,
-        "check",
-        "--show-existing",
-        "--no-progress",
-        "--color=false",
-        "--ignore=.trunk/**",
-        "--ci",
-        "--fix" if fix else "--no-fix",
-    ]
-    if all_files:
-        command.insert(3, "--all")
-    env = _step_environment(inherit_secrets=False)
-    env.setdefault("FORCE_COLOR", "0")
+    backup_trunk: Path | None = None
     try:
+        if not repo_trunk.exists():
+            created_overlay = True
+            copy_trunk_overlay(central_trunk, repo_trunk)
+        elif not (repo_trunk / "trunk.yaml").exists():
+            backup_trunk = _temporary_trunk_backup_path(repo.path)
+            repo_trunk.rename(backup_trunk)
+            created_overlay = True
+            copy_trunk_overlay(central_trunk, repo_trunk)
+
+        command = [
+            trunk,
+            "check",
+            "--show-existing",
+            "--no-progress",
+            "--color=false",
+            "--ignore=.trunk/**",
+            "--ci",
+            "--fix" if fix else "--no-fix",
+        ]
+        if all_files:
+            command.insert(3, "--all")
+        env = _step_environment(inherit_secrets=False)
+        env.setdefault("FORCE_COLOR", "0")
         return subprocess.run(  # nosec B603
             command,
             cwd=repo.path,
@@ -63,6 +69,21 @@ def run_local_trunk_overlay(
         _restore_git_config("core.hooksPath", original_hooks_path, cwd=repo.path)
         if created_overlay:
             shutil.rmtree(repo_trunk, ignore_errors=True)
+        if backup_trunk is not None and backup_trunk.exists():
+            if repo_trunk.exists():
+                shutil.rmtree(repo_trunk, ignore_errors=True)
+            backup_trunk.rename(repo_trunk)
+
+
+def _temporary_trunk_backup_path(repo_path: Path) -> Path:
+    for index in range(100):
+        suffix = f".trunk.aio-fleet-backup-{os.getpid()}"
+        if index:
+            suffix = f"{suffix}-{index}"
+        candidate = repo_path / suffix
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError("unable to allocate temporary Trunk backup path")
 
 
 def install_local_hooks(

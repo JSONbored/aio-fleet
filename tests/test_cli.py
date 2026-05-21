@@ -191,6 +191,67 @@ def test_run_local_trunk_overlay_cleans_temporary_config(
     assert not (repo_path / ".trunk").exists()  # nosec B101
 
 
+def test_run_local_trunk_overlay_uses_central_config_when_trunk_dir_exists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    repo_trunk = repo_path / ".trunk"
+    repo_trunk.mkdir()
+    existing = repo_trunk / "runtime-state"
+    existing.write_text("keep\n")
+    fake_trunk = tmp_path / "trunk"
+    fake_trunk.write_text(
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "if not Path('.trunk/trunk.yaml').exists():\n"
+        "    sys.exit(2)\n"
+        "Path('.trunk/out').mkdir(parents=True, exist_ok=True)\n"
+        "Path('.trunk/out/generated').write_text('scratch')\n"
+    )
+    fake_trunk.chmod(0o755)
+    monkeypatch.setenv("TRUNK_PATH", str(fake_trunk))
+
+    result = run_local_trunk_overlay(load_manifest(manifest).repo("example-aio"))
+
+    assert result.returncode == 0  # nosec B101
+    assert existing.read_text() == "keep\n"  # nosec B101
+    assert not (repo_trunk / "trunk.yaml").exists()  # nosec B101
+    assert not (repo_trunk / "out" / "generated").exists()  # nosec B101
+
+
+def test_run_local_trunk_overlay_restores_existing_trunk_on_copy_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    repo_trunk = repo_path / ".trunk"
+    repo_trunk.mkdir()
+    existing = repo_trunk / "runtime-state"
+    existing.write_text("keep\n")
+    fake_trunk = tmp_path / "trunk"
+    fake_trunk.write_text("#!/usr/bin/env sh\nexit 0\n")
+    fake_trunk.chmod(0o755)
+    monkeypatch.setenv("TRUNK_PATH", str(fake_trunk))
+
+    def fail_copy(_central_trunk: Path, target_trunk: Path) -> None:
+        target_trunk.mkdir()
+        target_trunk.joinpath("partial").write_text("scratch\n")
+        raise RuntimeError("copy failed")
+
+    monkeypatch.setattr("aio_fleet.hooks.copy_trunk_overlay", fail_copy)
+
+    try:
+        run_local_trunk_overlay(load_manifest(manifest).repo("example-aio"))
+    except RuntimeError as exc:
+        assert str(exc) == "copy failed"  # nosec B101
+    else:
+        raise AssertionError("expected overlay copy failure")
+
+    assert existing.read_text() == "keep\n"  # nosec B101
+    assert not (repo_trunk / "partial").exists()  # nosec B101
+    assert not list(repo_path.glob(".trunk.aio-fleet-backup-*"))  # nosec B101
+
+
 def test_run_local_trunk_overlay_strips_hook_actions_and_restores_hooks_path(
     tmp_path: Path, monkeypatch
 ) -> None:

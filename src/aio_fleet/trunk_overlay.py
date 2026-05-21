@@ -7,7 +7,7 @@ import yaml
 
 
 def copy_trunk_overlay(central_trunk: Path, target_trunk: Path) -> None:
-    target_trunk.mkdir()
+    target_trunk.mkdir(exist_ok=True)
     config = yaml.safe_load((central_trunk / "trunk.yaml").read_text()) or {}
     if isinstance(config, dict):
         # Fleet-managed repos use aio-fleet hooks; Trunk actions would take over
@@ -20,4 +20,6 @@ def copy_trunk_overlay(central_trunk: Path, target_trunk: Path) -> None:
         shutil.copy2(central_trunk / "trunk.yaml", target_trunk / "trunk.yaml")
 
     if (central_trunk / "configs").exists():
-        shutil.copytree(central_trunk / "configs", target_trunk / "configs")
+        shutil.copytree(
+            central_trunk / "configs", target_trunk / "configs", dirs_exist_ok=True
+        )
