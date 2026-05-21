@@ -127,6 +127,22 @@ resource "github_actions_repository_permissions" "aio" {
   }
 }
 
+resource "github_repository_environment" "registry_publish" {
+  repository          = github_repository.aio["aio-fleet"].name
+  environment         = "registry-publish"
+  can_admins_bypass   = false
+  prevent_self_review = true
+
+  reviewers {
+    users = var.registry_publish_environment_reviewers
+  }
+
+  deployment_branch_policy {
+    protected_branches     = true
+    custom_branch_policies = false
+  }
+}
+
 output "declared_repository_secrets" {
   description = "Secret names declared by policy. Values are intentionally not managed by OpenTofu."
   value = {

@@ -53,10 +53,15 @@ The module currently manages:
 - selected GitHub Actions allowlists
 - SHA pinning for selected actions
 - vulnerability alerts through `github_repository_vulnerability_alerts`
+- the protected `aio-fleet` `registry-publish` environment used for live
+  registry credentials
 - declared secret and variable names as outputs only
 
 Secret values are not managed. `AIO_FLEET_BOT_TOKEN` is declared for
-`awesome-unraid`, and the CLI can verify that the secret exists.
+`awesome-unraid`, and the CLI can verify that the secret exists. The
+`registry-publish` environment should hold the narrow Docker Hub publish token
+as `DOCKERHUB_PUBLISH_TOKEN`; OpenTofu manages the required-reviewer gate, not
+the secret value.
 
 ## Action Allowlist Model
 

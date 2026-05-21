@@ -50,3 +50,9 @@ variable "repositories" {
     required_variables = optional(list(string), [])
   }))
 }
+
+variable "registry_publish_environment_reviewers" {
+  description = "GitHub user IDs allowed to approve the protected registry-publish environment."
+  type        = set(number)
+  default     = [49853598]
+}
