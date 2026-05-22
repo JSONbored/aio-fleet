@@ -3141,7 +3141,7 @@ def _publish_github_prerelease(
     title = version
     changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     notes = extract_release_notes(version, changelog, semver=False)
-    target = _git_head(repo.path)
+    target = find_release_publish_target_commit(repo.path, version)
     env = _github_cli_env()
     view = _run(
         [
@@ -3152,7 +3152,7 @@ def _publish_github_prerelease(
             "--repo",
             repo.github_repo,
             "--json",
-            "targetCommitish,name,body,isPrerelease,isLatest",
+            "targetCommitish,name,body,isPrerelease",
         ],
         cwd=repo.path,
         env=env,
@@ -3218,6 +3218,70 @@ def _publish_github_prerelease(
             "release_package_tag": release_package_tag,
         }
     result = _run(command, cwd=repo.path, env=env)
+    if (
+        result.returncode != 0
+        and action == "created"
+        and _github_release_already_exists(result)
+    ):
+        view = _run(
+            [
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                repo.github_repo,
+                "--json",
+                "targetCommitish,name,body,isPrerelease",
+            ],
+            cwd=repo.path,
+            env=env,
+        )
+        if view.returncode == 0:
+            existing = _github_release_view_data(view.stdout)
+            existing_target = str(existing.get("targetCommitish", "") or "").strip()
+            if existing_target and existing_target != target:
+                print(
+                    f"{repo.name}:{component}: existing prerelease {tag} targets "
+                    f"{existing_target}; refusing to retarget immutable release to "
+                    f"{target}. Bump the component AIO revision or publish from the "
+                    "original release commit.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if _github_prerelease_matches(
+                existing,
+                target=target,
+                title=title,
+                notes=notes,
+            ):
+                return {
+                    "repo": repo.name,
+                    "component": component,
+                    "status": "success",
+                    "action": "already-present",
+                    "tag": tag,
+                    "version": version,
+                    "target": target,
+                    "url": _github_release_url(repo, tag),
+                    "release_package_tag": release_package_tag,
+                }
+            update_command = [
+                "gh",
+                "release",
+                "edit",
+                tag,
+                "--repo",
+                repo.github_repo,
+                "--title",
+                title,
+                "--notes",
+                notes,
+                "--prerelease",
+                "--latest=false",
+            ]
+            result = _run(update_command, cwd=repo.path, env=env)
+            action = "updated"
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -3243,6 +3307,15 @@ def _github_release_view_data(output: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {"targetCommitish": output.strip()}
     return data if isinstance(data, dict) else {}
+
+
+def _github_release_already_exists(result: subprocess.CompletedProcess[str]) -> bool:
+    text = f"{result.stdout}\n{result.stderr}".lower()
+    return (
+        "already_exists" in text
+        or "already exists" in text
+        or "release.tag_name" in text
+    )
 
 
 def _github_prerelease_matches(

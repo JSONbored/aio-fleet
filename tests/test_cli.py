@@ -1194,6 +1194,16 @@ def _git(repo_path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _init_release_repo(repo_path: Path, version: str) -> str:
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", f"chore(release): {version}")
+    return _git(repo_path, "rev-parse", "HEAD")
+
+
 def _write_alpha_prerelease_repo(tmp_path: Path) -> tuple[Path, Path, str]:
     repo_path = tmp_path / "sure-aio"
     repo_path.mkdir()
@@ -1240,7 +1250,7 @@ repos:
     _git(repo_path, "config", "user.name", "aio-fleet tests")
     _git(repo_path, "config", "commit.gpgsign", "false")
     _git(repo_path, "add", ".")
-    _git(repo_path, "commit", "-m", "initial alpha release metadata")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.1-alpha.7-aio.1")
     return manifest, repo_path, _git(repo_path, "rev-parse", "HEAD")
 
 
@@ -1404,6 +1414,7 @@ repos:
         "## 0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
         "- alpha release notes\n"
     )
+    _init_release_repo(repo_path, "0.7.1-alpha.7-aio.1")
     report_json = tmp_path / "release-report.json"
 
     def fake_run(command: list[str], **kwargs):
@@ -1483,6 +1494,7 @@ repos:
         "## v0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
         "- alpha release notes\n"
     )
+    _init_release_repo(repo_path, "v0.7.1-alpha.7-aio.1")
 
     def fake_run(command: list[str], **kwargs):
         del kwargs
@@ -1555,7 +1567,7 @@ repos:
         "## 0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
         "- alpha release notes\n"
     )
-    target_sha = "b" * 40
+    target_sha = _init_release_repo(repo_path, "0.7.1-alpha.7-aio.1")
 
     def fake_run(command: list[str], **kwargs):
         del kwargs
@@ -1631,7 +1643,7 @@ repos:
         "## 0.7.1-alpha.7-aio.1 - 2026-05-18\n\n"
         "- alpha release notes\n"
     )
-    target_sha = "b" * 40
+    target_sha = _init_release_repo(repo_path, "0.7.1-alpha.7-aio.1")
     existing_sha = "a" * 40
 
     def fake_run(command: list[str], **kwargs):
@@ -1880,7 +1892,7 @@ def test_prerelease_publish_skips_matching_github_prerelease(
             return real_run(command, cwd=cwd, env=env)
         if command[:3] == ["gh", "release", "view"]:
             assert env["GH_TOKEN"] == "release-token"  # nosec B101
-            assert any("isLatest" in part for part in command)  # nosec B101
+            assert not any("isLatest" in part for part in command)  # nosec B101
             return SimpleNamespace(
                 returncode=0,
                 stdout=json.dumps(
@@ -1911,6 +1923,119 @@ def test_prerelease_publish_skips_matching_github_prerelease(
     )
 
     assert result == 0  # nosec B101
+    assert (
+        "sure-aio:sure-alpha: prerelease=already-present "
+        "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
+    )  # nosec B101
+
+
+def test_prerelease_publish_treats_existing_release_create_conflict_as_present(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+    view_calls = 0
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        nonlocal view_calls
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "targetCommitish": expected_sha,
+                        "name": "0.7.1-alpha.7-aio.1",
+                        "body": "- alpha release notes",
+                        "isPrerelease": True,
+                    }
+                ),
+                stderr="",
+            )
+        if command[:3] == ["gh", "release", "create"]:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="HTTP 422: Validation Failed (Release.tag_name already exists)",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=expected_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert view_calls == 2  # nosec B101
+    assert (
+        "sure-aio:sure-alpha: prerelease=already-present "
+        "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
+    )  # nosec B101
+
+
+def test_prerelease_publish_keeps_existing_release_target_after_followup_commit(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, release_sha = _write_alpha_prerelease_repo(tmp_path)
+    (repo_path / ".aio-fleet.yml").write_text("release: checked\n")
+    _git(repo_path, "add", ".aio-fleet.yml")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile manifest")
+    head_sha = _git(repo_path, "rev-parse", "HEAD")
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=head_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "targetCommitish": release_sha,
+                        "name": "0.7.1-alpha.7-aio.1",
+                        "body": "- alpha release notes",
+                        "isPrerelease": True,
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=head_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert release_sha != head_sha  # nosec B101
     assert (
         "sure-aio:sure-alpha: prerelease=already-present "
         "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
