@@ -2092,6 +2092,47 @@ def test_prerelease_publish_allows_reset_checkout_with_matching_report(
     assert f"--target {expected_sha}" in output  # nosec B101
 
 
+def test_prerelease_publish_create_targets_attested_head_after_followup_commit(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, release_sha = _write_alpha_prerelease_repo(tmp_path)
+    (repo_path / "app.py").write_text("print('safe')\n")
+    _git(repo_path, "add", "app.py")
+    _git(repo_path, "commit", "-m", "fix(runtime): remove unsafe code before publish")
+    head_sha = _git(repo_path, "rev-parse", "HEAD")
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=head_sha)
+
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(report),
+            expected_sha=head_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert release_sha != head_sha  # nosec B101
+    output = capsys.readouterr().out
+    assert f"--target {head_sha}" in output  # nosec B101
+    assert f"--target {release_sha}" not in output  # nosec B101
+
+
 def test_prerelease_publish_skips_matching_github_prerelease(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

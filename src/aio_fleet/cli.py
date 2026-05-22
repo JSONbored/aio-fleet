@@ -3306,9 +3306,10 @@ def _publish_github_prerelease(
     title = version
     changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
     notes = extract_release_notes(version, changelog, semver=False)
-    target = _github_prerelease_target_commit(
+    release_target = _github_prerelease_target_commit(
         repo, component=component, version=version
     )
+    head_target = _git_head(repo.path)
     env = _github_cli_env()
     view = _run(
         [
@@ -3325,6 +3326,7 @@ def _publish_github_prerelease(
         env=env,
     )
     action = "updated" if view.returncode == 0 else "created"
+    target = head_target if action == "created" else release_target
     if action == "updated":
         existing = _github_release_view_data(view.stdout)
         existing_target = str(existing.get("targetCommitish", "") or "").strip()
