@@ -19,6 +19,14 @@ def test_queue_generates_registry_publish_action_with_dispatch_context() -> None
                 "component": "aio",
                 "state": "publish-missing",
                 "sha": sha,
+                "registry_verified": True,
+                "registry_failures": ["jsonbored/sure-aio:latest: missing"],
+                "registry_failure_evidence": [
+                    {
+                        "failure": "jsonbored/sure-aio:latest: missing",
+                        "provenance": "remote-confirmed",
+                    }
+                ],
                 "operator_commands": {
                     "release_transaction": "python -c 'raise SystemExit(99)'"
                 },
@@ -32,6 +40,10 @@ def test_queue_generates_registry_publish_action_with_dispatch_context() -> None
     action = actions[0]
     assert action["kind"] == "registry-publish"  # nosec B101
     assert action["requires_approval"] is True  # nosec B101
+    assert action["provenance"] == "remote-confirmed"  # nosec B101
+    assert action["evidence"]["registry_failures"] == [  # nosec B101
+        "jsonbored/sure-aio:latest: missing"
+    ]
     assert action["next_command"] == (  # nosec B101
         "python -m aio_fleet release transaction --repo sure-aio "
         f"--component aio --sha {sha} --dry-run"
@@ -53,6 +65,25 @@ def test_queue_generates_registry_publish_action_with_dispatch_context() -> None
     assert "-f repo=sure-aio" in plan["command"]  # nosec B101
     assert "-f dry_run=true" in plan["command"]  # nosec B101
     assert "-f dry_run=false" not in plan["command"]  # nosec B101
+
+
+def test_queue_skips_publish_missing_without_registry_evidence() -> None:
+    actions = build_action_queue(
+        {
+            "releases": [
+                {
+                    "repo": "sure-aio",
+                    "component": "aio",
+                    "state": "publish-missing",
+                    "sha": "a" * 40,
+                    "registry_verified": False,
+                    "registry_failures": [],
+                }
+            ]
+        }
+    )
+
+    assert actions == []  # nosec B101
 
 
 def test_queue_ignores_imported_actions_from_input() -> None:
@@ -150,6 +181,7 @@ def test_enriched_state_adds_command_center_sections() -> None:
             {
                 "repo": "sure-aio",
                 "state": "drift",
+                "provenance": "remote-confirmed",
                 "findings_count": 1,
                 "findings": [{"path": "release-agent.yml", "reason": "legacy"}],
             }
@@ -171,3 +203,31 @@ def test_enriched_state_adds_command_center_sections() -> None:
     ][0]
     assert "--dry-run" in drift["next_command"]  # nosec B101
     assert action_by_id(enriched["actions"], enriched["actions"][0]["id"])  # nosec B101
+
+
+def test_enriched_state_keeps_local_cleanup_out_of_queue() -> None:
+    enriched = enrich_command_center_state(
+        {
+            "summary": {"posture": "green"},
+            "cleanup": [
+                {
+                    "repo": "signoz-aio",
+                    "state": "local-only",
+                    "provenance": "local-only",
+                    "findings_count": 0,
+                    "findings": [],
+                    "local_findings_count": 1,
+                    "local_findings": [
+                        {
+                            "path": ".trunk",
+                            "reason": "local scratch overlay",
+                            "provenance": "local-only",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert enriched["actions"] == []  # nosec B101
+    assert enriched["standards"]["state"] == "ok"  # nosec B101

@@ -112,7 +112,8 @@ scheduled jobs can compare transitions later. It tracks:
 - release readiness, latest formal release, next `aio.N` candidate, publish
   gaps, and catalog-sync needs;
 - control-plane workflow health and dashboard control availability;
-- cleanup drift from retired shared app-repo files;
+- cleanup drift from retired shared app-repo files, split between
+  `remote-confirmed` fleet drift and `local-only` checkout hygiene;
 - v4 command-center actions for upstream PRs, release transactions, protected
   registry publishes, catalog sync, standards drift repair, and failed-run
   retries;
@@ -140,6 +141,7 @@ The same underlying state is available without mutating the dashboard issue:
 
 ```bash
 python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report closeout --format json
 python -m aio_fleet fleet-report schema
 python -m aio_fleet fleet-report validate --input fleet-report.json
 python -m aio_fleet fleet-report explain-run --run-id <run-id> --format json
@@ -153,6 +155,14 @@ GitHub Action surfaces. Those surfaces should consume the versioned report
 object and avoid scraping the rendered issue body. The generated report and the
 dashboard body are public-text guarded, so local paths, webhook URLs, and similar
 operator-only strings are redacted before output.
+
+Use `fleet-report closeout` for the final "is the fleet actually good" pass. It
+keeps `remote_posture` separate from `local_posture`, so a scratch checkout
+artifact such as an untracked `.trunk/` directory can produce a cleanup command
+without queueing a protected workflow dispatch or degrading remote fleet posture.
+Registry publish queue entries are created only when registry verification in
+the same command run still reports missing tags after an immediate retry, and
+the queued action carries the failed tag evidence.
 
 Autopilot is approved autopilot, not blind mutation. The queue may identify and
 prepare safe work, but merge, protected registry publish, destructive cleanup,

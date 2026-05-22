@@ -29,6 +29,7 @@ from aio_fleet.release import (
 REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS = int(
     os.environ.get("AIO_FLEET_REGISTRY_INSPECT_TIMEOUT", "20")
 )
+_REGISTRY_TAG_SUCCESS_CACHE: set[tuple[str, int, tuple[tuple[str, str], ...]]] = set()
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,11 @@ def verify_registry_tags(
     if docker is None:
         return ["docker CLI is required to verify registry tags"]
     failures: list[str] = []
+    env_key = _registry_verify_env_key(env)
     for tag in tags:
+        cache_key = (tag, dockerhub_attempts, env_key)
+        if cache_key in _REGISTRY_TAG_SUCCESS_CACHE:
+            continue
         failure = (
             _verify_dockerhub_tag(docker, tag, env=env, attempts=dockerhub_attempts)
             if _is_dockerhub_tag(tag)
@@ -208,7 +213,17 @@ def verify_registry_tags(
         )
         if failure:
             failures.append(failure)
+        else:
+            _REGISTRY_TAG_SUCCESS_CACHE.add(cache_key)
     return failures
+
+
+def _registry_verify_env_key(
+    env: Mapping[str, str] | None,
+) -> tuple[tuple[str, str], ...]:
+    if env is None:
+        return ()
+    return tuple(sorted((str(key), str(value)) for key, value in env.items()))
 
 
 def delete_dockerhub_tags(

@@ -23,6 +23,7 @@ from aio_fleet.cli import (
     cmd_fleet_dashboard_update,
     cmd_fleet_queue_dispatch,
     cmd_fleet_queue_generate,
+    cmd_fleet_report_closeout,
     cmd_fleet_report_explain_run,
     cmd_fleet_report_generate,
     cmd_fleet_report_schema,
@@ -514,6 +515,44 @@ def test_standards_reconcile_reports_manifest_and_cleanup_drift(
     }
 
 
+def test_standards_reconcile_marks_untracked_cleanup_as_local_only(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    (repo_path / "Dockerfile").write_text("FROM scratch\n")
+    _git(repo_path, "add", "Dockerfile")
+    _git(repo_path, "commit", "-m", "chore(test): init")
+    (repo_path / ".trunk" / "actions").mkdir(parents=True)
+
+    monkeypatch.setattr(cli, "_standards_manifest_actions", lambda *_args: [])
+    monkeypatch.setattr(cli, "release_plan_rows_for_repo", lambda *_args, **_kwargs: [])
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=True,
+            registry=False,
+            write=False,
+            allow_drift=False,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["status"] == "ok"  # nosec B101
+    assert report["summary"]["actionable"] == 0  # nosec B101
+    assert report["actions"][0]["severity"] == "info"  # nosec B101
+    assert report["actions"][0]["provenance"] == "local-only"  # nosec B101
+
+
 def test_standards_reconcile_write_applies_safe_local_fixes(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -891,6 +930,86 @@ def test_fleet_report_generate_redacts_public_text(
     )
 
 
+def test_fleet_report_closeout_splits_remote_and_local_posture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "dashboard_report",
+        lambda *_args, **_kwargs: {
+            "body": "# Dashboard\n",
+            "state": {
+                "schema_version": 4,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "issue_repo": "JSONbored/aio-fleet",
+                "warnings": [],
+                "summary": {
+                    "posture": "green",
+                    "remote_posture": "green",
+                    "local_posture": "hygiene",
+                    "open_prs": 0,
+                    "upstream_updates": 0,
+                    "release_due": 0,
+                    "publish_missing": 0,
+                    "catalog_state": "ready",
+                    "standards_state": "ok",
+                    "workflow_state": "success",
+                    "pending_approvals": 0,
+                    "alert_warnings": 0,
+                    "local_hygiene": 1,
+                },
+                "actions": [
+                    {
+                        "id": "remote",
+                        "repo": "example-aio",
+                        "kind": "registry-publish",
+                        "provenance": "remote-confirmed",
+                    }
+                ],
+                "cleanup": [
+                    {
+                        "repo": "signoz-aio",
+                        "state": "local-only",
+                        "provenance": "local-only",
+                        "findings_count": 0,
+                        "findings": [],
+                        "local_findings_count": 1,
+                        "local_findings": [
+                            {
+                                "path": ".trunk",
+                                "reason": "local scratch overlay",
+                                "provenance": "local-only",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+
+    result = cmd_fleet_report_closeout(
+        Namespace(
+            manifest=str(manifest),
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=True,
+            stale_days=7,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_posture"] == "green"  # nosec B101
+    assert payload["local_posture"] == "hygiene"  # nosec B101
+    assert payload["summary"]["remote_actions"] == 1  # nosec B101
+    assert payload["local_hygiene"][0]["cleanup_command"] == (  # nosec B101
+        "python -m aio_fleet cleanup-repo --repo signoz-aio --fix --verify"
+    )
+
+
 def test_fleet_report_schema_and_validate(tmp_path: Path, capsys) -> None:
     result = cmd_fleet_report_schema(Namespace())
 
@@ -1012,6 +1131,8 @@ def test_fleet_queue_generate_from_report_input(tmp_path: Path, capsys) -> None:
                         "component": "aio",
                         "state": "publish-missing",
                         "sha": sha,
+                        "registry_verified": True,
+                        "registry_failures": ["jsonbored/sure-aio:latest: missing"],
                         "operator_commands": {
                             "release_transaction": (
                                 "python -m aio_fleet release transaction "
@@ -1056,6 +1177,8 @@ def test_fleet_queue_dispatch_dry_run_from_report_input(tmp_path: Path, capsys) 
                         "component": "aio",
                         "state": "publish-missing",
                         "sha": sha,
+                        "registry_verified": True,
+                        "registry_failures": ["jsonbored/sure-aio:latest: missing"],
                     }
                 ],
             }

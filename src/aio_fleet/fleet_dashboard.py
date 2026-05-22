@@ -15,6 +15,7 @@ from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
 from aio_fleet.failure_classifier import classify_workflow_state
 from aio_fleet.fleet_queue import enrich_command_center_state
+from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
@@ -78,7 +79,7 @@ def dashboard_report(
 ) -> dict[str, Any]:
     env = env or os.environ
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
-    warnings = alert_warnings(env)
+    warnings = alert_warnings(env, issue_repo=issue_repo)
     active_rows: list[dict[str, Any]] = []
     activity_rows: list[dict[str, Any]] = []
     registry_rows: list[dict[str, Any]] = []
@@ -204,6 +205,9 @@ def dashboard_summary(
     cleanup_findings_total = sum(
         _int(row.get("findings_count")) for row in cleanup_rows
     )
+    local_hygiene_total = sum(
+        _int(row.get("local_findings_count")) for row in cleanup_rows
+    )
     stale_prs = sum(_int(row.get("stale_prs")) for row in activity_rows) + sum(
         _int(row.get("stale_prs")) for row in destination_rows + rehab_rows
     )
@@ -245,10 +249,13 @@ def dashboard_summary(
         "release_due": release_due,
         "publish_missing": publish_missing,
         "cleanup_findings": cleanup_findings_total,
+        "local_hygiene": local_hygiene_total,
         "alert_warnings": len(warnings),
         "workflow_state": workflow.get("state", "unknown"),
     }
     summary["posture"] = _posture(summary)
+    summary["remote_posture"] = _remote_posture(summary)
+    summary["local_posture"] = "hygiene" if local_hygiene_total else "clean"
     return summary
 
 
@@ -295,7 +302,11 @@ def render_dashboard(state: dict[str, Any]) -> str:
         [
             "## Summary",
             "",
-            f"Posture: `{summary.get('posture', 'unknown')}`",
+            (
+                f"Posture: `{summary.get('posture', 'unknown')}` | "
+                f"Remote: `{summary.get('remote_posture', 'unknown')}` | "
+                f"Local: `{summary.get('local_posture', 'unknown')}`"
+            ),
             "",
             "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
             "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -363,7 +374,11 @@ def _render_command_center_section(
         [
             "## Fleet Command Center",
             "",
-            f"Posture: `{summary.get('posture', 'unknown')}`",
+            (
+                f"Posture: `{summary.get('posture', 'unknown')}` | "
+                f"Remote: `{summary.get('remote_posture', 'unknown')}` | "
+                f"Local: `{summary.get('local_posture', 'unknown')}`"
+            ),
             "",
             "| Actions | Blockers | Pending Approvals | Failures | Catalog | Standards |",
             "| ---: | ---: | ---: | ---: | --- | --- |",
@@ -498,13 +513,45 @@ def _short_sha(value: str) -> str:
     return value[:12] if FULL_SHA_RE.fullmatch(value) else value
 
 
-def alert_warnings(env: dict[str, str]) -> list[str]:
+def alert_warnings(
+    env: dict[str, str], *, issue_repo: str = "JSONbored/aio-fleet"
+) -> list[str]:
     warnings: list[str] = []
     if not env.get("AIO_FLEET_ALERT_WEBHOOK_URL"):
-        warnings.append(
-            "AIO_FLEET_ALERT_WEBHOOK_URL is not configured; rich digest alerts are disabled."
-        )
+        if not _github_actions_secret_exists(issue_repo, "AIO_FLEET_ALERT_WEBHOOK_URL"):
+            warnings.append(
+                "AIO_FLEET_ALERT_WEBHOOK_URL is not configured; rich digest alerts are disabled."
+            )
     return warnings
+
+
+def _github_actions_secret_exists(repo: str, name: str) -> bool:
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["gh", "secret", "list", "--repo", repo, "--json", "name"],
+            check=False,
+            text=True,
+            capture_output=True,
+            env=github_cli_env(
+                (
+                    "AIO_FLEET_DASHBOARD_TOKEN",
+                    "AIO_FLEET_WORKFLOW_TOKEN",
+                    "AIO_FLEET_CHECK_TOKEN",
+                    "APP_TOKEN",
+                    "GH_TOKEN",
+                    "GITHUB_TOKEN",
+                )
+            ),
+        )
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return False
+    return any(isinstance(item, dict) and item.get("name") == name for item in payload)
 
 
 def _is_public_config(raw: dict[str, Any]) -> bool:
@@ -906,8 +953,11 @@ def _redacted_cleanup_row(repo: str) -> dict[str, Any]:
     return {
         "repo": repo,
         "state": "private-skipped",
+        "provenance": "private-skipped",
         "findings_count": 0,
         "findings": [],
+        "local_findings_count": 0,
+        "local_findings": [],
     }
 
 
@@ -1202,18 +1252,41 @@ def _cleanup_rows(manifest: FleetManifest) -> list[dict[str, Any]]:
         if not _is_public_config(repo.raw):
             rows.append(_redacted_cleanup_row(repo.name))
             continue
-        findings = cleanup_findings(repo)
+        all_findings = cleanup_findings(repo)
+        findings = [
+            finding for finding in all_findings if finding.provenance != "local-only"
+        ]
+        local_findings = [
+            finding for finding in all_findings if finding.provenance == "local-only"
+        ]
         rows.append(
             {
                 "repo": repo.name,
-                "state": "ok" if not findings else "drift",
+                "state": (
+                    "drift" if findings else "local-only" if local_findings else "ok"
+                ),
+                "provenance": (
+                    "remote-confirmed"
+                    if findings or not local_findings
+                    else "local-only"
+                ),
                 "findings_count": len(findings),
                 "findings": [
                     {
                         "path": str(finding.path.relative_to(repo.path)),
                         "reason": finding.reason,
+                        "provenance": finding.provenance,
                     }
                     for finding in findings[:10]
+                ],
+                "local_findings_count": len(local_findings),
+                "local_findings": [
+                    {
+                        "path": str(finding.path.relative_to(repo.path)),
+                        "reason": finding.reason,
+                        "provenance": finding.provenance,
+                    }
+                    for finding in local_findings[:10]
                 ],
             }
         )
@@ -2078,14 +2151,18 @@ def _render_release_section(lines: list[str], rows: list[dict[str, Any]]) -> Non
 
 def _render_cleanup_section(lines: list[str], rows: list[dict[str, Any]]) -> None:
     drift = [row for row in rows if row.get("findings_count")]
+    local = [row for row in rows if row.get("local_findings_count")]
     lines.extend(["## Cleanup Drift", ""])
     if not rows:
         lines.extend(["- cleanup verification was not collected", ""])
         return
-    if not drift:
+    if not drift and not local:
         lines.extend(["- no retired shared files found in active repos", ""])
         return
-    lines.extend(["| Repo | Findings | First Finding |", "| --- | ---: | --- |"])
+    if not drift:
+        lines.extend(["- no retired shared files found in active repos", ""])
+    else:
+        lines.extend(["| Repo | Findings | First Finding |", "| --- | ---: | --- |"])
     for row in drift:
         findings = row.get("findings", [])
         first = findings[0] if isinstance(findings, list) and findings else {}
@@ -2101,6 +2178,17 @@ def _render_cleanup_section(lines: list[str], rows: list[dict[str, Any]]) -> Non
                 first=_cell(label),
             )
         )
+    if local:
+        lines.extend(["", "Local-only hygiene:"])
+        for row in local[:10]:
+            findings = row.get("local_findings", [])
+            first = findings[0] if isinstance(findings, list) and findings else {}
+            label = (
+                f"{first.get('path')}: {first.get('reason')}"
+                if isinstance(first, dict)
+                else ""
+            )
+            lines.append(f"- {_cell(row.get('repo', ''))}: {_cell(label)}")
     lines.append("")
 
 
@@ -2333,9 +2421,15 @@ def _posture(summary: dict[str, Any]) -> str:
         or _int(summary.get("needs_response_issues"))
     ):
         return "action required"
-    if _int(summary.get("open_issues")) or _int(summary.get("alert_warnings")):
+    if _int(summary.get("alert_warnings")):
         return "watch"
     return "green"
+
+
+def _remote_posture(summary: dict[str, Any]) -> str:
+    scoped = dict(summary)
+    scoped["local_hygiene"] = 0
+    return _posture(scoped)
 
 
 def _issue_number_from_url(url: str) -> int | None:

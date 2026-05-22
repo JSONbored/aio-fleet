@@ -633,15 +633,17 @@ def _standards_cleanup_actions(
     actions: list[dict[str, object]] = []
     for finding in findings:
         relative = str(finding.path.relative_to(repo.path))
+        provenance = finding.provenance
         actions.append(
             _standards_action(
                 repo,
                 kind="cleanup",
                 cls="retired-shared-path",
-                severity="failure",
+                severity="info" if provenance == "local-only" else "failure",
                 detail=f"{relative}: {finding.reason}",
                 command=f"python -m aio_fleet cleanup-repo --repo {repo.name} --fix --verify",
                 can_write=True,
+                provenance=provenance,
             )
         )
     return actions
@@ -708,6 +710,7 @@ def _standards_action(
     command: str,
     can_write: bool,
     component: str = "",
+    provenance: str = "remote-confirmed",
 ) -> dict[str, object]:
     return {
         "repo": repo.name,
@@ -715,6 +718,7 @@ def _standards_action(
         "kind": kind,
         "class": cls,
         "severity": severity,
+        "provenance": provenance,
         "detail": detail,
         "command": command,
         "can_write": can_write,
@@ -1247,6 +1251,88 @@ def cmd_fleet_report_generate(args: argparse.Namespace) -> int:
         )
         print(f"fleet-report: posture={posture} schema={state.get('schema_version')}")
     return 0
+
+
+def cmd_fleet_report_closeout(args: argparse.Namespace) -> int:
+    manifest = load_manifest(Path(args.manifest))
+    report = dashboard_report(
+        manifest,
+        include_registry=args.registry,
+        include_activity=getattr(args, "include_activity", True),
+        stale_days=getattr(args, "stale_days", 7),
+        issue_repo=args.issue_repo,
+    )
+    state = public_fleet_report_state(dict(report["state"]))
+    closeout = _fleet_closeout_state(state)
+    if args.format == "json":
+        print(public_fleet_report_json(closeout))
+    else:
+        print(
+            "fleet-closeout: remote={remote} local={local} actions={actions}".format(
+                remote=closeout["remote_posture"],
+                local=closeout["local_posture"],
+                actions=closeout["summary"]["remote_actions"],
+            )
+        )
+    return 0
+
+
+def _fleet_closeout_state(state: dict[str, object]) -> dict[str, object]:
+    summary = state.get("summary")
+    summary = dict(summary) if isinstance(summary, dict) else {}
+    actions = [
+        action
+        for action in _dict_items(state.get("actions"))
+        if action.get("provenance") != "local-only"
+    ]
+    cleanup_rows = _dict_items(state.get("cleanup"))
+    local_hygiene = [
+        {
+            "repo": row.get("repo", ""),
+            "state": "local-only",
+            "findings_count": row.get("local_findings_count", 0),
+            "findings": row.get("local_findings", []),
+            "cleanup_command": (
+                "python -m aio_fleet cleanup-repo --repo "
+                f"{row.get('repo', '')} --fix --verify"
+            ),
+        }
+        for row in cleanup_rows
+        if int(row.get("local_findings_count", 0) or 0)
+    ]
+    output = {
+        "schema_version": state.get("schema_version"),
+        "generated_at": state.get("generated_at", ""),
+        "remote_posture": summary.get(
+            "remote_posture", summary.get("posture", "unknown")
+        ),
+        "local_posture": summary.get(
+            "local_posture", "hygiene" if local_hygiene else "clean"
+        ),
+        "summary": {
+            "open_prs": summary.get("open_prs", 0),
+            "upstream_updates": summary.get("upstream_updates", 0),
+            "release_due": summary.get("release_due", 0),
+            "publish_missing": summary.get("publish_missing", 0),
+            "catalog_state": summary.get("catalog_state", "unknown"),
+            "standards_state": summary.get("standards_state", "unknown"),
+            "workflow_state": summary.get("workflow_state", "unknown"),
+            "remote_actions": len(actions),
+            "pending_approvals": summary.get("pending_approvals", 0),
+            "alert_warnings": summary.get("alert_warnings", 0),
+            "local_hygiene": summary.get("local_hygiene", len(local_hygiene)),
+        },
+        "remote_actions": actions,
+        "local_hygiene": local_hygiene,
+        "warnings": state.get("warnings", []),
+    }
+    return public_fleet_report_state(output)
+
+
+def _dict_items(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def cmd_fleet_report_schema(args: argparse.Namespace) -> int:
@@ -5292,6 +5378,22 @@ def build_parser() -> argparse.ArgumentParser:
     report_generate.add_argument("--stale-days", type=int, default=7)
     report_generate.add_argument("--format", choices=["text", "json"], default="json")
     report_generate.set_defaults(func=cmd_fleet_report_generate)
+    report_closeout = report_sub.add_parser("closeout")
+    report_closeout.add_argument("--manifest", default="fleet.yml")
+    report_closeout.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    report_closeout.add_argument(
+        "--registry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    report_closeout.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    report_closeout.add_argument("--stale-days", type=int, default=7)
+    report_closeout.add_argument("--format", choices=["text", "json"], default="json")
+    report_closeout.set_defaults(func=cmd_fleet_report_closeout)
     report_schema = report_sub.add_parser("schema")
     report_schema.set_defaults(func=cmd_fleet_report_schema)
     report_validate = report_sub.add_parser("validate")

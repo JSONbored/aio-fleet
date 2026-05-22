@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,7 @@ RETIRED_SHARED_PATHS: dict[str, str] = {
 class CleanupFinding:
     path: Path
     reason: str
+    provenance: str = "remote-confirmed"
 
 
 def cleanup_findings(repo: RepoConfig) -> list[CleanupFinding]:
@@ -46,7 +48,17 @@ def cleanup_findings(repo: RepoConfig) -> list[CleanupFinding]:
             continue
         path = repo.path / relative
         if path.exists():
-            findings.append(CleanupFinding(path=path, reason=reason))
+            findings.append(
+                CleanupFinding(
+                    path=path,
+                    reason=reason,
+                    provenance=(
+                        "remote-confirmed"
+                        if _retired_path_has_tracked_content(repo.path, relative)
+                        else "local-only"
+                    ),
+                )
+            )
     return findings
 
 
@@ -74,3 +86,19 @@ def remove_cleanup_findings(findings: list[CleanupFinding]) -> None:
             shutil.rmtree(finding.path)
         else:
             finding.path.unlink()
+
+
+def _retired_path_has_tracked_content(repo_path: Path, relative: str) -> bool:
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["git", "ls-files", "--", relative],
+            cwd=repo_path,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    except OSError:
+        return True
+    if result.returncode != 0:
+        return True
+    return bool(result.stdout.strip())

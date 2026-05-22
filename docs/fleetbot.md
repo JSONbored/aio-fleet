@@ -26,6 +26,7 @@ Contract helpers:
 
 ```bash
 python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report closeout --format json
 python -m aio_fleet fleet-report schema
 python -m aio_fleet fleet-report validate --input fleet-report.json
 python -m aio_fleet fleet-queue generate --registry --format json
@@ -39,6 +40,9 @@ GitHub activity, cleanup drift, control-plane workflow health, alert warnings,
 classified failures, pending approvals, catalog readiness, standards drift, a
 new-candidate planning lane, and one shared action queue. New surfaces should
 add presentation only; they should not recompute fleet truth independently.
+Report and queue entries carry provenance labels such as `remote-confirmed`,
+`local-only`, `external-transient`, and `operator-action` so downstream bots can
+stay quiet for scratch checkout hygiene and transient registry noise.
 
 ## Product Surfaces
 
