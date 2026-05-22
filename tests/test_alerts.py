@@ -318,7 +318,7 @@ def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
     assert "sure-alpha%2F0.7.1-alpha.7-aio.1" in values  # nosec B101
 
 
-def test_publish_alert_warns_when_release_package_tag_is_missing() -> None:
+def test_publish_alert_treats_rolling_publish_without_release_tag_as_success() -> None:
     payload = alerts.payload_from_report(
         event="publish",
         status="auto",
@@ -343,12 +343,44 @@ def test_publish_alert_warns_when_release_package_tag_is_missing() -> None:
         },
     )
 
+    assert payload.status == "success"  # nosec B101
+    assert payload.summary == "Published rolling images for dify-aio:aio"  # nosec B101
+    assert payload.annotations == [  # nosec B101
+        "dify-aio:aio rolling tags; upstream 1.14.2"
+    ]
+    fields = payload.details["discord_fields"]
+    field_values = {field["name"]: field["value"] for field in fields}
+    assert field_values["aio package tag"] == (  # nosec B101
+        "not expected for this rolling publish; upstream version is 1.14.2"
+    )
+    assert alerts.should_send_webhook(payload) is True  # nosec B101
+
+
+def test_publish_alert_warns_when_success_report_has_no_registry_tags() -> None:
+    payload = alerts.payload_from_report(
+        event="publish",
+        status="auto",
+        report={
+            "repo": "dify-aio",
+            "status": "success",
+            "components": [
+                {
+                    "component": "aio",
+                    "dockerhub": [],
+                    "ghcr": [],
+                    "upstream_version": "1.14.2",
+                    "release_package_tag": "",
+                }
+            ],
+        },
+    )
+
     assert payload.status == "warning"  # nosec B101
     assert (
-        payload.summary == "Published unversioned images for dify-aio:aio"
+        payload.summary == "Publish completed without registry tags for dify-aio:aio"
     )  # nosec B101
     assert payload.annotations == [  # nosec B101
-        "dify-aio:aio no package tag; upstream 1.14.2"
+        "dify-aio:aio no registry tags; upstream 1.14.2"
     ]
     fields = payload.details["discord_fields"]
     field_values = {field["name"]: field["value"] for field in fields}

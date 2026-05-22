@@ -289,19 +289,34 @@ def summarize_report(
             label = ", ".join(
                 f"{repo}:{item.get('component', 'aio')}" for item in components[:3]
             )
-            missing_package_tags = [
+            publish_components = [
                 item
                 for item in components
+                if not str(item.get("error", "") or "").strip()
+            ]
+            tagless_components = [
+                item
+                for item in publish_components
                 if not str(item.get("release_package_tag", "") or "").strip()
-                and not str(item.get("error", "") or "").strip()
+                and not _publish_component_has_registry_tags(item)
+            ]
+            rolling_components = [
+                item
+                for item in publish_components
+                if not str(item.get("release_package_tag", "") or "").strip()
+                and _publish_component_has_registry_tags(item)
             ]
             has_release_history = any(
                 isinstance(item.get("github_release"), dict)
                 and item["github_release"].get("url")
                 for item in components
             )
-            if missing_package_tags:
-                summary = f"Published unversioned images for {label}"
+            if tagless_components:
+                summary = f"Publish completed without registry tags for {label}"
+            elif rolling_components and len(rolling_components) == len(
+                publish_components
+            ):
+                summary = f"Published rolling images for {label}"
             elif has_release_history:
                 summary = f"Published images and release history for {label}"
             else:
@@ -310,7 +325,7 @@ def summarize_report(
             for item in components[:5]:
                 annotations.append(_publish_component_annotation(repo, item))
             return (
-                "warning" if missing_package_tags else "success",
+                "warning" if tagless_components else "success",
                 summary,
                 annotations,
                 {
@@ -582,6 +597,10 @@ def _action_fields(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return fields
 
 
+def _publish_component_has_registry_tags(item: dict[str, Any]) -> bool:
+    return bool(item.get("dockerhub") or item.get("ghcr"))
+
+
 def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
     fields: list[dict[str, Any]] = []
     for item in components[:3]:
@@ -598,10 +617,24 @@ def _publish_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif package_tag:
             fields.append({"name": f"{component} package tag", "value": package_tag})
         elif upstream_version:
+            if _publish_component_has_registry_tags(item):
+                value = (
+                    "not expected for this rolling publish; "
+                    f"upstream version is {upstream_version}"
+                )
+            else:
+                value = f"missing; upstream version is {upstream_version}"
             fields.append(
                 {
                     "name": f"{component} package tag",
-                    "value": f"missing; upstream version is {upstream_version}",
+                    "value": value,
+                }
+            )
+        elif _publish_component_has_registry_tags(item):
+            fields.append(
+                {
+                    "name": f"{component} package tag",
+                    "value": "not expected for this rolling publish",
                 }
             )
         if dockerhub:
@@ -622,9 +655,13 @@ def _publish_component_annotation(repo: str, item: dict[str, Any]) -> str:
     if error:
         return f"{repo}:{component} error"
     upstream_version = str(item.get("upstream_version", "") or "").strip()
+    if _publish_component_has_registry_tags(item):
+        if upstream_version:
+            return f"{repo}:{component} rolling tags; upstream {upstream_version}"
+        return f"{repo}:{component} rolling tags"
     if upstream_version:
-        return f"{repo}:{component} no package tag; upstream {upstream_version}"
-    return f"{repo}:{component} no package tag"
+        return f"{repo}:{component} no registry tags; upstream {upstream_version}"
+    return f"{repo}:{component} no registry tags"
 
 
 def _publish_failure_fields(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
