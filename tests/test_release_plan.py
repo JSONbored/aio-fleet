@@ -56,7 +56,7 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
     )
     monkeypatch.setattr(
         "aio_fleet.release_plan.verify_registry_tags",
-        lambda _tags: ["jsonbored/sure-aio:latest: missing"],
+        lambda _tags, **_kwargs: ["jsonbored/sure-aio:latest: missing"],
     )
 
     plan = release_plan_for_repo(repo, include_registry=True)
@@ -746,7 +746,7 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     monkeypatch.setattr(
         release_plan_module,
         "verify_registry_tags",
-        lambda _tags: ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
+        lambda _tags, **_kwargs: ["jsonbored/sure-aio-alpha:latest-alpha: missing"],
     )
 
     plan = release_plan_for_repo(repo, include_registry=True, component="sure-alpha")
@@ -838,7 +838,9 @@ def test_release_plan_marks_missing_registry_only_prerelease_due(
             all_tags=["jsonbored/sure-aio-alpha:latest-alpha"],
         ),
     )
-    monkeypatch.setattr(release_plan_module, "verify_registry_tags", lambda _tags: [])
+    monkeypatch.setattr(
+        release_plan_module, "verify_registry_tags", lambda _tags, **_kwargs: []
+    )
 
     plan = release_plan_for_repo(repo, include_registry=True, component="sure-alpha")
 

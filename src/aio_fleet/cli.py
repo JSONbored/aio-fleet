@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -50,11 +51,20 @@ from aio_fleet.control_plane import (
     run_steps,
 )
 from aio_fleet.doctor import fleet_doctor_report, manifest_shape_checks
+from aio_fleet.failure_classifier import classify_failure_text
 from aio_fleet.fleet_dashboard import (
     dashboard_issue_commands,
     dashboard_report,
     upsert_dashboard_issue,
 )
+from aio_fleet.fleet_queue import (
+    action_by_id,
+    build_action_queue,
+    dispatch_plan,
+    enrich_command_center_state,
+)
+from aio_fleet.fleetbot import render_command_response
+from aio_fleet.github_cli import github_cli_env
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.hooks import install_local_hooks, run_local_trunk_overlay
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
@@ -519,6 +529,12 @@ def cmd_debt_report(args: argparse.Namespace) -> int:
 
 
 def cmd_standards_reconcile(args: argparse.Namespace) -> int:
+    if getattr(args, "dry_run", False) and args.write:
+        print(
+            "standards reconcile: --dry-run cannot be combined with --write",
+            file=sys.stderr,
+        )
+        return 1
     manifest = load_manifest(Path(args.manifest))
     selected = set(args.repo or [])
     repos = [
@@ -1189,6 +1205,14 @@ def cmd_fleet_dashboard_commands(args: argparse.Namespace) -> int:
         print(
             "upstream_monitor=" f"{str(bool(commands.get('upstream_monitor'))).lower()}"
         )
+        print(
+            "standards_reconcile="
+            f"{str(bool(commands.get('standards_reconcile'))).lower()}"
+        )
+        print(
+            "queue_publish_checks="
+            f"{str(bool(commands.get('queue_publish_checks'))).lower()}"
+        )
     else:
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -1246,6 +1270,147 @@ def cmd_fleet_report_validate(args: argparse.Namespace) -> int:
         else:
             print("fleet report schema ok")
     return 1 if failures else 0
+
+
+def cmd_fleet_report_explain_run(args: argparse.Namespace) -> int:
+    if getattr(args, "log_file", ""):
+        text = Path(args.log_file).read_text()
+        command_error = ""
+    else:
+        result = subprocess.run(  # nosec B603 B607
+            [
+                "gh",
+                "run",
+                "view",
+                str(args.run_id),
+                "--repo",
+                args.issue_repo,
+                "--log-failed",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            env=github_cli_env(
+                (
+                    "AIO_FLEET_DASHBOARD_TOKEN",
+                    "AIO_FLEET_CHECK_TOKEN",
+                    "AIO_FLEET_WORKFLOW_TOKEN",
+                    "APP_TOKEN",
+                    "GH_TOKEN",
+                    "GITHUB_TOKEN",
+                )
+            ),
+        )
+        text = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        command_error = (
+            ""
+            if result.returncode == 0
+            else "gh run view failed; raw output omitted from report"
+        )
+    classification = classify_failure_text(
+        text,
+        metadata={"run_id": str(args.run_id), "repo": args.issue_repo},
+    )
+    output = {
+        "run_id": str(args.run_id),
+        "repo": args.issue_repo,
+        "classification": classification,
+        "command_error": command_error,
+    }
+    if args.format == "json":
+        print(stable_report_json(output))
+    else:
+        print(
+            "run {run_id}: {root_cause} confidence={confidence}".format(
+                run_id=args.run_id,
+                root_cause=classification["root_cause"],
+                confidence=classification["confidence"],
+            )
+        )
+        print(classification["next_action"])
+    return 0
+
+
+def cmd_fleet_queue_generate(args: argparse.Namespace) -> int:
+    state = _command_center_state(args)
+    actions = build_action_queue(state)
+    output = {
+        "schema_version": state.get("schema_version"),
+        "generated_at": state.get("generated_at", ""),
+        "actions": actions,
+        "summary": {
+            "actions": len(actions),
+            "requires_approval": len(
+                [action for action in actions if action.get("requires_approval")]
+            ),
+        },
+    }
+    if args.format == "json":
+        print(stable_report_json(output))
+    else:
+        print(
+            "fleet-queue: actions={actions} approvals={approvals}".format(
+                actions=output["summary"]["actions"],
+                approvals=output["summary"]["requires_approval"],
+            )
+        )
+    return 0
+
+
+def cmd_fleet_queue_dispatch(args: argparse.Namespace) -> int:
+    state = _command_center_state(args)
+    actions = build_action_queue(state)
+    try:
+        action = action_by_id(actions, args.id)
+        output = dispatch_plan(action, dry_run=args.dry_run)
+    except (KeyError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(stable_report_json(output))
+    else:
+        if output["command"]:
+            print(output["command"])
+        else:
+            print(f"{args.id}: no workflow dispatch is available")
+    return 0
+
+
+def cmd_fleetbot_render_command(args: argparse.Namespace) -> int:
+    state = _command_center_state(args)
+    try:
+        output = render_command_response(
+            command=args.command_name,
+            state=state,
+            repo=getattr(args, "repo", "") or "",
+            run_id=getattr(args, "run_id", "") or "",
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(stable_report_json(output))
+    else:
+        print(f"{output['title']}: {output.get('posture', output.get('empty', ''))}")
+    return 0
+
+
+def _command_center_state(args: argparse.Namespace) -> dict[str, Any]:
+    input_path = getattr(args, "input", "") or ""
+    if input_path:
+        payload = json.loads(Path(input_path).read_text())
+        state = _report_state_from_payload(payload)
+        state = enrich_command_center_state(dict(state))
+        return public_fleet_report_state(state)
+    manifest = load_manifest(Path(getattr(args, "manifest", "fleet.yml")))
+    report = dashboard_report(
+        manifest,
+        include_registry=getattr(args, "registry", False),
+        include_activity=getattr(args, "include_activity", True),
+        stale_days=getattr(args, "stale_days", 7),
+        issue_repo=getattr(args, "issue_repo", "JSONbored/aio-fleet"),
+    )
+    return public_fleet_report_state(dict(report["state"]))
 
 
 def cmd_control_check(args: argparse.Namespace) -> int:
@@ -4920,6 +5085,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply safe local fixes for generated app manifests and retired shared paths.",
     )
     standards_reconcile.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview reconcile actions without applying --write changes.",
+    )
+    standards_reconcile.add_argument(
         "--allow-drift",
         action="store_true",
         help="Return success while still reporting drift.",
@@ -5121,6 +5291,64 @@ def build_parser() -> argparse.ArgumentParser:
     report_validate.add_argument("--input", required=True)
     report_validate.add_argument("--format", choices=["text", "json"], default="text")
     report_validate.set_defaults(func=cmd_fleet_report_validate)
+    report_explain = report_sub.add_parser("explain-run")
+    report_explain.add_argument("--run-id", required=True)
+    report_explain.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    report_explain.add_argument("--log-file", default="")
+    report_explain.add_argument("--format", choices=["text", "json"], default="json")
+    report_explain.set_defaults(func=cmd_fleet_report_explain_run)
+
+    queue = sub.add_parser("fleet-queue")
+    queue_sub = queue.add_subparsers(dest="fleet_queue_command", required=True)
+    queue_generate = queue_sub.add_parser("generate")
+    queue_generate.add_argument("--manifest", default="fleet.yml")
+    queue_generate.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    queue_generate.add_argument("--input", default="")
+    queue_generate.add_argument("--registry", action="store_true")
+    queue_generate.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    queue_generate.add_argument("--stale-days", type=int, default=7)
+    queue_generate.add_argument("--format", choices=["text", "json"], default="json")
+    queue_generate.set_defaults(func=cmd_fleet_queue_generate)
+    queue_dispatch = queue_sub.add_parser("dispatch")
+    queue_dispatch.add_argument("--id", required=True)
+    queue_dispatch.add_argument("--manifest", default="fleet.yml")
+    queue_dispatch.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    queue_dispatch.add_argument("--input", default="")
+    queue_dispatch.add_argument("--registry", action="store_true")
+    queue_dispatch.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    queue_dispatch.add_argument("--stale-days", type=int, default=7)
+    queue_dispatch.add_argument(
+        "--dry-run", action=argparse.BooleanOptionalAction, default=True
+    )
+    queue_dispatch.add_argument("--format", choices=["text", "json"], default="json")
+    queue_dispatch.set_defaults(func=cmd_fleet_queue_dispatch)
+
+    fleetbot = sub.add_parser("fleetbot")
+    fleetbot_sub = fleetbot.add_subparsers(dest="fleetbot_command", required=True)
+    fleetbot_render = fleetbot_sub.add_parser("render-command")
+    fleetbot_render.add_argument("--command", dest="command_name", required=True)
+    fleetbot_render.add_argument("--repo", default="")
+    fleetbot_render.add_argument("--run-id", default="")
+    fleetbot_render.add_argument("--manifest", default="fleet.yml")
+    fleetbot_render.add_argument("--issue-repo", default="JSONbored/aio-fleet")
+    fleetbot_render.add_argument("--input", default="")
+    fleetbot_render.add_argument("--registry", action="store_true")
+    fleetbot_render.add_argument(
+        "--include-activity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    fleetbot_render.add_argument("--stale-days", type=int, default=7)
+    fleetbot_render.add_argument("--format", choices=["text", "json"], default="json")
+    fleetbot_render.set_defaults(func=cmd_fleetbot_render_command)
 
     poll = sub.add_parser("poll")
     poll.add_argument("--no-prs", action="store_true")

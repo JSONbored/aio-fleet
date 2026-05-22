@@ -13,6 +13,8 @@ from typing import Any
 from aio_fleet.catalog import sync_catalog_assets
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
+from aio_fleet.failure_classifier import classify_workflow_state
+from aio_fleet.fleet_queue import enrich_command_center_state
 from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import compute_registry_tags, verify_registry_tags
@@ -24,13 +26,15 @@ from aio_fleet.validators import catalog_repo_failures
 from aio_fleet.workflow_health import control_plane_health
 
 DASHBOARD_LABEL = "fleet-dashboard"
-DASHBOARD_TITLE = "Fleet Update Dashboard"
+DASHBOARD_TITLE = "Fleet Command Center"
 STATE_START = "<!-- aio-fleet-dashboard-state"
 STATE_START_BASE64 = "<!-- aio-fleet-dashboard-state:base64"
 STATE_END = "-->"
 DASHBOARD_COMMANDS = {
     "rescan": "Rescan dashboard",
     "upstream_monitor": "Run upstream monitor",
+    "standards_reconcile": "Run standards reconcile",
+    "queue_publish_checks": "Queue publish checks",
 }
 GITHUB_CLI_TOKEN_KEYS = (
     "AIO_FLEET_DASHBOARD_TOKEN",
@@ -134,6 +138,7 @@ def dashboard_report(
         include_registry=include_registry,
         catalog_sync=_catalog_sync_map(manifest),
         redact_private=True,
+        registry_verify_attempts=1,
     )
     _apply_release_states(active_rows, release_rows, registry_rows)
     workflow = control_plane_health(repo=issue_repo)
@@ -148,12 +153,14 @@ def dashboard_report(
         workflow=workflow,
         warnings=warnings,
     )
+    failures = classify_workflow_state(workflow)
     state = FleetReport(
         generated_at=generated_at,
         issue_repo=issue_repo,
         warnings=warnings,
         summary=summary,
         rows=active_rows,
+        failures=failures,
         activity=activity_rows,
         destination_repos=destination_rows,
         rehab_repos=rehab_rows,
@@ -164,6 +171,7 @@ def dashboard_report(
     ).to_state()
     state = _redact_private_dashboard_state(manifest, state)
     state = _with_refreshed_dashboard_summary(state)
+    state = enrich_command_center_state(state)
     state = public_fleet_report_state(state)
     return {"state": state, "body": render_dashboard(state)}
 
@@ -253,6 +261,12 @@ def render_dashboard(state: dict[str, Any]) -> str:
     registry_rows = list(state.get("registry", []))
     release_rows = list(state.get("releases", []))
     cleanup_rows = list(state.get("cleanup", []))
+    action_rows = list(state.get("actions", []))
+    failure_rows = list(state.get("failures", []))
+    approval_rows = list(state.get("approvals", []))
+    catalog = dict(state.get("catalog", {}))
+    standards = dict(state.get("standards", {}))
+    candidates = dict(state.get("candidates", {}))
     workflow = dict(state.get("workflow", {}))
     warnings = list(state.get("warnings", []))
     summary = dict(state.get("summary", {}))
@@ -260,23 +274,37 @@ def render_dashboard(state: dict[str, Any]) -> str:
     triage = [row for row in rows if _is_triage_update(row)]
     blocked = [row for row in rows if _is_blocked_update(row)]
     lines = [
-        "# Fleet Update Dashboard",
+        "# Fleet Command Center",
         "",
         f"Last updated: `{state.get('generated_at', '')}`",
         "",
         "> Source repo updates start in each `<app>-aio` repo. `awesome-unraid` is the downstream catalog destination and sync follows validated source changes.",
         "",
-        "## Summary",
-        "",
-        f"Posture: `{summary.get('posture', 'unknown')}`",
-        "",
-        "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
-            **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
-        ),
-        "",
     ]
+    _render_command_center_section(
+        lines,
+        summary=summary,
+        actions=action_rows,
+        approvals=approval_rows,
+        failures=failure_rows,
+        catalog=catalog,
+        standards=standards,
+        candidates=candidates,
+    )
+    lines.extend(
+        [
+            "## Summary",
+            "",
+            f"Posture: `{summary.get('posture', 'unknown')}`",
+            "",
+            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+                **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
+            ),
+            "",
+        ]
+    )
     if warnings:
         lines.extend(["## Warnings", ""])
         lines.extend(f"- {warning}" for warning in warnings)
@@ -305,16 +333,169 @@ def render_dashboard(state: dict[str, Any]) -> str:
         ]
     )
     body = "\n".join(lines)
-    assert_public_text(
-        stable_report_json(state), context="Fleet Update Dashboard state"
-    )
-    assert_public_text(body, context="Fleet Update Dashboard body")
+    assert_public_text(stable_report_json(state), context="Fleet Command Center state")
+    assert_public_text(body, context="Fleet Command Center body")
     return body
 
 
 def _encoded_dashboard_state(state: dict[str, Any]) -> str:
     raw = json.dumps(state, indent=2, sort_keys=True).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
+
+
+def _render_command_center_section(
+    lines: list[str],
+    *,
+    summary: dict[str, Any],
+    actions: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+    catalog: dict[str, Any],
+    standards: dict[str, Any],
+    candidates: dict[str, Any],
+) -> None:
+    blockers = [
+        action
+        for action in actions
+        if action.get("risk") == "high" or action.get("state") == "blocked"
+    ]
+    lines.extend(
+        [
+            "## Fleet Command Center",
+            "",
+            f"Posture: `{summary.get('posture', 'unknown')}`",
+            "",
+            "| Actions | Blockers | Pending Approvals | Failures | Catalog | Standards |",
+            "| ---: | ---: | ---: | ---: | --- | --- |",
+            "| {actions} | {blockers} | {approvals} | {failures} | {catalog} | {standards} |".format(
+                actions=_cell(summary.get("actions_queued", len(actions))),
+                blockers=_cell(len(blockers)),
+                approvals=_cell(summary.get("pending_approvals", len(approvals))),
+                failures=_cell(summary.get("failure_classifications", len(failures))),
+                catalog=_cell(catalog.get("state", "unknown")),
+                standards=_cell(standards.get("state", "unknown")),
+            ),
+            "",
+        ]
+    )
+    _render_action_table(lines, "Current Blockers", blockers)
+    _render_approval_table(lines, approvals)
+    _render_action_table(lines, "Release Queue", _actions_by_kind(actions, "release"))
+    _render_action_table(lines, "Upstream Queue", _actions_by_kind(actions, "upstream"))
+    _render_action_table(lines, "Catalog Queue", _actions_by_kind(actions, "catalog"))
+    _render_failure_table(lines, failures)
+    _render_candidate_lane(lines, candidates)
+
+
+def _render_action_table(
+    lines: list[str],
+    title: str,
+    actions: list[dict[str, Any]],
+) -> None:
+    lines.extend([f"### {title}", ""])
+    if not actions:
+        lines.extend(["No queued items.", ""])
+        return
+    lines.extend(
+        [
+            "| ID | Kind | Repo | Component | State | Risk | Next Action |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for action in actions[:10]:
+        lines.append(
+            "| {id} | {kind} | {repo} | {component} | {state} | {risk} | {next_action} |".format(
+                id=f"`{_cell(action.get('id', ''))}`",
+                kind=_cell(action.get("kind", "")),
+                repo=_cell(action.get("repo", "")),
+                component=_cell(action.get("component", "")),
+                state=_cell(action.get("state", "")),
+                risk=_cell(action.get("risk", "")),
+                next_action=_cell(action.get("next_command", "")),
+            )
+        )
+    lines.append("")
+
+
+def _render_approval_table(lines: list[str], approvals: list[dict[str, Any]]) -> None:
+    lines.extend(["### Pending Approvals", ""])
+    if not approvals:
+        lines.extend(["No protected approvals are waiting in the queue.", ""])
+        return
+    lines.extend(
+        [
+            "| ID | Repo | Component | SHA | Risk | Next Action |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for approval in approvals[:10]:
+        lines.append(
+            "| {id} | {repo} | {component} | {sha} | {risk} | {next_action} |".format(
+                id=f"`{_cell(approval.get('id', ''))}`",
+                repo=_cell(approval.get("repo", "")),
+                component=_cell(approval.get("component", "")),
+                sha=_cell(_short_sha(str(approval.get("target_sha", "")))),
+                risk=_cell(approval.get("risk", "")),
+                next_action=_cell(approval.get("next_action", "")),
+            )
+        )
+    lines.append("")
+
+
+def _render_failure_table(lines: list[str], failures: list[dict[str, Any]]) -> None:
+    lines.extend(["### Recent Failure Classifications", ""])
+    if not failures:
+        lines.extend(["No classified recent failures.", ""])
+        return
+    lines.extend(
+        [
+            "| Run | Root Cause | Confidence | Summary | Next Action |",
+            "| --- | --- | ---: | --- | --- |",
+        ]
+    )
+    for failure in failures[:10]:
+        run_id = str(failure.get("run_id", ""))
+        run_url = str(failure.get("run_url", ""))
+        run = f"[{run_id}]({run_url})" if run_id and run_url else run_id
+        lines.append(
+            "| {run} | {root} | {confidence} | {summary} | {next_action} |".format(
+                run=_cell(run),
+                root=_cell(failure.get("root_cause", "")),
+                confidence=_cell(failure.get("confidence", "")),
+                summary=_cell(failure.get("summary", "")),
+                next_action=_cell(failure.get("next_action", "")),
+            )
+        )
+    lines.append("")
+
+
+def _render_candidate_lane(lines: list[str], candidates: dict[str, Any]) -> None:
+    required = candidates.get("required_bootstrap", [])
+    required = required if isinstance(required, list) else []
+    lines.extend(
+        [
+            "### New AIO Candidate Lane",
+            "",
+            f"State: `{_cell(candidates.get('state', 'planning'))}`",
+            "",
+        ]
+    )
+    if required:
+        lines.append("Bootstrap gates:")
+        lines.extend(f"- {_cell(item)}" for item in required[:8])
+        lines.append("")
+
+
+def _actions_by_kind(
+    actions: list[dict[str, Any]], prefix: str
+) -> list[dict[str, Any]]:
+    return [
+        action for action in actions if str(action.get("kind", "")).startswith(prefix)
+    ]
+
+
+def _short_sha(value: str) -> str:
+    return value[:12] if FULL_SHA_RE.fullmatch(value) else value
 
 
 def alert_warnings(env: dict[str, str]) -> list[str]:
@@ -376,6 +557,12 @@ def _redact_private_dashboard_state(
         for row in list(state.get("cleanup", []))
         if isinstance(row, dict)
     ]
+    for key in ("actions", "approvals", "failures"):
+        redacted[key] = [
+            row
+            for row in list(state.get(key, []))
+            if isinstance(row, dict) and str(row.get("repo", "")) not in private_repos
+        ]
     return redacted
 
 
@@ -426,7 +613,7 @@ def upsert_dashboard_issue(
     label: str = DASHBOARD_LABEL,
     dry_run: bool,
 ) -> DashboardIssueResult:
-    assert_public_text(body, context="Fleet Update Dashboard body")
+    assert_public_text(body, context="Fleet Command Center body")
     existing = (
         _dashboard_issue_by_number(issue_repo, issue_number)
         if issue_number
@@ -961,7 +1148,7 @@ def _repo_registry_states(repo: RepoConfig) -> dict[str, dict[str, Any]]:
     for component in components:
         try:
             tags = compute_registry_tags(repo, sha=sha, component=component)
-            failures = verify_registry_tags(tags.all_tags)
+            failures = verify_registry_tags(tags.all_tags, dockerhub_attempts=1)
             states[component] = {
                 "repo": repo.name,
                 "component": component,
@@ -1940,8 +2127,11 @@ def _render_controls(lines: list[str]) -> None:
         [
             "## Controls",
             "",
-            "- [ ] Rescan dashboard",
-            "- [ ] Run upstream monitor",
+        ]
+    )
+    lines.extend(f"- [ ] {label}" for label in DASHBOARD_COMMANDS.values())
+    lines.extend(
+        [
             "",
             "> Check one box to trigger the central workflow. The dashboard rewrites this issue body in place and resets controls after the run.",
             "",

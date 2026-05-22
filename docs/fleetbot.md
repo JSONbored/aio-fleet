@@ -28,20 +28,25 @@ Contract helpers:
 python -m aio_fleet fleet-report generate --registry --include-activity --format json
 python -m aio_fleet fleet-report schema
 python -m aio_fleet fleet-report validate --input fleet-report.json
+python -m aio_fleet fleet-queue generate --registry --format json
+python -m aio_fleet fleetbot render-command --command status --format json
 ```
 
-The report includes active repo/component rows, upstream status, safety,
+FleetReport v4 is the AIO Command Center contract. It includes active
+repo/component rows, upstream status, safety,
 required checks, signed commit state, registry verification, release readiness,
 GitHub activity, cleanup drift, control-plane workflow health, alert warnings,
-and next actions. New surfaces should add presentation only; they should not
-recompute fleet truth independently.
+classified failures, pending approvals, catalog readiness, standards drift, a
+new-candidate planning lane, and one shared action queue. New surfaces should
+add presentation only; they should not recompute fleet truth independently.
 
 ## Product Surfaces
 
 - GitHub Action: thin Marketplace wrapper around the CLI for easy OSS adoption.
 - GitHub App: required checks, signed PRs, issue dashboard, and alert routing.
-- Discord bot: `/fleet status`, `/fleet updates`, `/fleet blocked`,
-  `/fleet repo <name>`, and `/fleet release-ready <name>`.
+- Discord bot: `/fleet status`, `/fleet blockers`, `/fleet approvals`,
+  `/fleet releases`, `/fleet upstream`, `/fleet repo <name>`, and
+  `/fleet explain <run-id>`.
 - Raycast extension: local operator command center for status, PRs, registry
   state, release readiness, and workflow links.
 - Web dashboard: later, after CLI/App/Discord usage proves the workflow.

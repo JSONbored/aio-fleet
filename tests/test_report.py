@@ -29,10 +29,16 @@ def test_fleet_report_round_trips_stable_shape() -> None:
 def test_fleet_report_schema_declares_required_contract() -> None:
     schema = fleet_report_json_schema()
 
-    assert schema["properties"]["schema_version"]["const"] == 3  # nosec B101
+    assert schema["properties"]["schema_version"]["const"] == 4  # nosec B101
     for key in (
         "summary",
         "rows",
+        "actions",
+        "failures",
+        "approvals",
+        "catalog",
+        "standards",
+        "candidates",
         "activity",
         "registry",
         "releases",
@@ -42,7 +48,7 @@ def test_fleet_report_schema_declares_required_contract() -> None:
 
 
 def test_fleet_report_schema_snapshot() -> None:
-    snapshot = Path("tests/snapshots/fleet-report-schema-v3.json")
+    snapshot = Path("tests/snapshots/fleet-report-schema-v4.json")
 
     assert stable_report_json(
         fleet_report_json_schema()

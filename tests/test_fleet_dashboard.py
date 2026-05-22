@@ -568,6 +568,8 @@ repos:
     assert state["registry"] == []  # nosec B101
     assert release["state"] == "private-skipped"  # nosec B101
     assert state["cleanup"][0]["state"] == "private-skipped"  # nosec B101
+    assert state["actions"] == []  # nosec B101
+    assert state["approvals"] == []  # nosec B101
     assert state["summary"]["publish_missing"] == 0  # nosec B101
     assert state["summary"]["release_due"] == 0  # nosec B101
     assert "PrivateOrg/private-service-aio" not in hidden  # nosec B101
@@ -1209,6 +1211,12 @@ repos:
     assert row["release"] == "publish-missing"  # nosec B101
     assert report["state"]["summary"]["publish_missing"] == 1  # nosec B101
     assert report["state"]["summary"]["posture"] == "blocked"  # nosec B101
+    assert report["state"]["actions"][0]["kind"] == "registry-publish"  # nosec B101
+    assert report["state"]["approvals"][0]["repo"] == "example-aio"  # nosec B101
+    assert report["state"]["catalog"]["state"] == "ready"  # nosec B101
+    assert report["state"]["standards"]["state"] == "ok"  # nosec B101
+    assert "Fleet Command Center" in str(report["body"])  # nosec B101
+    assert "Pending Approvals" in str(report["body"])  # nosec B101
     assert "publish-missing" in str(report["body"])  # nosec B101
 
 
@@ -1338,7 +1346,7 @@ def test_dashboard_redacts_non_public_text_from_body_and_hidden_state() -> None:
     unsafe_worktree = ".codex/worktrees/2551/aio-fleet"
     unsafe_webhook = "https://discord.com/api/webhooks/123/secret"
     state = {
-        "schema_version": 3,
+        "schema_version": 4,
         "generated_at": "2026-05-05T00:00:00+00:00",
         "issue_repo": "JSONbored/aio-fleet",
         "summary": {"posture": "blocked"},
@@ -1503,6 +1511,8 @@ def test_dashboard_command_parser_detects_checked_controls() -> None:
     assert commands == {  # nosec B101
         "rescan": True,
         "upstream_monitor": False,
+        "standards_reconcile": False,
+        "queue_publish_checks": False,
     }
 
 
@@ -1519,7 +1529,7 @@ def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> No
         ): [
             {
                 "number": 55,
-                "title": "Fleet Update Dashboard",
+                "title": "Fleet Command Center",
                 "url": "https://github.com/JSONbored/aio-fleet/issues/55",
                 "updatedAt": "2026-05-04T19:00:00Z",
                 "body": "<!-- aio-fleet-dashboard-state",
@@ -1537,7 +1547,7 @@ def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> No
         ): [
             {
                 "number": 58,
-                "title": "Fleet Update Dashboard",
+                "title": "Fleet Command Center",
                 "url": "https://github.com/JSONbored/aio-fleet/issues/58",
                 "updatedAt": "2026-05-04T12:00:00Z",
                 "body": "<!-- aio-fleet-dashboard-state",
@@ -1545,7 +1555,7 @@ def test_find_dashboard_issue_prefers_labeled_canonical_issue(monkeypatch) -> No
             },
             {
                 "number": 55,
-                "title": "Fleet Update Dashboard",
+                "title": "Fleet Command Center",
                 "url": "https://github.com/JSONbored/aio-fleet/issues/55",
                 "updatedAt": "2026-05-04T19:00:00Z",
                 "body": "<!-- aio-fleet-dashboard-state",
@@ -1584,7 +1594,7 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
             stdout=json.dumps(
                 {
                     "number": 55,
-                    "title": "Fleet Update Dashboard",
+                    "title": "Fleet Command Center",
                     "url": "https://github.com/JSONbored/aio-fleet/issues/55",
                     "updatedAt": "2026-05-04T19:00:00Z",
                     "body": "<!-- aio-fleet-dashboard-state",
@@ -1615,7 +1625,7 @@ def test_dashboard_issue_commands_accepts_labeled_dashboard_issue(
             stdout=json.dumps(
                 {
                     "number": 55,
-                    "title": "Fleet Update Dashboard",
+                    "title": "Fleet Command Center",
                     "state": "OPEN",
                     "body": (
                         "- [x] Run upstream monitor\n"
@@ -1651,7 +1661,7 @@ def test_dashboard_issue_commands_rejects_unlabeled_body_controls(
             stdout=json.dumps(
                 {
                     "number": 55,
-                    "title": "Fleet Update Dashboard",
+                    "title": "Fleet Command Center",
                     "state": "OPEN",
                     "body": (
                         "- [x] Run upstream monitor\n"
@@ -1748,7 +1758,7 @@ def test_dashboard_issue_commands_rejects_unlabeled_non_dashboard_issue(
             stdout=json.dumps(
                 {
                     "number": 55,
-                    "title": "Fleet Update Dashboard",
+                    "title": "Fleet Command Center",
                     "state": "OPEN",
                     "body": "ordinary issue body",
                     "labels": [],
