@@ -3327,10 +3327,13 @@ def _publish_github_prerelease(
     )
     action = "updated" if view.returncode == 0 else "created"
     target = head_target if action == "created" else release_target
+    allowed_existing_targets = {target}
+    if action == "updated":
+        allowed_existing_targets.add(head_target)
     if action == "updated":
         existing = _github_release_view_data(view.stdout)
         existing_target = str(existing.get("targetCommitish", "") or "").strip()
-        if existing_target and existing_target != target:
+        if existing_target and existing_target not in allowed_existing_targets:
             print(
                 f"{repo.name}:{component}: existing prerelease {tag} targets "
                 f"{existing_target}; refusing to retarget immutable release to "
@@ -3339,6 +3342,8 @@ def _publish_github_prerelease(
                 file=sys.stderr,
             )
             raise SystemExit(1)
+        if existing_target == head_target:
+            target = existing_target
         if _github_prerelease_matches(
             existing,
             target=target,
@@ -3409,7 +3414,7 @@ def _publish_github_prerelease(
         if view.returncode == 0:
             existing = _github_release_view_data(view.stdout)
             existing_target = str(existing.get("targetCommitish", "") or "").strip()
-            if existing_target and existing_target != target:
+            if existing_target and existing_target not in allowed_existing_targets:
                 print(
                     f"{repo.name}:{component}: existing prerelease {tag} targets "
                     f"{existing_target}; refusing to retarget immutable release to "
