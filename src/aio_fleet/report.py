@@ -6,7 +6,7 @@ from typing import Any
 
 from aio_fleet.public_text import assert_public_text, public_text_safe_value
 
-FLEET_REPORT_SCHEMA_VERSION = 3
+FLEET_REPORT_SCHEMA_VERSION = 4
 FLEET_REPORT_TOP_LEVEL_KEYS = (
     "schema_version",
     "generated_at",
@@ -14,6 +14,12 @@ FLEET_REPORT_TOP_LEVEL_KEYS = (
     "warnings",
     "summary",
     "rows",
+    "actions",
+    "failures",
+    "approvals",
+    "catalog",
+    "standards",
+    "candidates",
     "activity",
     "destination_repos",
     "rehab_repos",
@@ -32,6 +38,12 @@ class FleetReport:
     issue_repo: str
     summary: dict[str, Any]
     rows: list[dict[str, Any]]
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    approvals: list[dict[str, Any]] = field(default_factory=list)
+    catalog: dict[str, Any] = field(default_factory=dict)
+    standards: dict[str, Any] = field(default_factory=dict)
+    candidates: dict[str, Any] = field(default_factory=dict)
     activity: list[dict[str, Any]] = field(default_factory=list)
     destination_repos: list[dict[str, Any]] = field(default_factory=list)
     rehab_repos: list[dict[str, Any]] = field(default_factory=list)
@@ -50,6 +62,12 @@ class FleetReport:
             "warnings": self.warnings,
             "summary": self.summary,
             "rows": self.rows,
+            "actions": self.actions,
+            "failures": self.failures,
+            "approvals": self.approvals,
+            "catalog": self.catalog,
+            "standards": self.standards,
+            "candidates": self.candidates,
             "activity": self.activity,
             "destination_repos": self.destination_repos,
             "rehab_repos": self.rehab_repos,
@@ -91,7 +109,7 @@ def fleet_report_json_schema() -> dict[str, Any]:
     array_map = {"type": "array", "items": object_map}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/JSONbored/aio-fleet/schemas/fleet-report-v3.json",
+        "$id": "https://github.com/JSONbored/aio-fleet/schemas/fleet-report-v4.json",
         "title": "AIO Fleet Report",
         "type": "object",
         "additionalProperties": False,
@@ -103,6 +121,12 @@ def fleet_report_json_schema() -> dict[str, Any]:
             "warnings": {"type": "array", "items": {"type": "string"}},
             "summary": object_map,
             "rows": array_map,
+            "actions": array_map,
+            "failures": array_map,
+            "approvals": array_map,
+            "catalog": object_map,
+            "standards": object_map,
+            "candidates": object_map,
             "activity": array_map,
             "destination_repos": array_map,
             "rehab_repos": array_map,
@@ -131,6 +155,9 @@ def validate_report_shape(state: dict[str, Any]) -> list[str]:
     for key in (
         "warnings",
         "rows",
+        "actions",
+        "failures",
+        "approvals",
         "activity",
         "destination_repos",
         "rehab_repos",
@@ -140,7 +167,7 @@ def validate_report_shape(state: dict[str, Any]) -> list[str]:
     ):
         if key in state and not isinstance(state[key], list):
             failures.append(f"{key}: expected list")
-    for key in ("summary", "workflow"):
+    for key in ("summary", "workflow", "catalog", "standards", "candidates"):
         if key in state and not isinstance(state[key], dict):
             failures.append(f"{key}: expected object")
     for key in ("generated_at", "issue_repo"):

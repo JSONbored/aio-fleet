@@ -81,7 +81,7 @@ integration tests are configured centrally but run on `main`, release, or manual
 dispatch instead of every upstream PR. A real failed runtime check still marks
 the assessment `blocked`.
 
-## Fleet Dashboard
+## Fleet Command Center
 
 The durable operator view is one issue in `JSONbored/aio-fleet`:
 
@@ -113,6 +113,12 @@ scheduled jobs can compare transitions later. It tracks:
   gaps, and catalog-sync needs;
 - control-plane workflow health and dashboard control availability;
 - cleanup drift from retired shared app-repo files;
+- v4 command-center actions for upstream PRs, release transactions, protected
+  registry publishes, catalog sync, standards drift repair, and failed-run
+  retries;
+- pending protected publish approvals with repo/component/SHA context;
+- classified control-plane failures with exact next actions;
+- catalog readiness, standards drift, and the new AIO candidate planning lane;
 - an overall posture of `green`, `watch`, `action required`, or `blocked`;
 
 The `Controls` section has durable checkbox commands:
@@ -120,6 +126,9 @@ The `Controls` section has durable checkbox commands:
 - `Rescan dashboard` refreshes the dashboard issue in place.
 - `Run upstream monitor` runs the central upstream monitor, opens or updates
   signed source PRs when needed, then refreshes the same dashboard issue.
+- `Run standards reconcile` queues the existing standards drift reconcilers.
+- `Queue publish checks` refreshes release/registry truth and surfaces
+  protected publish queue entries without bypassing approvals.
 
 Both controls reset automatically after the workflow rewrites the issue body.
 They should not create dashboard comments.
@@ -133,6 +142,10 @@ The same underlying state is available without mutating the dashboard issue:
 python -m aio_fleet fleet-report generate --registry --include-activity --format json
 python -m aio_fleet fleet-report schema
 python -m aio_fleet fleet-report validate --input fleet-report.json
+python -m aio_fleet fleet-report explain-run --run-id <run-id> --format json
+python -m aio_fleet fleet-queue generate --registry --format json
+python -m aio_fleet fleet-queue dispatch --id <action-id> --dry-run
+python -m aio_fleet fleetbot render-command --command status --format json
 ```
 
 Use `fleet-report generate` for future GitHub Pages, Discord, Raycast, or
@@ -140,6 +153,13 @@ GitHub Action surfaces. Those surfaces should consume the versioned report
 object and avoid scraping the rendered issue body. The generated report and the
 dashboard body are public-text guarded, so local paths, webhook URLs, and similar
 operator-only strings are redacted before output.
+
+Autopilot is approved autopilot, not blind mutation. The queue may identify and
+prepare safe work, but merge, protected registry publish, destructive cleanup,
+and external mutations still go through the existing required checks and
+GitHub environment approvals. `fleet-queue dispatch` is dry-run only in this
+slice so the approval context can be reviewed before workflow dispatch becomes
+operator-enabled.
 
 `nanoclaw-aio` is an active multi-component fleet repo. It participates in
 dashboard state, upstream monitoring, registry verification, publish planning,

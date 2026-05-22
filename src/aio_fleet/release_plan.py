@@ -38,6 +38,7 @@ def release_plan_for_manifest(
     include_registry: bool = False,
     catalog_sync: dict[str, bool] | None = None,
     redact_private: bool = False,
+    registry_verify_attempts: int = 8,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for repo in manifest.repos.values():
@@ -49,6 +50,7 @@ def release_plan_for_manifest(
                 repo,
                 include_registry=include_registry,
                 catalog_sync_needed=bool((catalog_sync or {}).get(repo.name)),
+                registry_verify_attempts=registry_verify_attempts,
             )
         )
     return rows
@@ -59,6 +61,7 @@ def release_plan_rows_for_repo(
     *,
     include_registry: bool = False,
     catalog_sync_needed: bool = False,
+    registry_verify_attempts: int = 8,
 ) -> list[dict[str, Any]]:
     if repo.publish_profile == "template":
         return [
@@ -67,6 +70,7 @@ def release_plan_rows_for_repo(
                 include_registry=include_registry,
                 catalog_sync_needed=catalog_sync_needed,
                 component="template",
+                registry_verify_attempts=registry_verify_attempts,
             )
         ]
     return [
@@ -75,6 +79,7 @@ def release_plan_rows_for_repo(
             include_registry=include_registry,
             catalog_sync_needed=catalog_sync_needed,
             component=component,
+            registry_verify_attempts=registry_verify_attempts,
         )
         for component in publish_components(repo)
     ]
@@ -86,6 +91,7 @@ def release_plan_for_repo(
     include_registry: bool = False,
     catalog_sync_needed: bool = False,
     component: str = "aio",
+    registry_verify_attempts: int = 8,
 ) -> dict[str, Any]:
     sha = _git_head(repo.path)
     warnings: list[str] = []
@@ -199,7 +205,11 @@ def release_plan_for_repo(
         )
         registry_tags["dockerhub"].extend(tags.dockerhub)
         registry_tags["ghcr"].extend(tags.ghcr)
-        registry_failures.extend(verify_registry_tags(tags.all_tags))
+        registry_failures.extend(
+            verify_registry_tags(
+                tags.all_tags, dockerhub_attempts=registry_verify_attempts
+            )
+        )
         if registry_failures:
             blockers.append("missing or unreachable registry tags")
 

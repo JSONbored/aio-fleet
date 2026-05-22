@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import shutil
 import subprocess  # nosec B404
@@ -23,6 +24,10 @@ from aio_fleet.release import (
     latest_changelog_version,
     latest_component_changelog_version,
     read_upstream_version,
+)
+
+REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS = int(
+    os.environ.get("AIO_FLEET_REGISTRY_INSPECT_TIMEOUT", "20")
 )
 
 
@@ -186,7 +191,10 @@ def _upstream_version_tag_allowed(
 
 
 def verify_registry_tags(
-    tags: list[str], *, env: Mapping[str, str] | None = None
+    tags: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    dockerhub_attempts: int = 8,
 ) -> list[str]:
     docker = shutil.which("docker")
     if docker is None:
@@ -194,7 +202,7 @@ def verify_registry_tags(
     failures: list[str] = []
     for tag in tags:
         failure = (
-            _verify_dockerhub_tag(docker, tag, env=env)
+            _verify_dockerhub_tag(docker, tag, env=env, attempts=dockerhub_attempts)
             if _is_dockerhub_tag(tag)
             else _verify_with_docker_imagetools(docker, tag, env=env)
         )
@@ -344,13 +352,20 @@ def _dockerhub_tag_delete_url(namespace: str, repository: str, tag: str) -> str:
 def _verify_with_docker_imagetools(
     docker: str, tag: str, *, env: Mapping[str, str] | None = None
 ) -> str | None:
-    result = subprocess.run(  # nosec B603
-        [docker, "buildx", "imagetools", "inspect", tag],
-        check=False,
-        text=True,
-        capture_output=True,
-        env=env,
-    )
+    try:
+        result = subprocess.run(  # nosec B603
+            [docker, "buildx", "imagetools", "inspect", tag],
+            check=False,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            f"{tag}: docker buildx imagetools inspect timed out after "
+            f"{REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS}s"
+        )
     if result.returncode == 0:
         return None
     detail = (result.stderr or result.stdout).strip()
@@ -373,6 +388,8 @@ def _verify_dockerhub_tag(
     docker_failure = _verify_with_docker_imagetools(docker, tag, env=env)
     if docker_failure is None:
         return None
+    if "timed out after" in docker_failure:
+        return docker_failure
 
     parsed = _dockerhub_tag_parts(tag)
     if parsed is None:

@@ -93,7 +93,7 @@ python -m aio_fleet doctor
 ## Rehab Mode
 
 `rehab` mode is intentionally planning-first and non-blocking. A rehab repo may
-appear in the Fleet Update Dashboard while staying out of active app commands
+appear in the Fleet Command Center while staying out of active app commands
 such as `validate --all`, registry verification, release publish, and upstream
 monitor `--all`.
 

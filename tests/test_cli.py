@@ -21,9 +21,13 @@ from aio_fleet.cli import (
     cmd_export_app_manifest,
     cmd_fleet_dashboard_commands,
     cmd_fleet_dashboard_update,
+    cmd_fleet_queue_dispatch,
+    cmd_fleet_queue_generate,
+    cmd_fleet_report_explain_run,
     cmd_fleet_report_generate,
     cmd_fleet_report_schema,
     cmd_fleet_report_validate,
+    cmd_fleetbot_render_command,
     cmd_hooks_install,
     cmd_infra_doctor,
     cmd_onboard_repo,
@@ -788,12 +792,18 @@ def test_fleet_report_generate_outputs_stable_state(
         lambda *_args, **_kwargs: {
             "body": "# Dashboard\n",
             "state": {
-                "schema_version": 3,
+                "schema_version": 4,
                 "generated_at": "2026-05-05T00:00:00+00:00",
                 "issue_repo": "JSONbored/aio-fleet",
                 "warnings": [],
                 "summary": {"posture": "green"},
                 "rows": [{"repo": "example-aio"}],
+                "actions": [],
+                "failures": [],
+                "approvals": [],
+                "catalog": {"state": "ready"},
+                "standards": {"state": "ok"},
+                "candidates": {"state": "planning"},
                 "activity": [],
                 "destination_repos": [],
                 "rehab_repos": [],
@@ -818,7 +828,7 @@ def test_fleet_report_generate_outputs_stable_state(
 
     assert result == 0  # nosec B101
     report = json.loads(capsys.readouterr().out)
-    assert report["schema_version"] == 3  # nosec B101
+    assert report["schema_version"] == 4  # nosec B101
     assert report["summary"]["posture"] == "green"  # nosec B101
     assert report["rows"][0]["repo"] == "example-aio"  # nosec B101
 
@@ -836,12 +846,18 @@ def test_fleet_report_generate_redacts_public_text(
         lambda *_args, **_kwargs: {
             "body": "# Dashboard\n",
             "state": {
-                "schema_version": 3,
+                "schema_version": 4,
                 "generated_at": "2026-05-05T00:00:00+00:00",
                 "issue_repo": "JSONbored/aio-fleet",
                 "warnings": [unsafe_webhook],
                 "summary": {"posture": "blocked"},
                 "rows": [{"repo": "example-aio", "next_action": unsafe_path}],
+                "actions": [],
+                "failures": [],
+                "approvals": [],
+                "catalog": {"state": "ready"},
+                "standards": {"state": "ok"},
+                "candidates": {"state": "planning"},
                 "activity": [],
                 "destination_repos": [],
                 "rehab_repos": [],
@@ -880,19 +896,25 @@ def test_fleet_report_schema_and_validate(tmp_path: Path, capsys) -> None:
 
     assert result == 0  # nosec B101
     schema = json.loads(capsys.readouterr().out)
-    assert schema["properties"]["schema_version"]["const"] == 3  # nosec B101
+    assert schema["properties"]["schema_version"]["const"] == 4  # nosec B101
     assert "rows" in schema["required"]  # nosec B101
 
     report = tmp_path / "report.json"
     report.write_text(
         json.dumps(
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "generated_at": "2026-05-05T00:00:00+00:00",
                 "issue_repo": "JSONbored/aio-fleet",
                 "warnings": [],
                 "summary": {},
                 "rows": [],
+                "actions": [],
+                "failures": [],
+                "approvals": [],
+                "catalog": {},
+                "standards": {},
+                "candidates": {},
                 "activity": [],
                 "destination_repos": [],
                 "rehab_repos": [],
@@ -922,6 +944,196 @@ def test_fleet_report_validate_rejects_schema_drift(tmp_path: Path, capsys) -> N
     assert any(
         "unsupported schema_version" in failure for failure in payload["failures"]
     )  # nosec B101
+
+
+def test_fleet_report_explain_run_classifies_log_file(tmp_path: Path, capsys) -> None:
+    log = tmp_path / "failed.log"
+    log.write_text("permission_denied: write_package for ghcr.io/jsonbored/sure-aio")
+
+    result = cmd_fleet_report_explain_run(
+        Namespace(
+            run_id="12345",
+            issue_repo="JSONbored/aio-fleet",
+            log_file=str(log),
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classification"]["root_cause"] == "ghcr-access"  # nosec B101
+
+
+def test_fleet_report_explain_run_omits_raw_failed_gh_output(
+    monkeypatch, capsys
+) -> None:
+    unsafe_path = "/Users/shadowbook/Documents/aio-fleet/.venv/bin/python"
+
+    def fake_run(*_args: object, **_kwargs: object):
+        return subprocess.CompletedProcess(
+            args=["gh"],
+            returncode=1,
+            stdout="",
+            stderr=f"pytest failed from {unsafe_path}",
+        )
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    result = cmd_fleet_report_explain_run(
+        Namespace(
+            run_id="12345",
+            issue_repo="JSONbored/aio-fleet",
+            log_file="",
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert unsafe_path not in output  # nosec B101
+    assert payload["command_error"] == (  # nosec B101
+        "gh run view failed; raw output omitted from report"
+    )
+
+
+def test_fleet_queue_generate_from_report_input(tmp_path: Path, capsys) -> None:
+    sha = "a" * 40
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 4,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "summary": {},
+                "releases": [
+                    {
+                        "repo": "sure-aio",
+                        "component": "aio",
+                        "state": "publish-missing",
+                        "sha": sha,
+                        "operator_commands": {
+                            "release_transaction": (
+                                "python -m aio_fleet release transaction "
+                                f"--repo sure-aio --component aio --sha {sha} --dry-run"
+                            )
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    result = cmd_fleet_queue_generate(
+        Namespace(
+            input=str(report),
+            manifest="fleet.yml",
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=False,
+            stale_days=7,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["actions"][0]["kind"] == "registry-publish"  # nosec B101
+
+
+def test_fleet_queue_dispatch_dry_run_from_report_input(tmp_path: Path, capsys) -> None:
+    sha = "a" * 40
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 4,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "summary": {},
+                "releases": [
+                    {
+                        "repo": "sure-aio",
+                        "component": "aio",
+                        "state": "publish-missing",
+                        "sha": sha,
+                    }
+                ],
+            }
+        )
+    )
+    queue_payload = _fleet_queue_generate_for_test(report, capsys)
+    action_id = json.loads(queue_payload)["actions"][0]["id"]
+
+    result = cmd_fleet_queue_dispatch(
+        Namespace(
+            id=action_id,
+            input=str(report),
+            manifest="fleet.yml",
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=False,
+            stale_days=7,
+            dry_run=True,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["would_dispatch"] is True  # nosec B101
+    assert "gh workflow run control-plane.yml" in payload["command"]  # nosec B101
+
+
+def test_fleetbot_render_command_from_report_input(tmp_path: Path, capsys) -> None:
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 4,
+                "generated_at": "2026-05-05T00:00:00+00:00",
+                "summary": {"posture": "green"},
+                "rows": [],
+                "releases": [],
+                "actions": [],
+                "failures": [],
+            }
+        )
+    )
+
+    result = cmd_fleetbot_render_command(
+        Namespace(
+            command_name="status",
+            repo="",
+            run_id="",
+            input=str(report),
+            manifest="fleet.yml",
+            issue_repo="JSONbored/aio-fleet",
+            registry=False,
+            include_activity=False,
+            stale_days=7,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "status"  # nosec B101
+    assert payload["visibility"] == "read-only"  # nosec B101
+
+
+def _fleet_queue_generate_for_test(report: Path, capsys) -> str:
+    cmd_fleet_queue_generate(
+        Namespace(
+            input=str(report),
+            manifest="fleet.yml",
+            issue_repo="JSONbored/aio-fleet",
+            registry=True,
+            include_activity=False,
+            stale_days=7,
+            format="json",
+        )
+    )
+    return capsys.readouterr().out
 
 
 def test_release_plan_outputs_all_repo_states(
@@ -1095,6 +1307,8 @@ def test_fleet_dashboard_commands_outputs_github_output(monkeypatch, capsys) -> 
         "requested=true",
         "rescan=true",
         "upstream_monitor=false",
+        "standards_reconcile=false",
+        "queue_publish_checks=false",
     ]
 
 

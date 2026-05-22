@@ -879,11 +879,13 @@ def test_dockerhub_verification_uses_docker_imagetools_first(monkeypatch) -> Non
     seen_commands: list[list[str]] = []
     inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
     seen_envs: list[dict[str, str] | None] = []
+    seen_timeouts: list[int | None] = []
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
 
     def fake_run(command: list[str], **kwargs):
         seen_commands.append(command)
         seen_envs.append(kwargs.get("env"))
+        seen_timeouts.append(kwargs.get("timeout"))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(registry.subprocess, "run", fake_run)
@@ -909,6 +911,28 @@ def test_dockerhub_verification_uses_docker_imagetools_first(monkeypatch) -> Non
         ]
     ]
     assert seen_envs == [inspect_env]  # nosec B101
+    assert seen_timeouts == [registry.REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS]  # nosec B101
+
+
+def test_registry_verification_reports_docker_inspect_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+
+    def fake_run(_command: list[str], **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["docker"], timeout=1)
+
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        registry.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Docker Hub API fallback should not run after timeout")
+        ),
+    )
+
+    failures = registry.verify_registry_tags(["jsonbored/sure-aio:latest"])
+
+    assert len(failures) == 1  # nosec B101
+    assert "timed out" in failures[0]  # nosec B101
 
 
 def test_dockerhub_verification_reports_malformed_json(monkeypatch) -> None:
@@ -1261,11 +1285,13 @@ def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     seen_commands: list[list[str]] = []
     inspect_env = {"DOCKER_CONFIG": "/workspace/aio-fleet-docker"}
     seen_envs: list[dict[str, str] | None] = []
+    seen_timeouts: list[int | None] = []
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
 
     def fake_run(command: list[str], **kwargs):
         seen_commands.append(command)
         seen_envs.append(kwargs.get("env"))
+        seen_timeouts.append(kwargs.get("timeout"))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(registry.subprocess, "run", fake_run)
@@ -1286,6 +1312,7 @@ def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
         ]
     ]
     assert seen_envs == [inspect_env]  # nosec B101
+    assert seen_timeouts == [registry.REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS]  # nosec B101
 
 
 def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) -> None:
