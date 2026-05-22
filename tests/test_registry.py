@@ -6,11 +6,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
+import pytest
+
 from aio_fleet import registry
 from aio_fleet.control_plane import registry_publish_command
 from aio_fleet.manifest import RepoConfig, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _clear_registry_verify_cache() -> None:
+    registry._REGISTRY_TAG_SUCCESS_CACHE.clear()
 
 
 def _git(path: Path, *args: str) -> None:
@@ -1313,6 +1320,25 @@ def test_ghcr_verification_uses_docker_imagetools(monkeypatch) -> None:
     ]
     assert seen_envs == [inspect_env]  # nosec B101
     assert seen_timeouts == [registry.REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS]  # nosec B101
+
+
+def test_registry_verification_caches_successes_in_process(monkeypatch) -> None:
+    seen_commands: list[list[str]] = []
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "docker")
+
+    def fake_run(command: list[str], **_kwargs):
+        seen_commands.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
+
+    assert (  # nosec B101
+        registry.verify_registry_tags(["ghcr.io/jsonbored/sure-aio:latest"]) == []
+    )
+    assert (  # nosec B101
+        registry.verify_registry_tags(["ghcr.io/jsonbored/sure-aio:latest"]) == []
+    )
+    assert len(seen_commands) == 1  # nosec B101
 
 
 def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) -> None:

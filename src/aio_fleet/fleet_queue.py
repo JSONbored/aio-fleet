@@ -66,6 +66,8 @@ def pending_approvals_from_actions(
                 "risk": action.get("risk", "medium"),
                 "target_sha": action.get("target_sha", ""),
                 "state": "queued",
+                "provenance": "operator-action",
+                "evidence": action.get("evidence", {}),
                 "workflow_dispatch": dispatch,
                 "next_action": (
                     "approve the protected registry-publish job only after the "
@@ -121,7 +123,7 @@ def standards_drift_from_state(state: dict[str, Any]) -> dict[str, Any]:
             "findings": row.get("findings", []),
         }
         for row in cleanup_rows
-        if row.get("state") == "drift"
+        if row.get("state") == "drift" and row.get("provenance") != "local-only"
     ]
     return {
         "state": "ok" if not drift_rows else "drift",
@@ -217,6 +219,13 @@ def _release_actions(release_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             continue
         sha = _safe_sha(row.get("sha", ""))
         if state in REGISTRY_PUBLISH_STATES:
+            failures = [
+                str(failure)
+                for failure in row.get("registry_failures", [])
+                if str(failure).strip()
+            ]
+            if not row.get("registry_verified") or not failures:
+                continue
             actions.append(
                 _action(
                     kind="registry-publish",
@@ -227,6 +236,14 @@ def _release_actions(release_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
                     requires_approval=True,
                     source="release-plan",
                     target_sha=sha,
+                    provenance="remote-confirmed",
+                    evidence={
+                        "registry_failures": failures,
+                        "registry_failure_evidence": row.get(
+                            "registry_failure_evidence", []
+                        ),
+                        "registry_tags": row.get("registry_tags", {}),
+                    },
                     next_command_args=_release_transaction_command(
                         repo, component, sha
                     ),
@@ -246,6 +263,8 @@ def _release_actions(release_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
                     requires_approval=True,
                     source="release-plan",
                     target_sha=sha,
+                    provenance=str(row.get("provenance", "operator-action")),
+                    evidence={"blockers": row.get("blockers", [])},
                     next_command_args=_release_transaction_command(
                         repo, component, sha
                     ),
@@ -267,6 +286,8 @@ def _release_actions(release_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
                     requires_approval=False,
                     source="release-plan",
                     target_sha=sha,
+                    provenance=str(row.get("provenance", "operator-action")),
+                    evidence={"warnings": row.get("warnings", [])},
                     next_command_args=_catalog_sync_command(repo),
                     workflow_dispatch={},
                 )
@@ -294,6 +315,13 @@ def _upstream_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 requires_approval=True,
                 source="upstream-monitor",
                 target_sha="",
+                provenance="operator-action",
+                evidence={
+                    "current": row.get("current", ""),
+                    "latest": row.get("latest", ""),
+                    "safety": row.get("safety", ""),
+                    "next_action": row.get("next_action", ""),
+                },
                 next_command_args=_upstream_monitor_command(repo),
                 workflow_dispatch={
                     "workflow": "control-plane.yml",
@@ -327,6 +355,8 @@ def _catalog_actions(destination_rows: list[dict[str, Any]]) -> list[dict[str, A
                 requires_approval=False,
                 source="catalog-readiness",
                 target_sha="",
+                provenance="operator-action",
+                evidence={"sync_queue": queue},
                 next_command_args=_catalog_sync_command(repo),
                 workflow_dispatch={},
             )
@@ -337,7 +367,7 @@ def _catalog_actions(destination_rows: list[dict[str, Any]]) -> list[dict[str, A
 def _standards_actions(cleanup_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     for row in cleanup_rows:
-        if row.get("state") != "drift":
+        if row.get("state") != "drift" or row.get("provenance") == "local-only":
             continue
         repo = _safe_name(row.get("repo", ""))
         if repo is None:
@@ -352,6 +382,8 @@ def _standards_actions(cleanup_rows: list[dict[str, Any]]) -> list[dict[str, Any
                 requires_approval=True,
                 source="standards-reconcile",
                 target_sha="",
+                provenance="remote-confirmed",
+                evidence={"findings": row.get("findings", [])},
                 next_command_args=_standards_reconcile_command(repo),
                 workflow_dispatch={
                     "workflow": "control-plane.yml",
@@ -386,6 +418,12 @@ def _failure_retry_actions(failures: list[dict[str, Any]]) -> list[dict[str, Any
                 requires_approval=False,
                 source="failure-classifier",
                 target_sha=_safe_sha(failure.get("sha", "")),
+                provenance="operator-action",
+                evidence={
+                    "root_cause": failure.get("root_cause", ""),
+                    "confidence": failure.get("confidence", ""),
+                    "next_action": failure.get("next_action", ""),
+                },
                 next_command_args=["gh", "run", "rerun", run_id],
                 workflow_dispatch={},
             )
@@ -403,6 +441,8 @@ def _action(
     requires_approval: bool,
     source: str,
     target_sha: str,
+    provenance: str,
+    evidence: dict[str, Any],
     next_command_args: list[str],
     workflow_dispatch: dict[str, Any],
 ) -> dict[str, Any]:
@@ -416,6 +456,8 @@ def _action(
         "risk": risk,
         "requires_approval": requires_approval,
         "source": source,
+        "provenance": provenance,
+        "evidence": evidence,
         "target_sha": target_sha,
         "next_command": next_command,
         "workflow_dispatch": workflow_dispatch,

@@ -70,6 +70,7 @@ python -m aio_fleet upstream monitor --all --dry-run
 python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
 python -m aio_fleet fleet-dashboard update --dry-run --registry --include-activity
 python -m aio_fleet fleet-report generate --registry --include-activity --format json
+python -m aio_fleet fleet-report closeout --format json
 python -m aio_fleet fleet-report schema
 python -m aio_fleet fleet-report validate --input fleet-report.json
 python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose

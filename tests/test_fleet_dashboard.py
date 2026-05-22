@@ -36,6 +36,11 @@ class _FakeAssessment:
 def _stable_dashboard_dependencies(monkeypatch):
     monkeypatch.setattr(
         fleet_dashboard,
+        "_github_actions_secret_exists",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
         "control_plane_health",
         lambda **_kwargs: {
             "state": "success",
@@ -80,6 +85,49 @@ def _stable_dashboard_dependencies(monkeypatch):
         ]
 
     monkeypatch.setattr(fleet_dashboard, "release_plan_for_manifest", fake_release_plan)
+
+
+def test_alert_warnings_skip_local_missing_env_when_actions_secret_exists(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_github_actions_secret_exists",
+        lambda repo, name: repo == "JSONbored/aio-fleet"
+        and name == "AIO_FLEET_ALERT_WEBHOOK_URL",
+    )
+
+    assert (  # nosec B101
+        fleet_dashboard.alert_warnings({}, issue_repo="JSONbored/aio-fleet") == []
+    )
+
+
+def test_dashboard_summary_keeps_non_response_issues_out_of_posture() -> None:
+    summary = fleet_dashboard.dashboard_summary(
+        active_rows=[],
+        activity_rows=[
+            {
+                "repo": "sure-aio",
+                "open_prs": 0,
+                "open_issues": 1,
+                "needs_response_issues": 0,
+                "clean_prs": 0,
+                "blocked_prs": 0,
+                "stale_prs": 0,
+            }
+        ],
+        destination_rows=[],
+        rehab_rows=[],
+        registry_rows=[],
+        release_rows=[],
+        cleanup_rows=[],
+        workflow={"state": "success"},
+        warnings=[],
+    )
+
+    assert summary["open_issues"] == 1  # nosec B101
+    assert summary["posture"] == "green"  # nosec B101
+    assert summary["remote_posture"] == "green"  # nosec B101
 
 
 def test_dashboard_renders_notify_only_update_and_webhook_warning(
@@ -1182,7 +1230,14 @@ repos:
                 "latest_github_release": {"state": "ok", "tag": "1.0.0-aio.1"},
                 "next_version": "1.0.0-aio.1",
                 "release_due": False,
+                "registry_verified": True,
                 "registry_failures": ["jsonbored/example-aio:latest: missing"],
+                "registry_failure_evidence": [
+                    {
+                        "failure": "jsonbored/example-aio:latest: missing",
+                        "provenance": "remote-confirmed",
+                    }
+                ],
                 "next_action": (
                     "python -m aio_fleet release transaction "
                     "--repo example-aio --sha " + "a" * 40 + " --dry-run"

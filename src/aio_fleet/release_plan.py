@@ -31,6 +31,8 @@ from aio_fleet.release import (
 )
 from aio_fleet.signing import generated_pr_signature_blockers
 
+_REGISTRY_VERIFY_CACHE: dict[tuple[tuple[str, ...], int, int], list[str]] = {}
+
 
 def release_plan_for_manifest(
     manifest: FleetManifest,
@@ -206,7 +208,7 @@ def release_plan_for_repo(
         registry_tags["dockerhub"].extend(tags.dockerhub)
         registry_tags["ghcr"].extend(tags.ghcr)
         registry_failures.extend(
-            verify_registry_tags(
+            _verify_registry_tags_for_plan(
                 tags.all_tags, dockerhub_attempts=registry_verify_attempts
             )
         )
@@ -258,9 +260,17 @@ def release_plan_for_repo(
         "release_due": bool(release_due),
         "catalog_sync_needed": catalog_sync_needed,
         "registry_state": "failed" if registry_failures else "ok",
+        "registry_verified": bool(
+            include_registry and repo.publish_profile != "template"
+        ),
         "registry_tags": registry_tags,
         "registry_failures": registry_failures,
+        "registry_failure_evidence": [
+            {"failure": failure, "provenance": "remote-confirmed"}
+            for failure in registry_failures
+        ],
         "state": state,
+        "provenance": _release_plan_provenance(state, registry_failures),
         "blockers": blockers,
         "warnings": warnings,
         "next_action": _next_release_action(
@@ -283,14 +293,43 @@ def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
         "release_due": False,
         "catalog_sync_needed": False,
         "registry_state": "private-skipped",
+        "registry_verified": False,
         "registry_tags": {"dockerhub": [], "ghcr": []},
         "registry_failures": [],
+        "registry_failure_evidence": [],
         "state": "private-skipped",
+        "provenance": "private-skipped",
         "blockers": [],
         "warnings": ["private-skipped"],
         "next_action": "private-skipped",
         "operator_commands": {},
     }
+
+
+def _verify_registry_tags_for_plan(
+    tags: list[str], *, dockerhub_attempts: int
+) -> list[str]:
+    key = (tuple(tags), dockerhub_attempts, id(verify_registry_tags))
+    if key in _REGISTRY_VERIFY_CACHE:
+        return list(_REGISTRY_VERIFY_CACHE[key])
+    failures = verify_registry_tags(tags, dockerhub_attempts=dockerhub_attempts)
+    if failures:
+        retry_failures = verify_registry_tags(
+            tags, dockerhub_attempts=dockerhub_attempts
+        )
+        failures = retry_failures
+    _REGISTRY_VERIFY_CACHE[key] = list(failures)
+    return failures
+
+
+def _release_plan_provenance(state: str, registry_failures: list[str]) -> str:
+    if state == "publish-missing" and registry_failures:
+        return "remote-confirmed"
+    if state in {"release-due", "catalog-sync-needed", "blocked"}:
+        return "operator-action"
+    if state == "watch":
+        return "external-transient"
+    return "remote-confirmed"
 
 
 def _next_release_action(
