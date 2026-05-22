@@ -2336,6 +2336,59 @@ def test_prerelease_publish_keeps_existing_release_target_after_followup_commit(
     )  # nosec B101
 
 
+def test_prerelease_publish_accepts_existing_head_target_after_followup_commit(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, release_sha = _write_alpha_prerelease_repo(tmp_path)
+    (repo_path / ".aio-fleet.yml").write_text("release: checked\n")
+    _git(repo_path, "add", ".aio-fleet.yml")
+    _git(repo_path, "commit", "-m", "chore(fleet): reconcile manifest")
+    head_sha = _git(repo_path, "rev-parse", "HEAD")
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=head_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "targetCommitish": head_sha,
+                        "name": "0.7.1-alpha.7-aio.1",
+                        "body": "- alpha release notes",
+                        "isPrerelease": True,
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=head_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert release_sha != head_sha  # nosec B101
+    assert (
+        "sure-aio:sure-alpha: prerelease=already-present "
+        "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
+    )  # nosec B101
+
+
 def test_prerelease_publish_preflights_release_credentials(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
