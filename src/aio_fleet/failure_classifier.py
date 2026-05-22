@@ -254,7 +254,25 @@ def classify_workflow_state(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     last_failure = workflow.get("last_failure")
     if not isinstance(last_failure, dict) or not last_failure:
         return []
+    if _workflow_recovered_after_failure(workflow, last_failure):
+        return []
     return [classify_failure_record({**last_failure, "repo": workflow.get("repo", "")})]
+
+
+def _workflow_recovered_after_failure(
+    workflow: dict[str, Any], last_failure: dict[str, Any]
+) -> bool:
+    latest = workflow.get("latest")
+    latest = latest if isinstance(latest, dict) else {}
+    if latest.get("conclusion") != "success":
+        return False
+    success_time = str(latest.get("updated_at") or latest.get("created_at") or "")
+    failure_time = str(
+        last_failure.get("updated_at") or last_failure.get("created_at") or ""
+    )
+    if success_time and failure_time:
+        return success_time > failure_time
+    return latest.get("id") != last_failure.get("id")
 
 
 def _summary_for(text: str, *, root_cause: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aio_fleet.failure_classifier import classify_failure_text
+from aio_fleet.failure_classifier import classify_failure_text, classify_workflow_state
 
 
 @pytest.mark.parametrize(
@@ -51,3 +51,48 @@ def test_classification_redacts_public_text() -> None:
 
     assert "/Users/shadowbook" not in str(result)  # nosec B101
     assert result["summary"] == "integration-test failure detected"  # nosec B101
+
+
+def test_workflow_classification_ignores_recovered_failure() -> None:
+    failures = classify_workflow_state(
+        {
+            "repo": "JSONbored/aio-fleet",
+            "state": "success",
+            "latest": {
+                "id": 200,
+                "conclusion": "success",
+                "updated_at": "2026-05-22T15:21:44Z",
+            },
+            "last_failure": {
+                "id": 100,
+                "conclusion": "failure",
+                "updated_at": "2026-05-22T13:15:04Z",
+                "title": "AIO Fleet Control Plane",
+            },
+        }
+    )
+
+    assert failures == []  # nosec B101
+
+
+def test_workflow_classification_keeps_current_failure() -> None:
+    failures = classify_workflow_state(
+        {
+            "repo": "JSONbored/aio-fleet",
+            "state": "failure",
+            "latest": {
+                "id": 200,
+                "conclusion": "failure",
+                "updated_at": "2026-05-22T15:21:44Z",
+            },
+            "last_failure": {
+                "id": 200,
+                "conclusion": "failure",
+                "updated_at": "2026-05-22T15:21:44Z",
+                "title": "AIO Fleet Control Plane",
+            },
+        }
+    )
+
+    assert len(failures) == 1  # nosec B101
+    assert failures[0]["run_id"] == "200"  # nosec B101
