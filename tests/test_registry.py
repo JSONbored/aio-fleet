@@ -328,7 +328,7 @@ def test_registry_only_component_uses_alpha_floating_tag(monkeypatch) -> None:
     ]
 
 
-def test_registry_only_prerelease_component_uses_sync_commit_tags(
+def test_registry_only_prerelease_component_requires_release_commit_for_tags(
     tmp_path: Path,
 ) -> None:
     repo_path = tmp_path / "sure-aio"
@@ -381,15 +381,9 @@ def test_registry_only_prerelease_component_uses_sync_commit_tags(
 
     tags = registry.compute_registry_tags(repo, sha=sha, component="sure-alpha")
 
-    assert tags.release_package_tag == "0.7.1-alpha.10-aio.1"  # nosec B101
-    assert tags.dockerhub == [  # nosec B101
-        "jsonbored/sure-aio-alpha:latest-alpha",
-        "jsonbored/sure-aio-alpha:0.7.1-alpha.10-aio.1",
-    ]
-    assert tags.ghcr == [  # nosec B101
-        "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
-        "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.10-aio.1",
-    ]
+    assert tags.release_package_tag == ""  # nosec B101
+    assert tags.dockerhub == []  # nosec B101
+    assert tags.ghcr == []  # nosec B101
 
 
 def test_registry_only_component_keeps_tags_after_non_release_followup(

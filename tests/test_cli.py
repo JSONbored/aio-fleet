@@ -1929,7 +1929,7 @@ def test_prerelease_publish_skips_matching_github_prerelease(
     )  # nosec B101
 
 
-def test_prerelease_publish_targets_registry_only_sync_commit(
+def test_prerelease_publish_requires_release_commit_target(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     manifest, repo_path, _release_sha = _write_alpha_prerelease_repo(tmp_path)
@@ -1962,10 +1962,8 @@ def test_prerelease_publish_targets_registry_only_sync_commit(
         )
     )
 
-    assert result == 0  # nosec B101
-    output = capsys.readouterr().out
-    assert "gh release create sure-alpha/0.7.1-alpha.7-aio.1" in output  # nosec B101
-    assert f"--target {expected_sha}" in output  # nosec B101
+    assert result == 1  # nosec B101
+    assert "github-prerelease-sure-alpha: exit 1" in capsys.readouterr().err  # nosec B101
 
 
 def test_prerelease_publish_treats_existing_release_create_conflict_as_present(

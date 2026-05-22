@@ -3339,24 +3339,7 @@ def _github_prerelease_matches(
 def _github_prerelease_target_commit(
     repo: RepoConfig, *, component: str, version: str
 ) -> str:
-    try:
-        return find_release_publish_target_commit(repo.path, version)
-    except SystemExit:
-        config = component_config(repo, component)
-        if str(config.get("release_policy", "")).strip() != "registry_only":
-            raise
-        if str(config.get("release_history", "")).strip() != "github_prerelease":
-            raise
-        release_package_tag = component_registry_release_tag(repo, component)
-        normalized_version = version[1:] if version.startswith("v") else version
-        normalized_release_package_tag = (
-            release_package_tag[1:]
-            if release_package_tag.startswith("v")
-            else release_package_tag
-        )
-        if normalized_version != normalized_release_package_tag:
-            raise
-        return _git_head(repo.path)
+    return find_release_publish_target_commit(repo.path, version)
 
 
 def _github_cli_env() -> dict[str, str] | None:
