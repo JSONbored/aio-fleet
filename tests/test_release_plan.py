@@ -772,6 +772,84 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     )
 
 
+def test_release_plan_marks_missing_registry_only_prerelease_due(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_tag_prefix": "sure-alpha/",
+                    "release_suffix": "aio",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    sha = "e" * 40
+    monkeypatch.setattr(release_plan_module, "_git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo, **_kwargs: {
+            "state": "unknown",
+            "detail": "release not found",
+        },
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_component_release_tag",
+        lambda _repo, _component: "sure-alpha/0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_next_component",
+        lambda _repo, _component: "0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_has_registry_only_component_changes",
+        lambda _repo, _component, _latest_tag: False,
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "compute_registry_tags",
+        lambda _repo, **_kwargs: SimpleNamespace(
+            dockerhub=["jsonbored/sure-aio-alpha:latest-alpha"],
+            ghcr=["ghcr.io/jsonbored/sure-aio-alpha:latest-alpha"],
+            all_tags=["jsonbored/sure-aio-alpha:latest-alpha"],
+        ),
+    )
+    monkeypatch.setattr(release_plan_module, "verify_registry_tags", lambda _tags: [])
+
+    plan = release_plan_for_repo(repo, include_registry=True, component="sure-alpha")
+
+    assert plan["release_due"] is True  # nosec B101
+    assert plan["state"] == "release-due"  # nosec B101
+    assert plan["next_action"] == (  # nosec B101
+        f"python -m aio_fleet release transaction --repo sure-aio "
+        f"--component sure-alpha --sha {sha} --dry-run"
+    )
+
+
 def test_release_plan_keeps_registry_only_helper_out_of_formal_release_lane(
     tmp_path: Path, monkeypatch
 ) -> None:

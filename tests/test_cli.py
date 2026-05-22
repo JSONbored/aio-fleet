@@ -1929,6 +1929,45 @@ def test_prerelease_publish_skips_matching_github_prerelease(
     )  # nosec B101
 
 
+def test_prerelease_publish_targets_registry_only_sync_commit(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, _release_sha = _write_alpha_prerelease_repo(tmp_path)
+    _git(repo_path, "commit", "--amend", "-m", "chore(sync): bump sure alpha")
+    expected_sha = _git(repo_path, "rev-parse", "HEAD")
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            assert env["GH_TOKEN"] == "release-token"  # nosec B101
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=True,
+            control_report_json=str(report),
+            expected_sha=expected_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "gh release create sure-alpha/0.7.1-alpha.7-aio.1" in output  # nosec B101
+    assert f"--target {expected_sha}" in output  # nosec B101
+
+
 def test_prerelease_publish_treats_existing_release_create_conflict_as_present(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

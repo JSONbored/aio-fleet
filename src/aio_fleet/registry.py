@@ -552,12 +552,9 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
         release_package_tag = component_registry_release_tag(repo, component)
         if not release_package_tag:
             return ""
-        try:
-            release_target_commit = find_release_target_commit(
-                repo.path, release_package_tag
-            )
-        except (Exception, SystemExit):
-            release_target_commit = ""
+        release_target_commit = _registry_only_release_target_commit(
+            repo, component=component, release_package_tag=release_package_tag
+        )
         if not _release_tag_sha_allowed(
             repo,
             release_target_commit,
@@ -609,6 +606,51 @@ def _release_package_tag(repo: RepoConfig, *, sha: str, component: str) -> str:
     if repo.publish_profile == "upstream-aio-track":
         return f"{version_prefix}{upstream_version}-{release_suffix}.{revision}"
     return changelog_version
+
+
+def _registry_only_release_target_commit(
+    repo: RepoConfig, *, component: str, release_package_tag: str
+) -> str:
+    try:
+        return find_release_target_commit(repo.path, release_package_tag)
+    except (Exception, SystemExit):
+        pass
+    if not _registry_only_prerelease_version_matches(
+        repo, component=component, release_package_tag=release_package_tag
+    ):
+        return ""
+    try:
+        return git(repo.path, "rev-parse", "HEAD").strip()
+    except (Exception, SystemExit):
+        return ""
+
+
+def _registry_only_prerelease_version_matches(
+    repo: RepoConfig, *, component: str, release_package_tag: str
+) -> bool:
+    config = component_config(repo, component)
+    if str(config.get("release_history", "")).strip() != "github_prerelease":
+        return False
+    upstream_version = _read_component_upstream_version(repo, component)
+    if not upstream_version:
+        return False
+    changelog = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
+    release_suffix = str(config.get("release_suffix", "aio"))
+    try:
+        changelog_version = latest_component_changelog_version(
+            changelog,
+            upstream_version=upstream_version,
+            suffix=release_suffix,
+        )
+    except (Exception, SystemExit):
+        return False
+    return _normalized_version(changelog_version) == _normalized_version(
+        release_package_tag
+    )
+
+
+def _normalized_version(value: str) -> str:
+    return value[1:] if value.startswith("v") else value
 
 
 _RELEASE_FORMAT_SUBJECT = re.compile(

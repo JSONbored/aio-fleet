@@ -172,6 +172,12 @@ def release_plan_for_repo(
             warnings.append(release_history_warning)
         elif not _only_ignored_or_other_component_changes(repo, component, latest_tag):
             release_due = target_commit != sha
+    if (
+        github_release_required
+        and latest_tag
+        and _github_release_missing(github_release)
+    ):
+        release_due = True
 
     changelog_required = _component_requires_changelog(
         repo, config, registry_only=registry_only
@@ -347,6 +353,13 @@ def _github_release_matches_component(
     if github_release.get("state") != "ok":
         return False
     return not latest_tag or str(github_release.get("tag", "")) == latest_tag
+
+
+def _github_release_missing(github_release: dict[str, str]) -> bool:
+    if github_release.get("state") == "missing":
+        return True
+    detail = str(github_release.get("detail", "") or "").lower()
+    return github_release.get("state") == "unknown" and "not found" in detail
 
 
 def control_check_publish_command(
