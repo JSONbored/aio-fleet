@@ -68,7 +68,7 @@ def test_runtime_contract_helpers_cover_template_and_dockerfile(tmp_path: Path) 
   <Project>https://github.com/JSONbored/example-aio</Project>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
-  <Category>AI:</Category>
+  <Category>AI</Category>
   <WebUI>http://[IP]:[PORT:8080]</WebUI>
   <Privileged>false</Privileged>
   <Config Name="Web UI" Type="Port" Target="8080"/>

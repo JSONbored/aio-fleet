@@ -152,6 +152,7 @@ def central_check_steps(
         and include_integration
         and event in {"pull_request", "push", "release", "workflow_dispatch"}
         and integration_args
+        and not _pr_submodule_checkout_intentionally_missing(repo, event)
     ):
         if registry_publish_enabled:
             for build_step in _pytest_image_build_steps(
@@ -403,6 +404,34 @@ def _pytest_image_build_steps(
         seen.add(key)
         steps.append(step)
     return steps
+
+
+def _pr_submodule_checkout_intentionally_missing(repo: RepoConfig, event: str) -> bool:
+    if event != "pull_request" or not repo.raw.get("checkout_submodules"):
+        return False
+    return any(
+        not _submodule_is_initialized(repo.path / path)
+        for path in _submodule_paths(repo)
+    )
+
+
+def _submodule_paths(repo: RepoConfig) -> list[str]:
+    upstream_monitor = repo.raw.get("upstream_monitor", [])
+    configs = (
+        upstream_monitor if isinstance(upstream_monitor, list) else [upstream_monitor]
+    )
+    paths: list[str] = []
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        path = str(config.get("submodule_path", "")).strip()
+        if path:
+            paths.append(path)
+    return paths
+
+
+def _submodule_is_initialized(path: Path) -> bool:
+    return (path / ".git").exists()
 
 
 def _pytest_image_build_step(repo: RepoConfig, component: str = "aio") -> Step | None:

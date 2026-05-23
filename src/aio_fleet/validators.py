@@ -84,19 +84,46 @@ UNRAID_CATEGORY_ROOTS = {
     "AI",
     "Backup",
     "Cloud",
+    "Crypto",
     "Downloaders",
+    "Drivers",
     "GameServers",
     "HomeAutomation",
     "MediaApp",
     "MediaServer",
     "Network",
+    "Other",
     "Productivity",
     "Security",
     "Tools",
 }
-UNRAID_CATEGORY_TOKEN = re.compile(
-    r"^[A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?:?$"
-)
+UNRAID_CATEGORY_TOKENS = {
+    *UNRAID_CATEGORY_ROOTS,
+    "MediaApp:Books",
+    "MediaApp:Music",
+    "MediaApp:Other",
+    "MediaApp:Photos",
+    "MediaApp:Video",
+    "MediaServer:Books",
+    "MediaServer:Music",
+    "MediaServer:Other",
+    "MediaServer:Photos",
+    "MediaServer:Video",
+    "Network:DNS",
+    "Network:FTP",
+    "Network:Management",
+    "Network:Messenger",
+    "Network:Other",
+    "Network:Privacy",
+    "Network:Proxy",
+    "Network:VPN",
+    "Network:VoIP",
+    "Network:Voip",
+    "Network:Web",
+    "Tools:System",
+    "Tools:Utilities",
+}
+UNRAID_CATEGORY_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?$")
 CONFIG_REQUIREMENT_ATTRIBUTES = {
     "name": "Name",
     "default": "Default",
@@ -1809,10 +1836,9 @@ def _category_failures(repo: RepoConfig, source: str, category: str) -> list[str
                 f"{repo.name}: {source} <Category> token has invalid syntax: {token}"
             )
             continue
-        root = token.rstrip(":").split(":", 1)[0]
-        if root not in UNRAID_CATEGORY_ROOTS:
+        if token not in UNRAID_CATEGORY_TOKENS:
             failures.append(
-                f"{repo.name}: {source} <Category> token has unknown root: {token}"
+                f"{repo.name}: {source} <Category> token is not a known Community Apps category: {token}"
             )
     return failures
 
