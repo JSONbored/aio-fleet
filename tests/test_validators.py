@@ -1211,4 +1211,6 @@ def test_runtime_contract_rejects_hidden_required_docker_socket_with_manifest_fl
         _repo(tmp_path, validation={"docker_socket_required": True})
     )
 
-    assert any("Docker socket mount" in failure for failure in failures)  # nosec B101
+    assert (
+        "example-aio: example-aio.xml Docker socket mount must be optional" in failures
+    )  # nosec B101
