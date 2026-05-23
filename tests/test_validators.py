@@ -398,7 +398,7 @@ def test_template_metadata_validation_checks_catalog_urls(tmp_path: Path) -> Non
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/wrong.xml</TemplateURL>
   <Icon>https://example.com/icon.png</Icon>
 </Container>
@@ -435,7 +435,7 @@ def test_template_metadata_validation_rejects_untrusted_repository_namespace(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
 </Container>
@@ -484,7 +484,7 @@ def test_template_metadata_validation_rejects_nested_options_and_bad_changes(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Changes>bad heading</Changes>
@@ -515,7 +515,7 @@ def test_template_metadata_validation_allows_literal_pipe_values(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Changes>### 2026-05-20
@@ -542,7 +542,7 @@ def test_template_metadata_validation_rejects_bad_pipe_dropdown_selection(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Changes>### 2026-05-20
@@ -570,7 +570,7 @@ def test_template_metadata_validation_allows_component_changelog_note(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example alpha.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Changes>### 2026-05-18
@@ -611,7 +611,7 @@ def test_template_metadata_validation_applies_manifest_declared_targets(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Changes>### 2026-05-01</Changes>
@@ -645,7 +645,7 @@ def test_template_metadata_validation_accepts_component_alpha_contract(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Testing / Unstable alpha lane with Alpha-only controls, latest-alpha tags, and /mnt/user/appdata/example-aio-alpha storage.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <Beta>True</Beta>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
@@ -696,7 +696,7 @@ def test_template_metadata_validation_rejects_component_alpha_contract_drift(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Stable-looking lane with /mnt/user/appdata/example-aio/system storage.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <Beta>False</Beta>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio-alpha.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
@@ -828,7 +828,7 @@ def test_runtime_contract_allows_unpublished_optional_port(tmp_path: Path) -> No
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <Config Name="Web UI Port" Target="3000" Type="Port" Required="true">3000</Config>
@@ -872,12 +872,44 @@ def test_template_metadata_validation_rejects_common_quality_drift(
         "example-aio: example-aio.xml <Project> must be an HTTP(S) URL" in failures
     )  # nosec B101
     assert (  # nosec B101
-        "example-aio: example-aio.xml <Category> token has unknown root: FakeCategory"
+        "example-aio: example-aio.xml <Category> token is not a known Community Apps category: FakeCategory"
         in failures
     )
     assert (  # nosec B101
         "example-aio: example-aio.xml <DonateText> and <DonateLink> must be both blank or both populated"
         in failures
+    )
+
+
+def test_template_metadata_validation_rejects_unknown_ca_subcategory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example overview with defaults and advanced settings.</Overview>
+  <Category>Network:Security Security Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <DonateText/>
+  <DonateLink/>
+  <Changes>### 2026-01-01</Changes>
+</Container>
+""")
+
+    failures = template_metadata_failures(_repo(tmp_path), _Manifest())  # type: ignore[arg-type]
+
+    assert (  # nosec B101
+        "example-aio: example-aio.xml <Category> token is not a known Community Apps category: Network:Security"
+        in failures
+    )
+    assert not any(  # nosec B101
+        "Security" in failure and "Network:Security" not in failure
+        for failure in failures
     )
 
 
@@ -971,7 +1003,7 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
 </Container>
@@ -1002,7 +1034,7 @@ def test_catalog_validation_reports_readme_template_drift(tmp_path: Path) -> Non
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
 </Container>
@@ -1043,7 +1075,7 @@ def test_catalog_validation_reports_star_history_drift(tmp_path: Path) -> None:
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
 </Container>
@@ -1082,7 +1114,7 @@ def test_catalog_quality_audit_reports_catalog_presentation_drift(
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Too short.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <DonateText/>
@@ -1179,6 +1211,4 @@ def test_runtime_contract_rejects_hidden_required_docker_socket_with_manifest_fl
         _repo(tmp_path, validation={"docker_socket_required": True})
     )
 
-    assert any(
-        "Docker socket mount" in failure for failure in failures
-    )  # nosec B101
+    assert any("Docker socket mount" in failure for failure in failures)  # nosec B101

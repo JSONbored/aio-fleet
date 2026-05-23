@@ -33,13 +33,37 @@ def test_render_app_manifest_exports_sure_control_plane_surface() -> None:
     assert rendered["catalog"]["assets"] == [  # nosec B101
         {"source": "sure-aio.xml", "target": "sure-aio.xml"},
         {"source": "sure-aio-alpha.xml", "target": "sure-aio-alpha.xml"},
+        {
+            "source": "screenshots/sure-aio/01-dashboard.png",
+            "target": "screenshots/sure-aio/01-dashboard.png",
+        },
+        {
+            "source": "screenshots/sure-aio/02-account-activity.png",
+            "target": "screenshots/sure-aio/02-account-activity.png",
+        },
+        {
+            "source": "screenshots/sure-aio/03-budgets.png",
+            "target": "screenshots/sure-aio/03-budgets.png",
+        },
+        {
+            "source": "screenshots/sure-aio-alpha/01-login.png",
+            "target": "screenshots/sure-aio-alpha/01-login.png",
+        },
+        {
+            "source": "screenshots/sure-aio-alpha/02-account-activity.png",
+            "target": "screenshots/sure-aio-alpha/02-account-activity.png",
+        },
+        {
+            "source": "screenshots/sure-aio-alpha/03-budgets.png",
+            "target": "screenshots/sure-aio-alpha/03-budgets.png",
+        },
     ]
     assert "  xml_paths:\n    - sure-aio.xml\n" in content  # nosec B101
     assert "    - sure-aio-alpha.xml\n" in content  # nosec B101
     assert rendered["components"]["sure-alpha"]["release_policy"] == (  # nosec B101
         "registry_only"
     )
-    assert '    - "Productivity:"\n' in content  # nosec B101
+    assert "    - Productivity\n" in content  # nosec B101
 
 
 def test_render_app_manifest_quotes_numeric_string_targets() -> None:

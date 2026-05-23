@@ -99,6 +99,18 @@ repos:
         target: sure-aio.xml
       - source: sure-aio-alpha.xml
         target: sure-aio-alpha.xml
+      - source: screenshots/sure-aio/01-dashboard.png
+        target: screenshots/sure-aio/01-dashboard.png
+      - source: screenshots/sure-aio/02-account-activity.png
+        target: screenshots/sure-aio/02-account-activity.png
+      - source: screenshots/sure-aio/03-budgets.png
+        target: screenshots/sure-aio/03-budgets.png
+      - source: screenshots/sure-aio-alpha/01-login.png
+        target: screenshots/sure-aio-alpha/01-login.png
+      - source: screenshots/sure-aio-alpha/02-account-activity.png
+        target: screenshots/sure-aio-alpha/02-account-activity.png
+      - source: screenshots/sure-aio-alpha/03-budgets.png
+        target: screenshots/sure-aio-alpha/03-budgets.png
     components:
       aio:
         image_name: jsonbored/sure-aio
@@ -190,6 +202,11 @@ repos:
               name_contains: "[Alpha Auth]"
               description_contains: Alpha-only
     validation:
+      required_text_fields:
+        - ReadMe
+        - Requires
+        - DonateText
+        - DonateLink
       required_targets:
         - ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY
         - ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT
@@ -367,8 +384,8 @@ repos:
         - YAHOO_FINANCE_MIN_REQUEST_INTERVAL
         - YAHOO_FINANCE_RETRY_INTERVAL
         - YAHOO_FINANCE_URL
-      allowed_category_tokens:
-        - "Productivity:"
+      exact_category_tokens:
+        - Productivity
         - Tools:Utilities
   simplelogin-aio:
     path: /Users/shadowbook/Documents/simplelogin-aio
@@ -402,7 +419,19 @@ repos:
     catalog_assets:
       - source: simplelogin-aio.xml
         target: simplelogin-aio.xml
+      - source: screenshots/simplelogin-aio/01-login.png
+        target: screenshots/simplelogin-aio/01-login.png
+      - source: screenshots/simplelogin-aio/02-dashboard.png
+        target: screenshots/simplelogin-aio/02-dashboard.png
+      - source: screenshots/simplelogin-aio/03-settings.png
+        target: screenshots/simplelogin-aio/03-settings.png
     validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - Network:Privacy
+        - Network:Web
+        - Tools:Utilities
       required_targets:
         - /appdata
         - /custom-assets
@@ -538,7 +567,19 @@ repos:
     catalog_assets:
       - source: khoj-aio.xml
         target: khoj-aio.xml
+      - source: screenshots/khoj-aio/01-home.png
+        target: screenshots/khoj-aio/01-home.png
+      - source: screenshots/khoj-aio/02-chat.png
+        target: screenshots/khoj-aio/02-chat.png
+      - source: screenshots/khoj-aio/03-settings.png
+        target: screenshots/khoj-aio/03-settings.png
     validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Tools:Utilities
       required_targets:
         - /root/.cache/huggingface
         - /root/.cache/torch/sentence_transformers
@@ -653,7 +694,19 @@ repos:
         target: mem0-aio.xml
       - source: assets/mem0.jpeg
         target: icons/mem0.jpeg
+      - source: screenshots/mem0-aio/01-home.png
+        target: screenshots/mem0-aio/01-home.png
+      - source: screenshots/mem0-aio/02-memories.png
+        target: screenshots/mem0-aio/02-memories.png
+      - source: screenshots/mem0-aio/03-settings.png
+        target: screenshots/mem0-aio/03-settings.png
     validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - AI
+        - Productivity
+        - Tools:Utilities
       required_targets:
         - /mem0/storage
         - "3000"
@@ -763,6 +816,18 @@ repos:
         target: infisical-aio.xml
       - source: assets/app-icon.png
         target: icons/infisical.png
+      - source: screenshots/infisical-aio/01-login.png
+        target: screenshots/infisical-aio/01-login.png
+      - source: screenshots/infisical-aio/02-dashboard.png
+        target: screenshots/infisical-aio/02-dashboard.png
+      - source: screenshots/infisical-aio/03-project.png
+        target: screenshots/infisical-aio/03-project.png
+    validation:
+      required_text_fields:
+        - ReadMe
+      exact_category_tokens:
+        - Security
+        - Tools:Utilities
   penpot-aio:
     path: /Users/shadowbook/Documents/penpot-aio
     public: true
@@ -858,6 +923,12 @@ repos:
         target: penpot-aio.xml
       - source: assets/app-icon.png
         target: icons/penpot.png
+      - source: screenshots/penpot-aio/01-login.png
+        target: screenshots/penpot-aio/01-login.png
+      - source: screenshots/penpot-aio/02-projects.png
+        target: screenshots/penpot-aio/02-projects.png
+      - source: screenshots/penpot-aio/03-editor.png
+        target: screenshots/penpot-aio/03-editor.png
     validation:
       required_targets:
         - /appdata
@@ -943,6 +1014,12 @@ repos:
         target: dify-aio.xml
       - source: assets/app-icon.png
         target: icons/dify.png
+      - source: screenshots/dify-aio/01-login.png
+        target: screenshots/dify-aio/01-login.png
+      - source: screenshots/dify-aio/02-workspace.png
+        target: screenshots/dify-aio/02-workspace.png
+      - source: screenshots/dify-aio/03-studio.png
+        target: screenshots/dify-aio/03-studio.png
     validation:
       required_targets:
         - /appdata
@@ -1271,8 +1348,15 @@ repos:
         target: signoz-agent.xml
       - source: assets/app-icon.png
         target: icons/signoz.png
+      - source: screenshots/signoz-aio/01-login.png
+        target: screenshots/signoz-aio/01-login.png
+      - source: screenshots/signoz-aio/02-services.png
+        target: screenshots/signoz-aio/02-services.png
+      - source: screenshots/signoz-aio/03-dashboards.png
+        target: screenshots/signoz-aio/03-dashboards.png
     validation:
       required_text_fields:
+        - ReadMe
         - ExtraSearchTerms
         - Requires
         - DonateText

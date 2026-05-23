@@ -3551,7 +3551,7 @@ def test_validate_template_common_accepts_manifest_repo(tmp_path: Path, capsys) 
   <Project>https://github.com/JSONbored/example-aio</Project>
   <Support>https://github.com/JSONbored/example-aio/issues</Support>
   <Overview>Example defaults and advanced settings for operators.</Overview>
-  <Category>Tools:</Category>
+  <Category>Tools:Utilities</Category>
   <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
   <DonateText/>
