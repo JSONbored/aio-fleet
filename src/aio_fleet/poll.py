@@ -5,8 +5,12 @@ import os
 import shutil
 import subprocess  # nosec B404
 from dataclasses import dataclass
-from fnmatch import fnmatch
 
+from aio_fleet.change_scope import (
+    CHECK_MODE_FULL,
+    classify_required_check_scope,
+    publish_components_for_changed_paths,
+)
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
 
@@ -23,6 +27,10 @@ class PollTarget:
     checkout_submodules: bool = False
     publish: bool = False
     publish_components: tuple[str, ...] = ()
+    check_mode: str = CHECK_MODE_FULL
+    changed_paths: tuple[str, ...] = ()
+    changed_files: tuple[dict[str, str], ...] = ()
+    fast_path_reason: str = ""
 
 
 def poll_targets(
@@ -40,6 +48,17 @@ def poll_targets(
                 sha = str(pull_request.get("headRefOid") or "")
                 number = str(pull_request.get("number") or "")
                 if sha:
+                    changed_files = (
+                        _pull_request_changed_files(repo, number) if number else None
+                    )
+                    changed_paths = _changed_file_paths(changed_files)
+                    changed_file_statuses = _changed_file_statuses(changed_files)
+                    scope = classify_required_check_scope(
+                        repo,
+                        changed_paths,
+                        changed_file_statuses=changed_file_statuses,
+                        publish=False,
+                    )
                     targets.append(
                         PollTarget(
                             repo=repo,
@@ -48,17 +67,33 @@ def poll_targets(
                             source=f"pr:{number}",
                             checkout_submodules=False,
                             publish=False,
+                            check_mode=scope.check_mode,
+                            changed_paths=scope.changed_paths,
+                            changed_files=tuple(changed_files or ()),
+                            fast_path_reason=scope.fast_path_reason,
                         )
                     )
         if include_main:
             sha = _main_sha(repo)
             if sha:
-                try:
-                    components = publish_components_required(
-                        repo, sha=sha, event="push"
-                    )
-                except PublishPathResolutionError:
+                changed_paths = (
+                    None
+                    if repo.publish_profile == "template"
+                    else _commit_changed_paths(repo, sha)
+                )
+                changed_file_statuses: dict[str, str] = {}
+                if changed_paths is None:
                     components = []
+                else:
+                    components = publish_components_for_changed_paths(
+                        repo, changed_paths
+                    )
+                scope = classify_required_check_scope(
+                    repo,
+                    changed_paths,
+                    changed_file_statuses=changed_file_statuses,
+                    publish=bool(components),
+                )
                 targets.append(
                     PollTarget(
                         repo=repo,
@@ -68,6 +103,10 @@ def poll_targets(
                         checkout_submodules=bool(repo.raw.get("checkout_submodules")),
                         publish=bool(components),
                         publish_components=tuple(components),
+                        check_mode=scope.check_mode,
+                        changed_paths=scope.changed_paths,
+                        changed_files=(),
+                        fast_path_reason=scope.fast_path_reason,
                     )
                 )
     return targets
@@ -86,104 +125,99 @@ def publish_components_required(repo: RepoConfig, *, sha: str, event: str) -> li
             f"{repo.name}: unable to resolve changed files for {sha}; "
             "publish skipped until the commit can be inspected or manually published"
         )
-    return [
-        component
-        for component in _publish_components(repo)
-        if any(
-            _is_publish_related_path(repo, path, component) for path in changed_paths
-        )
-    ]
+    return publish_components_for_changed_paths(repo, changed_paths)
 
 
-def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
+def resolve_changed_files(
+    repo: RepoConfig, *, sha: str, event: str, source: str
+) -> list[dict[str, str]] | None:
+    if event == "pull_request" and source.startswith("pr:"):
+        number = source.removeprefix("pr:").strip()
+        if number:
+            return _pull_request_changed_files(repo, number)
+    if event == "push":
+        return _commit_changed_files(repo, sha)
+    return None
+
+
+def _commit_changed_files(repo: RepoConfig, sha: str) -> list[dict[str, str]] | None:
     result = _gh(
         [
             "api",
             f"repos/{repo.github_repo}/commits/{sha}",
             "--jq",
-            ".files[].filename",
+            ".files[] | {path: .filename, status: .status}",
         ]
     )
     if result.returncode != 0:
         return None
-    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    files: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            path = str(payload.get("path", "")).strip()
+            status = str(payload.get("status", "")).strip()
+            if path:
+                files.append({"path": path, "status": status})
+    return files or None
+
+
+def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
+    return _changed_file_paths(_commit_changed_files(repo, sha))
+
+
+def _pull_request_changed_files(
+    repo: RepoConfig, number: str
+) -> list[dict[str, str]] | None:
+    result = _gh(
+        [
+            "api",
+            "--paginate",
+            f"repos/{repo.github_repo}/pulls/{number}/files",
+            "--jq",
+            ".[] | {path: .filename, status: .status}",
+        ]
+    )
+    if result.returncode != 0:
+        return None
+    files: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            path = str(payload.get("path", "")).strip()
+            status = str(payload.get("status", "")).strip()
+            if path:
+                files.append({"path": path, "status": status})
+    return files or None
+
+
+def _pull_request_changed_paths(repo: RepoConfig, number: str) -> list[str] | None:
+    return _changed_file_paths(_pull_request_changed_files(repo, number))
+
+
+def _changed_file_paths(
+    changed_files: list[dict[str, str]] | None,
+) -> list[str] | None:
+    if changed_files is None:
+        return None
+    paths = [item["path"] for item in changed_files if item.get("path")]
     return paths or None
 
 
-def _is_publish_related_path(repo: RepoConfig, path: str, component: str = "") -> bool:
-    if component:
-        patterns = _publish_related_patterns_for_component(repo, component)
-    else:
-        patterns = _publish_related_patterns(repo)
-    return any(fnmatch(path, pattern) for pattern in patterns)
-
-
-def _publish_related_patterns(repo: RepoConfig) -> set[str]:
-    patterns: set[str] = set()
-    for component in _publish_components(repo):
-        patterns.update(_publish_related_patterns_for_component(repo, component))
-    return {pattern for pattern in patterns if pattern}
-
-
-def _publish_related_patterns_for_component(
-    repo: RepoConfig, component: str
-) -> set[str]:
-    config = _component_config(repo, component)
-    patterns = {".aio-fleet.yml", "CHANGELOG.md"}
-    if component == "aio" or not config:
-        patterns.update({"Containerfile", "Dockerfile", "rootfs/**", "upstream.toml"})
-        for key in ("extra_publish_paths", "upstream_commit_paths"):
-            patterns.update(repo.list_value(key))
-        if not config:
-            patterns.update(repo.list_value("xml_paths"))
-
-    if config:
-        for key in ("dockerfile", "upstream_config"):
-            value = str(config.get(key, "")).strip()
-            if value:
-                patterns.add(value)
-        patterns.update(_string_list(config.get("xml_paths", [])))
-        patterns.update(_string_list(config.get("publish_paths", [])))
-        release_changelog = str(config.get("release_changelog", "") or "").strip()
-        if release_changelog:
-            patterns.add(release_changelog)
-
-    for monitor in repo.raw.get("upstream_monitor", []):
-        if (
-            isinstance(monitor, dict)
-            and str(monitor.get("component", "aio")) == component
-            and monitor.get("dockerfile")
-        ):
-            patterns.add(str(monitor["dockerfile"]))
-    return {pattern for pattern in patterns if pattern}
-
-
-def _publish_components(repo: RepoConfig) -> list[str]:
-    components = repo.raw.get("components")
-    if not isinstance(components, dict):
-        return ["aio"]
-    names = [
-        name
-        for name, config in components.items()
-        if name == "aio" or (isinstance(config, dict) and config.get("image_name"))
-    ]
-    return names or ["aio"]
-
-
-def _component_config(repo: RepoConfig, component: str) -> dict[str, object]:
-    components = repo.raw.get("components")
-    if not isinstance(components, dict):
+def _changed_file_statuses(
+    changed_files: list[dict[str, str]] | None,
+) -> dict[str, str]:
+    if not changed_files:
         return {}
-    config = components.get(component)
-    return config if isinstance(config, dict) else {}
-
-
-def _string_list(value: object) -> set[str]:
-    if isinstance(value, str):
-        return {value}
-    if isinstance(value, list):
-        return {str(item) for item in value if str(item).strip()}
-    return set()
+    return {
+        item["path"]: item.get("status", "")
+        for item in changed_files
+        if item.get("path")
+    }
 
 
 def _open_pull_requests(repo: RepoConfig) -> list[dict[str, object]]:

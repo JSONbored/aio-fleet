@@ -27,6 +27,12 @@ from aio_fleet.app_manifest import (
     render_app_manifest,
 )
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
+from aio_fleet.change_scope import (
+    CHECK_MODE_FAST_CLEANUP,
+    CHECK_MODE_FULL,
+    ChangeScope,
+    classify_required_check_scope,
+)
 from aio_fleet.changelog import (
     build_release_plan,
     component_config,
@@ -68,7 +74,7 @@ from aio_fleet.github_cli import github_cli_env
 from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.hooks import install_local_hooks, run_local_trunk_overlay
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
-from aio_fleet.poll import poll_targets
+from aio_fleet.poll import poll_targets, resolve_changed_files
 from aio_fleet.public_text import assert_public_text
 from aio_fleet.registry import (
     component_registry_release_tag,
@@ -1023,6 +1029,10 @@ def cmd_poll(args: argparse.Namespace) -> int:
             "checkout_submodules": target.checkout_submodules,
             "publish": target.publish,
             "publish_components": list(target.publish_components),
+            "check_mode": target.check_mode,
+            "changed_paths": list(target.changed_paths),
+            "changed_files": list(target.changed_files),
+            "fast_path_reason": target.fast_path_reason,
         }
         emitted.append(row)
         if args.create_checks:
@@ -1516,6 +1526,130 @@ def cmd_control_check(args: argparse.Namespace) -> int:
     repo = _repo_for_identifier(manifest, args.repo)
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
+    try:
+        changed_paths = _changed_paths_from_json(
+            str(getattr(args, "changed_paths_json", "") or "")
+        )
+        changed_files = _changed_files_from_json(
+            str(getattr(args, "changed_files_json", "") or "")
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "resolve_changed_files", False):
+        changed_files = resolve_changed_files(
+            repo,
+            sha=args.sha,
+            event=args.event,
+            source=args.source,
+        )
+        if changed_files is None:
+            print(
+                "unable to resolve changed files for control-check scope",
+                file=sys.stderr,
+            )
+            return 1
+        changed_paths = _changed_paths_from_files(changed_files)
+    if changed_paths is None and changed_files is not None:
+        changed_paths = _changed_paths_from_files(changed_files)
+    changed_file_statuses = _changed_file_statuses_from_files(changed_files)
+    scope = (
+        classify_required_check_scope(
+            repo,
+            changed_paths,
+            changed_file_statuses=changed_file_statuses,
+            publish=args.publish,
+            fast_path_disabled=bool(getattr(args, "no_fast_path", False)),
+        )
+        if changed_paths is not None
+        or changed_files is not None
+        or getattr(args, "no_fast_path", False)
+        else ChangeScope(CHECK_MODE_FULL)
+    )
+    if getattr(args, "fast_path_only", False) and (
+        scope.check_mode != CHECK_MODE_FAST_CLEANUP
+    ):
+        failures = [
+            "fast-path-scope: requested fast-cleanup but classified "
+            f"{scope.check_mode}: {scope.fast_path_reason}"
+        ]
+        if args.report_json:
+            report = _control_check_report(
+                repo,
+                sha=args.sha,
+                event=args.event,
+                source=args.source,
+                publish=args.publish,
+                publish_components=args.publish_component,
+                failures=failures,
+                transaction_id=str(getattr(args, "transaction_id", "") or ""),
+                check_mode=scope.check_mode,
+                changed_paths=scope.changed_paths,
+                changed_files=changed_files or (),
+                fast_path_reason=scope.fast_path_reason,
+            )
+            Path(args.report_json).write_text(
+                json.dumps(report, indent=2, sort_keys=True)
+            )
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    if scope.check_mode == CHECK_MODE_FAST_CLEANUP:
+        summary = "aio-fleet cleanup-only fast path passed"
+        if scope.fast_path_reason:
+            summary = f"{summary}: {scope.fast_path_reason}"
+        if args.check_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        check_run_payload(
+                            repo,
+                            sha=args.sha,
+                            event=args.event,
+                            status="completed",
+                            conclusion="success",
+                            summary=summary,
+                        ),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                upsert_check_run(
+                    repo,
+                    sha=args.sha,
+                    event=args.event,
+                    status="in_progress",
+                    summary="aio-fleet central check started",
+                )
+                upsert_check_run(
+                    repo,
+                    sha=args.sha,
+                    event=args.event,
+                    status="completed",
+                    conclusion="success",
+                    summary=summary,
+                )
+        if args.report_json:
+            report = _control_check_report(
+                repo,
+                sha=args.sha,
+                event=args.event,
+                source=args.source,
+                publish=args.publish,
+                publish_components=args.publish_component,
+                failures=[],
+                transaction_id=str(getattr(args, "transaction_id", "") or ""),
+                check_mode=scope.check_mode,
+                changed_paths=scope.changed_paths,
+                changed_files=changed_files or (),
+                fast_path_reason=scope.fast_path_reason,
+            )
+            Path(args.report_json).write_text(
+                json.dumps(report, indent=2, sort_keys=True)
+            )
+        if not (args.check_run and args.dry_run):
+            print(f"{repo.name}: check_mode=fast-cleanup {scope.fast_path_reason}")
+        return 0
     steps = central_check_steps(
         repo,
         event=args.event,
@@ -1577,6 +1711,10 @@ def cmd_control_check(args: argparse.Namespace) -> int:
             publish_components=args.publish_component,
             failures=failures,
             transaction_id=str(getattr(args, "transaction_id", "") or ""),
+            check_mode=scope.check_mode,
+            changed_paths=scope.changed_paths,
+            changed_files=changed_files or (),
+            fast_path_reason=scope.fast_path_reason,
         )
         Path(args.report_json).write_text(json.dumps(report, indent=2, sort_keys=True))
     if failures:
@@ -1588,7 +1726,43 @@ def cmd_control_check(args: argparse.Namespace) -> int:
 def cmd_workflow_control_report(args: argparse.Namespace) -> int:
     manifest = load_manifest(Path(args.manifest))
     repo = _repo_for_identifier(manifest, args.repo)
+    try:
+        changed_paths = _changed_paths_from_json(
+            str(getattr(args, "changed_paths_json", "") or "")
+        )
+        changed_files = _changed_files_from_json(
+            str(getattr(args, "changed_files_json", "") or "")
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if changed_paths is None and changed_files is not None:
+        changed_paths = _changed_paths_from_files(changed_files)
+    changed_file_statuses = _changed_file_statuses_from_files(changed_files)
     failures = list(args.failure or [])
+    requested_check_mode = str(
+        getattr(args, "check_mode", CHECK_MODE_FULL) or CHECK_MODE_FULL
+    )
+    check_mode = requested_check_mode
+    report_changed_paths = tuple(changed_paths or ())
+    fast_path_reason = str(getattr(args, "fast_path_reason", "") or "")
+    fast_path_validation_failed = False
+    if requested_check_mode == CHECK_MODE_FAST_CLEANUP:
+        scope = classify_required_check_scope(
+            repo,
+            changed_paths,
+            changed_file_statuses=changed_file_statuses,
+            publish=args.publish,
+        )
+        check_mode = scope.check_mode
+        report_changed_paths = scope.changed_paths
+        fast_path_reason = scope.fast_path_reason
+        if scope.check_mode != CHECK_MODE_FAST_CLEANUP:
+            fast_path_validation_failed = True
+            failures.append(
+                "fast-path-scope: requested fast-cleanup but classified "
+                f"{scope.check_mode}: {scope.fast_path_reason}"
+            )
     report = _control_check_report(
         repo,
         sha=args.sha,
@@ -1598,8 +1772,14 @@ def cmd_workflow_control_report(args: argparse.Namespace) -> int:
         publish_components=args.publish_component,
         failures=failures,
         transaction_id=str(getattr(args, "transaction_id", "") or ""),
+        check_mode=check_mode,
+        changed_paths=report_changed_paths,
+        changed_files=changed_files or (),
+        fast_path_reason=fast_path_reason,
     )
-    if args.status:
+    if fast_path_validation_failed:
+        report["status"] = "failure"
+    elif args.status:
         report["status"] = args.status
     if args.output:
         Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True))
@@ -3263,6 +3443,10 @@ def _control_check_report(
     publish_components: list[str],
     failures: list[str],
     transaction_id: str = "",
+    check_mode: str = CHECK_MODE_FULL,
+    changed_paths: list[str] | tuple[str, ...] = (),
+    changed_files: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
+    fast_path_reason: str = "",
 ) -> dict[str, object]:
     selected_components = publish_components or (
         publish_components_for_report(repo) if publish else []
@@ -3292,6 +3476,13 @@ def _control_check_report(
         "source": source,
         "publish": publish,
         "transaction_id": transaction_id,
+        "check_mode": check_mode,
+        "fast_path": {
+            "enabled": check_mode == CHECK_MODE_FAST_CLEANUP,
+            "reason": fast_path_reason,
+            "changed_paths": list(changed_paths),
+            "changed_files": list(changed_files),
+        },
         "status": "failure" if failures else "success",
         "failures": failures,
         "failure_classes": _failure_classes(failures),
@@ -3308,6 +3499,63 @@ def _control_check_report(
         },
         "components": components,
     }
+
+
+def _changed_paths_from_json(value: str) -> list[str] | None:
+    if not value:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "--changed-paths-json must be a JSON array of strings"
+        ) from exc
+    if not isinstance(payload, list) or not all(
+        isinstance(item, str) for item in payload
+    ):
+        raise ValueError("--changed-paths-json must be a JSON array of strings")
+    return payload
+
+
+def _changed_files_from_json(value: str) -> list[dict[str, str]] | None:
+    if not value:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "--changed-files-json must be a JSON array of path/status objects"
+        ) from exc
+    if not isinstance(payload, list):
+        raise ValueError(
+            "--changed-files-json must be a JSON array of path/status objects"
+        )
+    files: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ValueError(
+                "--changed-files-json must be a JSON array of path/status objects"
+            )
+        path = str(item.get("path", "")).strip()
+        status = str(item.get("status", "")).strip()
+        if not path:
+            raise ValueError(
+                "--changed-files-json entries must include a non-empty path"
+            )
+        files.append({"path": path, "status": status})
+    return files
+
+
+def _changed_paths_from_files(files: list[dict[str, str]]) -> list[str]:
+    return [item["path"] for item in files]
+
+
+def _changed_file_statuses_from_files(
+    files: list[dict[str, str]] | None,
+) -> dict[str, str]:
+    if not files:
+        return {}
+    return {item["path"]: item.get("status", "") for item in files}
 
 
 def _failure_classes(failures: list[object]) -> list[str]:
@@ -5502,6 +5750,31 @@ def build_parser() -> argparse.ArgumentParser:
     control.add_argument("--check-run", action="store_true")
     control.add_argument("--dry-run", action="store_true")
     control.add_argument("--report-json")
+    control.add_argument(
+        "--changed-paths-json",
+        default="",
+        help="JSON array of changed paths to classify before running full checks.",
+    )
+    control.add_argument(
+        "--changed-files-json",
+        default="",
+        help="JSON array of changed file path/status objects for cleanup classification.",
+    )
+    control.add_argument(
+        "--resolve-changed-files",
+        action="store_true",
+        help="Resolve changed file path/status metadata from GitHub for the target event.",
+    )
+    control.add_argument(
+        "--no-fast-path",
+        action="store_true",
+        help="Disable cleanup-only fast-path classification.",
+    )
+    control.add_argument(
+        "--fast-path-only",
+        action="store_true",
+        help="Fail instead of running full validation when changed paths are not cleanup-only.",
+    )
     control.add_argument("--transaction-id", default="")
     control.set_defaults(func=cmd_control_check)
 
@@ -5902,6 +6175,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workflow_control_report.add_argument("--output")
     workflow_control_report.add_argument("--transaction-id", default="")
+    workflow_control_report.add_argument(
+        "--check-mode",
+        choices=[CHECK_MODE_FULL, CHECK_MODE_FAST_CLEANUP],
+        default=CHECK_MODE_FULL,
+    )
+    workflow_control_report.add_argument("--changed-paths-json", default="")
+    workflow_control_report.add_argument("--changed-files-json", default="")
+    workflow_control_report.add_argument("--fast-path-reason", default="")
     workflow_control_report.add_argument(
         "--format", choices=["text", "json"], default="text"
     )

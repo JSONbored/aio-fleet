@@ -1007,9 +1007,6 @@ jobs:
           set -euo pipefail
           python -m pip install -e ".[dev]"
 
-      - name: Install Trunk
-        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
-
       - name: Resolve GitHub App token
         id: app-token
         env:
@@ -1028,6 +1025,38 @@ jobs:
           echo "::add-mask::${token}"
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
+      - name: Validate fast cleanup scope
+        id: fast-cleanup-scope
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_SHA: ${{ matrix.target.sha }}
+          TARGET_SOURCE: ${{ matrix.target.source }}
+          TARGET_EVENT: ${{ matrix.target.event }}
+          TARGET_PUBLISH: ${{ matrix.target.publish }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
+        run: |
+          set -euo pipefail
+          args=(
+            control-check
+            --repo "${TARGET_REPO}"
+            --sha "${TARGET_SHA}"
+            --source "${TARGET_SOURCE}"
+            --event "${TARGET_EVENT}"
+            --resolve-changed-files
+            --fast-path-only
+            --report-json "${CONTROL_REPORT}"
+          )
+          if [[ "${TARGET_PUBLISH}" == "true" ]]; then
+            args+=(--publish)
+          fi
+          python -m aio_fleet "${args[@]}"
+
+      - name: Install Trunk
+        if: ${{ steps.fast-cleanup-scope.outcome != 'success' }}
+        uses: trunk-io/trunk-action/setup@75699af9e26881e564e9d832ef7dc3af25ec031b # v1
+
       - name: Start central control check
         id: start-poll-central-control-check
         continue-on-error: true
@@ -1038,6 +1067,10 @@ jobs:
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH: ${{ matrix.target.publish }}
           TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          TARGET_CHECK_MODE: ${{ matrix.target.check_mode }}
+          TARGET_CHANGED_PATHS: ${{ toJSON(matrix.target.changed_paths) }}
+          TARGET_CHANGED_FILES: ${{ toJSON(matrix.target.changed_files) }}
+          TARGET_FAST_PATH_REASON: ${{ matrix.target.fast_path_reason }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
@@ -1060,9 +1093,15 @@ jobs:
               --source "${TARGET_SOURCE}"
               --status failure
               --failure "app-check-permission: bootstrap check-run failed: ${output}"
+              --check-mode "${TARGET_CHECK_MODE:-full}"
+              --changed-paths-json "${TARGET_CHANGED_PATHS:-[]}"
+              --changed-files-json "${TARGET_CHANGED_FILES:-[]}"
               --output "${CONTROL_REPORT}"
               --format json
             )
+            if [[ -n "${TARGET_FAST_PATH_REASON}" ]]; then
+              args+=(--fast-path-reason "${TARGET_FAST_PATH_REASON}")
+            fi
             if [[ "${TARGET_PUBLISH}" == "true" ]]; then
               args+=(--publish)
             fi
@@ -1091,7 +1130,7 @@ jobs:
           echo "${output}"
 
       - name: Checkout app repo
-        if: ${{ steps.start-poll-central-control-check.outcome == 'success' }}
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: JSONbored/${{ matrix.target.repo }}
@@ -1104,7 +1143,7 @@ jobs:
 
       - name: Run central control check
         id: poll-central-control-check
-        if: ${{ steps.start-poll-central-control-check.outcome == 'success' }}
+        if: ${{ steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
         continue-on-error: true
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
@@ -1113,6 +1152,8 @@ jobs:
           TARGET_EVENT: ${{ matrix.target.event }}
           TARGET_PUBLISH: ${{ matrix.target.publish }}
           TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          TARGET_CHANGED_PATHS: ${{ toJSON(matrix.target.changed_paths) }}
+          TARGET_CHANGED_FILES: ${{ toJSON(matrix.target.changed_files) }}
           CONTROL_REPORT: ${{ runner.temp }}/poll-central-control-report.json
         run: |
           set -euo pipefail
@@ -1146,11 +1187,13 @@ jobs:
               print(component)
           PY
           )
+          args+=(--changed-paths-json "${TARGET_CHANGED_PATHS}")
+          args+=(--changed-files-json "${TARGET_CHANGED_FILES}")
           args+=(--report-json "${CONTROL_REPORT}")
           python -m aio_fleet "${args[@]}" 2>&1 | tee central-control-check.log
 
       - name: Restore trusted aio-fleet checkout
-        if: ${{ always() }}
+        if: ${{ always() && steps.fast-cleanup-scope.outcome != 'success' }}
         run: |
           set -euo pipefail
           git reset --hard HEAD
@@ -1158,18 +1201,22 @@ jobs:
           python -m pip install --force-reinstall .
 
       - name: Complete central control check
-        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'success' && (matrix.target.publish != true || steps.poll-central-control-check.outcome != 'success') }}
+        if: ${{ always() && steps.start-poll-central-control-check.outcome == 'success' && (steps.fast-cleanup-scope.outcome == 'success' || matrix.target.publish != true || steps.poll-central-control-check.outcome != 'success') }}
         env:
           TARGET_REPO: ${{ matrix.target.repo }}
           TARGET_SHA: ${{ matrix.target.sha }}
           TARGET_EVENT: ${{ matrix.target.event }}
+          FAST_CLEANUP_OUTCOME: ${{ steps.fast-cleanup-scope.outcome }}
           CHECK_OUTCOME: ${{ steps.poll-central-control-check.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           conclusion=success
           summary="aio-fleet central check passed"
-          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+          if [[ "${FAST_CLEANUP_OUTCOME}" == "success" ]]; then
+            summary="aio-fleet cleanup-only fast path passed"
+          fi
+          if [[ "${FAST_CLEANUP_OUTCOME}" != "success" && "${CHECK_OUTCOME}" != "success" ]]; then
             conclusion=failure
             summary="aio-fleet central check failed"
           fi
@@ -1180,7 +1227,7 @@ jobs:
             --status completed \
             --conclusion "${conclusion}" \
             --summary "${summary}"
-          if [[ "${CHECK_OUTCOME}" != "success" ]]; then
+          if [[ "${FAST_CLEANUP_OUTCOME}" != "success" && "${CHECK_OUTCOME}" != "success" ]]; then
             exit 1
           fi
 
