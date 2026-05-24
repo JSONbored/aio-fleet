@@ -90,6 +90,39 @@ def test_cleanup_scope_allows_docs_not_declared_as_publish_paths(
     assert scope.check_mode == CHECK_MODE_FAST_CLEANUP  # nosec B101
 
 
+def test_cleanup_scope_keeps_renamed_required_source_path_full(
+    tmp_path: Path,
+) -> None:
+    repo = load_manifest(_write_manifest(tmp_path)).repo("example-aio")
+
+    scope = classify_required_check_scope(
+        repo,
+        ["docs/Dockerfile", "Dockerfile"],
+        changed_file_statuses={
+            "docs/Dockerfile": "renamed",
+            "Dockerfile": "renamed-from",
+        },
+    )
+
+    assert scope.check_mode == CHECK_MODE_FULL  # nosec B101
+    assert "Dockerfile" in scope.fast_path_reason  # nosec B101
+
+
+def test_cleanup_scope_allows_docs_only_renames(tmp_path: Path) -> None:
+    repo = load_manifest(_write_manifest(tmp_path)).repo("example-aio")
+
+    scope = classify_required_check_scope(
+        repo,
+        ["docs/new.md", "docs/old.md"],
+        changed_file_statuses={
+            "docs/new.md": "renamed",
+            "docs/old.md": "renamed-from",
+        },
+    )
+
+    assert scope.check_mode == CHECK_MODE_FAST_CLEANUP  # nosec B101
+
+
 @pytest.mark.parametrize(
     "path",
     [

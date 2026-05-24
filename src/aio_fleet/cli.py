@@ -3536,13 +3536,16 @@ def _changed_files_from_json(value: str) -> list[dict[str, str]] | None:
             raise ValueError(
                 "--changed-files-json must be a JSON array of path/status objects"
             )
-        path = str(item.get("path", "")).strip()
-        status = str(item.get("status", "")).strip()
+        path = _json_arg_text(item.get("path"))
+        status = _json_arg_text(item.get("status"))
+        previous_path = _json_arg_text(item.get("previous_path"))
         if not path:
             raise ValueError(
                 "--changed-files-json entries must include a non-empty path"
             )
         files.append({"path": path, "status": status})
+        if previous_path and previous_path != path:
+            files.append({"path": previous_path, "status": "renamed-from"})
     return files
 
 
@@ -3556,6 +3559,10 @@ def _changed_file_statuses_from_files(
     if not files:
         return {}
     return {item["path"]: item.get("status", "") for item in files}
+
+
+def _json_arg_text(value: object) -> str:
+    return str(value).strip() if value is not None else ""
 
 
 def _failure_classes(failures: list[object]) -> list[str]:
