@@ -465,6 +465,45 @@ def test_bootstrap_check_failures_write_structured_control_report() -> None:
     )  # nosec B101
 
 
+def test_poll_fast_cleanup_skips_checkout_and_full_validation() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    poll = workflow["jobs"]["poll-checks"]
+
+    validate = _step(poll, "Validate fast cleanup scope")
+    trunk = _step(poll, "Install Trunk")
+    checkout = _step(poll, "Checkout app repo")
+    run_check = _step(poll, "Run central control check")
+    restore = _step(poll, "Restore trusted aio-fleet checkout")
+    complete = _step(poll, "Complete central control check")
+
+    assert validate.get("continue-on-error") is True  # nosec B101
+    assert "control-check" in validate["run"]  # nosec B101
+    assert "--fast-path-only" in validate["run"]  # nosec B101
+    assert "--resolve-changed-files" in validate["run"]  # nosec B101
+    assert "--changed-files-json" not in validate["run"]  # nosec B101
+    assert "--check-run" not in validate["run"]  # nosec B101
+    assert "AIO_FLEET_CHECK_TOKEN" not in validate.get("env", {})  # nosec B101
+    assert "GH_TOKEN" in validate.get("env", {})  # nosec B101
+    assert "steps.fast-cleanup-scope.outcome != 'success'" in trunk["if"]  # nosec B101
+    assert (
+        "steps.fast-cleanup-scope.outcome != 'success'" in checkout["if"]
+    )  # nosec B101
+    assert (
+        "steps.fast-cleanup-scope.outcome != 'success'" in run_check["if"]
+    )  # nosec B101
+    assert "--fast-path-only" not in run_check["run"]  # nosec B101
+    assert (
+        "steps.fast-cleanup-scope.outcome != 'success'" in restore["if"]
+    )  # nosec B101
+    assert (
+        "matrix.target.check_mode != 'fast-cleanup'" not in complete["if"]
+    )  # nosec B101
+    assert (
+        "steps.fast-cleanup-scope.outcome == 'success'" in complete["if"]
+    )  # nosec B101
+    assert "aio-fleet cleanup-only fast path passed" in complete["run"]  # nosec B101
+
+
 def test_app_token_resolution_prefers_app_client_id() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 

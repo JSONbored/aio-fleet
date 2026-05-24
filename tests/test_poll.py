@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from aio_fleet import poll
+from aio_fleet.change_scope import CHECK_MODE_FAST_CLEANUP, CHECK_MODE_FULL
 from aio_fleet.manifest import load_manifest
 
 
@@ -32,6 +33,11 @@ def test_poll_targets_skip_cross_repository_pull_requests(
         ],
     )
     monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": ".trunk/trunk.yaml", "status": "modified"}],
+    )
 
     targets = poll.poll_targets(manifest)
 
@@ -63,6 +69,11 @@ def test_poll_targets_require_same_repository_pr_identity(
         ],
     )
     monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": ".trunk/trunk.yaml", "status": "modified"}],
+    )
 
     targets = poll.poll_targets(manifest)
 
@@ -90,6 +101,11 @@ def test_poll_targets_disable_checkout_submodules_for_prs_but_keep_main_policy(
     )
     monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
     monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": ".trunk/trunk.yaml", "status": "modified"}],
+    )
+    monkeypatch.setattr(
         poll, "_commit_changed_paths", lambda _repo, _sha: ["Dockerfile"]
     )
 
@@ -103,6 +119,145 @@ def test_poll_targets_disable_checkout_submodules_for_prs_but_keep_main_policy(
     assert targets[1].checkout_submodules is True  # nosec B101
     assert targets[1].publish is True  # nosec B101
     assert targets[1].publish_components == ("aio",)  # nosec B101
+
+
+def test_poll_targets_mark_cleanup_prs_fast_path(tmp_path: Path, monkeypatch) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(
+        poll,
+        "_open_pull_requests",
+        lambda _repo: [
+            {
+                "number": 2,
+                "headRefOid": "b" * 40,
+                "isCrossRepository": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": ".trunk/trunk.yaml", "status": "modified"}],
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].check_mode == CHECK_MODE_FAST_CLEANUP  # nosec B101
+    assert targets[0].changed_paths == (".trunk/trunk.yaml",)  # nosec B101
+    assert targets[0].changed_files == (  # nosec B101
+        {"path": ".trunk/trunk.yaml", "status": "modified"},
+    )
+    assert targets[0].fast_path_reason == (  # nosec B101
+        "cleanup/local-hygiene-only paths"
+    )
+
+
+@pytest.mark.parametrize(
+    ("changed_file", "expected_mode"),
+    [
+        ({"path": "scripts/release.py", "status": "removed"}, CHECK_MODE_FAST_CLEANUP),
+        ({"path": "scripts/release.py", "status": "modified"}, CHECK_MODE_FULL),
+    ],
+)
+def test_poll_targets_use_file_status_for_retired_cleanup_paths(
+    tmp_path: Path,
+    monkeypatch,
+    changed_file: dict[str, str],
+    expected_mode: str,
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(
+        poll,
+        "_open_pull_requests",
+        lambda _repo: [
+            {
+                "number": 2,
+                "headRefOid": "b" * 40,
+                "isCrossRepository": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll, "_pull_request_changed_files", lambda _repo, _number: [changed_file]
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].check_mode == expected_mode  # nosec B101
+    assert targets[0].changed_paths == ("scripts/release.py",)  # nosec B101
+
+
+@pytest.mark.parametrize(
+    "changed_path",
+    ["Dockerfile", "example-aio.xml", "tests/test_smoke.py", ".aio-fleet.yml"],
+)
+def test_poll_targets_keep_required_pr_paths_full(
+    tmp_path: Path, monkeypatch, changed_path: str
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(
+        poll,
+        "_open_pull_requests",
+        lambda _repo: [
+            {
+                "number": 2,
+                "headRefOid": "b" * 40,
+                "isCrossRepository": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": changed_path, "status": "modified"}],
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].check_mode == CHECK_MODE_FULL  # nosec B101
+    assert targets[0].changed_paths == (changed_path,)  # nosec B101
+
+
+def test_poll_targets_fails_closed_when_pr_paths_cannot_be_resolved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(
+        poll,
+        "_open_pull_requests",
+        lambda _repo: [
+            {
+                "number": 2,
+                "headRefOid": "b" * 40,
+                "isCrossRepository": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "")
+    monkeypatch.setattr(
+        poll, "_pull_request_changed_files", lambda _repo, _number: None
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].check_mode == CHECK_MODE_FULL  # nosec B101
+    assert targets[0].changed_paths == ()  # nosec B101
+    assert targets[0].fast_path_reason == "changed paths unresolved"  # nosec B101
 
 
 def test_publish_required_ignores_docs_only_main_commits(
@@ -155,6 +310,25 @@ def test_poll_targets_skip_publish_for_docs_only_main_commits(
     assert len(targets) == 1  # nosec B101
     assert targets[0].publish is False  # nosec B101
     assert targets[0].publish_components == ()  # nosec B101
+
+
+def test_poll_targets_mark_cleanup_only_main_commits_fast_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_manifest(manifest_path)
+
+    monkeypatch.setattr(poll, "_open_pull_requests", lambda _repo: [])
+    monkeypatch.setattr(poll, "_main_sha", lambda _repo: "c" * 40)
+    monkeypatch.setattr(
+        poll, "_commit_changed_paths", lambda _repo, _sha: [".trunk/trunk.yaml"]
+    )
+
+    targets = poll.poll_targets(manifest)
+
+    assert len(targets) == 1  # nosec B101
+    assert targets[0].publish is False  # nosec B101
+    assert targets[0].check_mode == CHECK_MODE_FAST_CLEANUP  # nosec B101
 
 
 def test_poll_targets_publish_main_commits_for_publish_related_paths(

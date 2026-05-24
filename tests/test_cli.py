@@ -11,11 +11,13 @@ from types import SimpleNamespace
 import pytest
 
 from aio_fleet import cli
+from aio_fleet.change_scope import CHECK_MODE_FAST_CLEANUP, CHECK_MODE_FULL
 from aio_fleet.cli import (
     _repo_python,
     cmd_alert_doctor,
     cmd_alert_test,
     cmd_check_run,
+    cmd_control_check,
     cmd_debt_report,
     cmd_doctor,
     cmd_export_app_manifest,
@@ -668,6 +670,9 @@ def test_workflow_control_report_writes_bootstrap_failure(
             status="failure",
             output=str(output),
             transaction_id="example-transaction",
+            check_mode=CHECK_MODE_FULL,
+            changed_paths_json="",
+            fast_path_reason="",
             format="json",
         )
     )
@@ -682,6 +687,234 @@ def test_workflow_control_report_writes_bootstrap_failure(
     )
     assert "app-check-permission" in report["failure_classes"]  # nosec B101
     assert json.loads(capsys.readouterr().out)["repo"] == "example-aio"  # nosec B101
+
+
+def test_workflow_control_report_writes_fast_path_metadata(
+    tmp_path: Path,
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    result = cmd_workflow_control_report(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            sha="a" * 40,
+            event="pull_request",
+            source="pr:7",
+            publish=False,
+            publish_component=[],
+            failure=[],
+            status="success",
+            output=str(output),
+            transaction_id="",
+            check_mode=CHECK_MODE_FAST_CLEANUP,
+            changed_paths_json=json.dumps([".trunk/trunk.yaml"]),
+            fast_path_reason="cleanup/local-hygiene-only paths",
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["check_mode"] == CHECK_MODE_FAST_CLEANUP  # nosec B101
+    assert report["fast_path"] == {  # nosec B101
+        "enabled": True,
+        "reason": "cleanup/local-hygiene-only paths",
+        "changed_paths": [".trunk/trunk.yaml"],
+        "changed_files": [],
+    }
+
+
+def test_workflow_control_report_rejects_invalid_fast_path_scope(
+    tmp_path: Path,
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    result = cmd_workflow_control_report(
+        Namespace(
+            manifest=str(manifest),
+            repo="example-aio",
+            sha="a" * 40,
+            event="pull_request",
+            source="pr:7",
+            publish=False,
+            publish_component=[],
+            failure=[],
+            status="success",
+            output=str(output),
+            transaction_id="",
+            check_mode=CHECK_MODE_FAST_CLEANUP,
+            changed_paths_json=json.dumps(["Dockerfile"]),
+            fast_path_reason="cleanup/local-hygiene-only paths",
+            format="json",
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["status"] == "failure"  # nosec B101
+    assert report["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert report["fast_path"] == {  # nosec B101
+        "enabled": False,
+        "reason": "publish/catalog path: Dockerfile",
+        "changed_paths": ["Dockerfile"],
+        "changed_files": [],
+    }
+    assert report["failures"][0].startswith("fast-path-scope:")  # nosec B101
+
+
+def test_control_check_changed_paths_fast_path_writes_report_without_steps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    monkeypatch.setattr(
+        cli,
+        "central_check_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            changed_paths_json=json.dumps([".trunk/trunk.yaml"]),
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["status"] == "success"  # nosec B101
+    assert report["check_mode"] == CHECK_MODE_FAST_CLEANUP  # nosec B101
+    assert report["fast_path"]["changed_paths"] == [".trunk/trunk.yaml"]  # nosec B101
+
+
+def test_control_check_no_fast_path_runs_full_steps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+    called = {}
+
+    monkeypatch.setattr(cli, "central_check_steps", lambda *args, **kwargs: ["step"])
+
+    def fake_run_steps(steps, *, dry_run: bool) -> list[str]:
+        called["steps"] = steps
+        called["dry_run"] = dry_run
+        return []
+
+    monkeypatch.setattr(cli, "run_steps", fake_run_steps)
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            changed_paths_json=json.dumps([".trunk/trunk.yaml"]),
+            no_fast_path=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert called == {"steps": ["step"], "dry_run": False}  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert report["fast_path"] == {  # nosec B101
+        "enabled": False,
+        "reason": "fast path disabled",
+        "changed_paths": [".trunk/trunk.yaml"],
+        "changed_files": [],
+    }
+
+
+def test_control_check_fast_path_only_rejects_full_scope_without_steps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    monkeypatch.setattr(
+        cli,
+        "central_check_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            changed_paths_json=json.dumps(["Dockerfile"]),
+            fast_path_only=True,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["status"] == "failure"  # nosec B101
+    assert report["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert report["failures"][0].startswith("fast-path-scope:")  # nosec B101
+
+
+def test_control_check_resolves_changed_files_before_fast_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_changed_files",
+        lambda *args, **kwargs: [{"path": "scripts/release.py", "status": "removed"}],
+    )
+    monkeypatch.setattr(
+        cli,
+        "central_check_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            resolve_changed_files=True,
+            fast_path_only=True,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["check_mode"] == CHECK_MODE_FAST_CLEANUP  # nosec B101
+    assert report["fast_path"]["changed_files"] == [  # nosec B101
+        {"path": "scripts/release.py", "status": "removed"}
+    ]
+
+
+def test_control_check_rejects_invalid_changed_paths_json(
+    tmp_path: Path, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            changed_paths_json='{"not":"a-list"}',
+        )
+    )
+
+    assert result == 1  # nosec B101
+    assert "--changed-paths-json" in capsys.readouterr().err  # nosec B101
 
 
 def test_alert_doctor_warns_without_required_alerts(capsys) -> None:
@@ -1518,6 +1751,42 @@ repos:
     pytest_image_tag: example-aio:pytest
 """)
     return manifest, repo_path
+
+
+def _control_check_namespace(
+    manifest: Path,
+    *,
+    report_json: str = "",
+    changed_paths_json: str = "",
+    changed_files_json: str = "",
+    resolve_changed_files: bool = False,
+    no_fast_path: bool = False,
+    fast_path_only: bool = False,
+) -> Namespace:
+    return Namespace(
+        manifest=str(manifest),
+        repo="example-aio",
+        repo_path=None,
+        sha="a" * 40,
+        source="pr:7",
+        event="pull_request",
+        publish=False,
+        publish_component=[],
+        no_trunk=False,
+        no_integration=False,
+        no_github_prereleases=False,
+        validation_only=False,
+        publish_only=False,
+        check_run=False,
+        dry_run=False,
+        report_json=report_json,
+        transaction_id="",
+        changed_paths_json=changed_paths_json,
+        changed_files_json=changed_files_json,
+        resolve_changed_files=resolve_changed_files,
+        no_fast_path=no_fast_path,
+        fast_path_only=fast_path_only,
+    )
 
 
 def _git(repo_path: Path, *args: str) -> str:
