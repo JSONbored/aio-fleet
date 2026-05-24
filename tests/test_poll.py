@@ -475,6 +475,91 @@ def test_poll_gh_maps_app_token_to_gh_token(monkeypatch) -> None:
     assert "GITHUB_TOKEN" not in captured_env  # nosec B101
 
 
+def test_pull_request_changed_files_preserves_previous_filename(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+    captured_command: list[str] = []
+
+    def fake_gh(command: list[str]):
+        nonlocal captured_command
+        captured_command = list(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                '{"path":"docs/Dockerfile","status":"renamed",'
+                '"previous_path":"Dockerfile"}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(poll, "_gh", fake_gh)
+
+    changed_files = poll._pull_request_changed_files(repo, "123")
+
+    assert changed_files == [  # nosec B101
+        {"path": "docs/Dockerfile", "status": "renamed"},
+        {"path": "Dockerfile", "status": "renamed-from"},
+    ]
+    assert any(  # nosec B101
+        "previous_path: .previous_filename" in arg for arg in captured_command
+    )
+
+
+def test_commit_changed_files_preserves_previous_filename(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+    captured_command: list[str] = []
+
+    def fake_gh(command: list[str]):
+        nonlocal captured_command
+        captured_command = list(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                '{"path":"docs/Dockerfile","status":"renamed",'
+                '"previous_path":"Dockerfile"}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(poll, "_gh", fake_gh)
+
+    changed_files = poll._commit_changed_files(repo, "a" * 40)
+
+    assert changed_files == [  # nosec B101
+        {"path": "docs/Dockerfile", "status": "renamed"},
+        {"path": "Dockerfile", "status": "renamed-from"},
+    ]
+    assert any(  # nosec B101
+        "previous_path: .previous_filename" in arg for arg in captured_command
+    )
+
+
+def test_pull_request_changed_files_ignores_null_previous_filename(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(
+        poll,
+        "_gh",
+        lambda _command: SimpleNamespace(
+            returncode=0,
+            stdout='{"path":"docs/support.md","status":"modified","previous_path":null}\n',
+            stderr="",
+        ),
+    )
+
+    assert poll._pull_request_changed_files(repo, "123") == [  # nosec B101
+        {"path": "docs/support.md", "status": "modified"}
+    ]
+
+
 def _write_manifest(
     tmp_path: Path,
     *,

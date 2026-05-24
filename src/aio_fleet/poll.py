@@ -146,7 +146,7 @@ def _commit_changed_files(repo: RepoConfig, sha: str) -> list[dict[str, str]] | 
             "api",
             f"repos/{repo.github_repo}/commits/{sha}",
             "--jq",
-            ".files[] | {path: .filename, status: .status}",
+            ".files[] | {path: .filename, status: .status, previous_path: .previous_filename}",
         ]
     )
     if result.returncode != 0:
@@ -157,10 +157,7 @@ def _commit_changed_files(repo: RepoConfig, sha: str) -> list[dict[str, str]] | 
             continue
         payload = json.loads(line)
         if isinstance(payload, dict):
-            path = str(payload.get("path", "")).strip()
-            status = str(payload.get("status", "")).strip()
-            if path:
-                files.append({"path": path, "status": status})
+            files.extend(_changed_file_entries(payload))
     return files or None
 
 
@@ -177,7 +174,7 @@ def _pull_request_changed_files(
             "--paginate",
             f"repos/{repo.github_repo}/pulls/{number}/files",
             "--jq",
-            ".[] | {path: .filename, status: .status}",
+            ".[] | {path: .filename, status: .status, previous_path: .previous_filename}",
         ]
     )
     if result.returncode != 0:
@@ -188,10 +185,7 @@ def _pull_request_changed_files(
             continue
         payload = json.loads(line)
         if isinstance(payload, dict):
-            path = str(payload.get("path", "")).strip()
-            status = str(payload.get("status", "")).strip()
-            if path:
-                files.append({"path": path, "status": status})
+            files.extend(_changed_file_entries(payload))
     return files or None
 
 
@@ -206,6 +200,22 @@ def _changed_file_paths(
         return None
     paths = [item["path"] for item in changed_files if item.get("path")]
     return paths or None
+
+
+def _changed_file_entries(payload: dict[str, object]) -> list[dict[str, str]]:
+    path = _json_text(payload.get("path"))
+    status = _json_text(payload.get("status"))
+    previous_path = _json_text(payload.get("previous_path"))
+    files: list[dict[str, str]] = []
+    if path:
+        files.append({"path": path, "status": status})
+    if previous_path and previous_path != path:
+        files.append({"path": previous_path, "status": "renamed-from"})
+    return files
+
+
+def _json_text(value: object) -> str:
+    return str(value).strip() if value is not None else ""
 
 
 def _changed_file_statuses(

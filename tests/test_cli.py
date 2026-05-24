@@ -901,6 +901,84 @@ def test_control_check_resolves_changed_files_before_fast_path(
     ]
 
 
+def test_control_check_rejects_resolved_rename_from_required_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_changed_files",
+        lambda *args, **kwargs: [
+            {"path": "docs/Dockerfile", "status": "renamed"},
+            {"path": "Dockerfile", "status": "renamed-from"},
+        ],
+    )
+    monkeypatch.setattr(
+        cli,
+        "central_check_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            resolve_changed_files=True,
+            fast_path_only=True,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["status"] == "failure"  # nosec B101
+    assert report["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert "Dockerfile" in report["fast_path"]["changed_paths"]  # nosec B101
+    assert report["fast_path"]["changed_files"] == [  # nosec B101
+        {"path": "docs/Dockerfile", "status": "renamed"},
+        {"path": "Dockerfile", "status": "renamed-from"},
+    ]
+
+
+def test_control_check_changed_files_json_expands_previous_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "control-report.json"
+
+    monkeypatch.setattr(
+        cli,
+        "central_check_steps",
+        lambda *args, **kwargs: pytest.fail("full central steps should be skipped"),
+    )
+
+    result = cmd_control_check(
+        _control_check_namespace(
+            manifest,
+            report_json=str(output),
+            changed_files_json=json.dumps(
+                [
+                    {
+                        "path": "docs/Dockerfile",
+                        "status": "renamed",
+                        "previous_path": "Dockerfile",
+                    }
+                ]
+            ),
+            fast_path_only=True,
+        )
+    )
+
+    assert result == 1  # nosec B101
+    report = json.loads(output.read_text())
+    assert report["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert report["fast_path"]["changed_paths"] == [  # nosec B101
+        "docs/Dockerfile",
+        "Dockerfile",
+    ]
+
+
 def test_control_check_rejects_invalid_changed_paths_json(
     tmp_path: Path, capsys
 ) -> None:
