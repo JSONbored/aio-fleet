@@ -618,10 +618,13 @@ def test_publish_workflow_concurrency_is_component_and_sha_scoped() -> None:
     assert "inputs.sha" in top_level["group"]  # nosec B101
     assert "inputs.publish_component" in top_level["group"]  # nosec B101
     assert poll["cancel-in-progress"] is False  # nosec B101
+    assert "aio-fleet-check" in poll["group"]  # nosec B101
     assert "matrix.target.repo" in poll["group"]  # nosec B101
+    assert "matrix.target.source" in poll["group"]  # nosec B101
     assert "matrix.target.sha" in poll["group"]  # nosec B101
-    assert "matrix.target.publish_components" in poll["group"]  # nosec B101
+    assert "publish_components" not in poll["group"]  # nosec B101
     assert poll_publish["cancel-in-progress"] is False  # nosec B101
+    assert "aio-fleet-publish" in poll_publish["group"]  # nosec B101
     assert "matrix.target.repo" in poll_publish["group"]  # nosec B101
     assert "matrix.target.sha" in poll_publish["group"]  # nosec B101
     assert "matrix.target.publish_components" in poll_publish["group"]  # nosec B101

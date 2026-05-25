@@ -158,7 +158,7 @@ def _commit_changed_files(repo: RepoConfig, sha: str) -> list[dict[str, str]] | 
         payload = json.loads(line)
         if isinstance(payload, dict):
             files.extend(_changed_file_entries(payload))
-    return files or None
+    return files
 
 
 def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
@@ -186,7 +186,7 @@ def _pull_request_changed_files(
         payload = json.loads(line)
         if isinstance(payload, dict):
             files.extend(_changed_file_entries(payload))
-    return files or None
+    return files
 
 
 def _pull_request_changed_paths(repo: RepoConfig, number: str) -> list[str] | None:
@@ -199,7 +199,7 @@ def _changed_file_paths(
     if changed_files is None:
         return None
     paths = [item["path"] for item in changed_files if item.get("path")]
-    return paths or None
+    return paths
 
 
 def _changed_file_entries(payload: dict[str, object]) -> list[dict[str, str]]:

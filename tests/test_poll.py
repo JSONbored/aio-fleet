@@ -275,6 +275,26 @@ def test_publish_required_ignores_docs_only_main_commits(
     )  # nosec B101
 
 
+def test_publish_required_ignores_resolved_empty_commits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(
+        poll,
+        "_gh",
+        lambda _command: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    assert poll._commit_changed_files(repo, "a" * 40) == []  # nosec B101
+    assert poll._commit_changed_paths(repo, "a" * 40) == []  # nosec B101
+    assert (
+        poll.publish_components_required(repo, sha="a" * 40, event="push")  # nosec B101
+        == []
+    )
+
+
 def test_publish_required_accepts_runtime_and_release_commits(
     tmp_path: Path, monkeypatch
 ) -> None:
