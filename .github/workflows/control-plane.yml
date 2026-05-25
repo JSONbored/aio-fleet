@@ -981,7 +981,7 @@ jobs:
     if: ${{ needs.control-plane.outputs.poll_run_checks == 'true' && needs.control-plane.outputs.poll_has_targets == 'true' }}
     runs-on: ubuntu-latest
     concurrency:
-      group: aio-fleet-publish-${{ matrix.target.repo }}-${{ matrix.target.sha }}-${{ join(matrix.target.publish_components, '-') || 'all' }}
+      group: aio-fleet-check-${{ matrix.target.repo }}-${{ matrix.target.source }}-${{ matrix.target.sha }}
       cancel-in-progress: false
     strategy:
       fail-fast: false

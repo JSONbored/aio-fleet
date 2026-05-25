@@ -276,7 +276,12 @@ def test_upstream_monitor_write_updates_alpha_release_history(
         "ARG AIO_REVISION=7\n"
     )
     changelog = repo_path / "CHANGELOG.alpha.md"
-    changelog.write_text("# Alpha Changelog\n")
+    changelog.write_text(
+        "# Alpha Changelog\n\n"
+        "## 0.7.1-alpha.6-aio.7 - 2026-05-20\n\n"
+        "### Build\n\n"
+        "- Existing alpha release.\n"
+    )
     manifest = tmp_path / "fleet.yml"
     manifest.write_text(f"""
 owner: JSONbored
@@ -345,6 +350,10 @@ repos:
         "### Component Customizations\n\n- Preserve the Sure AIO alpha import-limit"
         in changelog_text
     )  # nosec B101
+    assert (  # nosec B101
+        "Keep alpha passkey/WebAuthn template controls separate from stable.\n\n"
+        "## 0.7.1-alpha.6-aio.7" in changelog_text
+    )
     assert "Track upstream Sure Alpha 0.7.1-alpha.7" in changelog_text  # nosec B101
     assert "SURE_IMPORT_MAX_NDJSON_SIZE_MB" in changelog_text  # nosec B101
     assert "passkey/WebAuthn template controls" in changelog_text  # nosec B101

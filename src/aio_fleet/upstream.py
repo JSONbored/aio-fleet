@@ -532,7 +532,9 @@ def _upsert_alpha_release_section(
     if insert_at == -1:
         updated = f"{text.rstrip()}\n\n{section}"
     else:
-        updated = f"{text[:insert_at].rstrip()}\n\n{section}{text[insert_at:].lstrip()}"
+        updated = (
+            f"{text[:insert_at].rstrip()}\n\n{section}\n{text[insert_at:].lstrip()}"
+        )
     changelog.write_text(updated.rstrip() + "\n", encoding="utf-8")
 
 
