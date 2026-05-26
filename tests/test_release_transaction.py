@@ -126,6 +126,38 @@ def test_release_transaction_allows_explicit_autopilot_with_credentials(
     assert report["failure_classes"] == []  # nosec B101
 
 
+def test_release_transaction_blocks_forged_autopilot_explicit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = _repo_config(
+        _init_app_repo(tmp_path / "example-aio"),
+        release_transaction={"autopilot": False, "autopilot_explicit": True},
+    )
+    for key in [
+        "DOCKERHUB_USERNAME",
+        "DOCKERHUB_TOKEN",
+        "AIO_FLEET_GHCR_TOKEN",
+        "DOCKERHUB_DELETE_TOKEN",
+    ]:
+        monkeypatch.setenv(key, "present")
+
+    report = release_transaction_preflight(
+        repo,
+        components=["aio"],
+        write=True,
+        require_credentials=True,
+        required_checks_passed=True,
+    )
+
+    assert report["status"] == "blocked"  # nosec B101
+    assert "permission-gap" in report["failure_classes"]  # nosec B101
+    assert any(  # nosec B101
+        "release_transaction.autopilot: true" in finding["message"]
+        for finding in report["findings"]
+    )
+
+
 def test_release_transaction_blocks_pull_request_submodule_policy(
     tmp_path: Path,
 ) -> None:

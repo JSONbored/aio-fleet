@@ -227,6 +227,14 @@ def release_transaction_policy(repo: RepoConfig, component: str) -> dict[str, An
         ),
         "publish_policy": "central-control",
     }
+
+    def _merge_release_transaction_config(config: dict[str, Any]) -> None:
+        for key in ["autopilot", "checkout_policy", "publish_policy"]:
+            if key in config:
+                policy[key] = config[key]
+        if config.get("autopilot") is True:
+            policy["autopilot_explicit"] = True
+
     default_policy = repo.defaults.get("release_transaction")
     if isinstance(default_policy, dict):
         for key in ["checkout_policy", "publish_policy"]:
@@ -234,14 +242,10 @@ def release_transaction_policy(repo: RepoConfig, component: str) -> dict[str, An
                 policy[key] = default_policy[key]
     repo_policy = repo.raw.get("release_transaction")
     if isinstance(repo_policy, dict):
-        policy.update({key: value for key, value in repo_policy.items()})
-        if repo_policy.get("autopilot") is True:
-            policy["autopilot_explicit"] = True
+        _merge_release_transaction_config(repo_policy)
     config_policy = component_config(repo, component).get("release_transaction")
     if isinstance(config_policy, dict):
-        policy.update({key: value for key, value in config_policy.items()})
-        if config_policy.get("autopilot") is True:
-            policy["autopilot_explicit"] = True
+        _merge_release_transaction_config(config_policy)
     policy["autopilot"] = bool(policy.get("autopilot") is True)
     return policy
 
