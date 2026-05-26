@@ -131,8 +131,13 @@ def publish_components_required(repo: RepoConfig, *, sha: str, event: str) -> li
 def resolve_changed_files(
     repo: RepoConfig, *, sha: str, event: str, source: str
 ) -> list[dict[str, str]] | None:
-    del source
-    if event in {"pull_request", "push"}:
+    if event == "pull_request":
+        if source.startswith("pr:"):
+            return _pull_request_changed_files_at_head(
+                repo, source.removeprefix("pr:"), sha
+            )
+        return None
+    if event == "push":
         return _commit_changed_files(repo, sha)
     return None
 
@@ -184,6 +189,30 @@ def _pull_request_changed_files(
         if isinstance(payload, dict):
             files.extend(_changed_file_entries(payload))
     return files
+
+
+def _pull_request_changed_files_at_head(
+    repo: RepoConfig, number: str, sha: str
+) -> list[dict[str, str]] | None:
+    if not number or not sha:
+        return None
+    if _pull_request_head_sha(repo, number) != sha:
+        return None
+    files = _pull_request_changed_files(repo, number)
+    if files is None:
+        return None
+    if _pull_request_head_sha(repo, number) != sha:
+        return None
+    return files
+
+
+def _pull_request_head_sha(repo: RepoConfig, number: str) -> str:
+    result = _gh(
+        ["api", f"repos/{repo.github_repo}/pulls/{number}", "--jq", ".head.sha"]
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
 
 
 def _pull_request_changed_paths(repo: RepoConfig, number: str) -> list[str] | None:
