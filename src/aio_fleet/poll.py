@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from aio_fleet.change_scope import (
     CHECK_MODE_FULL,
     classify_required_check_scope,
+    publish_component_names,
     publish_components_for_changed_paths,
 )
+from aio_fleet.checks import check_run_satisfied
 from aio_fleet.manifest import FleetManifest, RepoConfig
 
 
@@ -88,6 +90,8 @@ def poll_targets(
                     components = publish_components_for_changed_paths(
                         repo, changed_paths
                     )
+                    if not components:
+                        components = _recent_main_publish_components(repo)
                 scope = classify_required_check_scope(
                     repo,
                     changed_paths,
@@ -165,6 +169,39 @@ def _commit_changed_files(repo: RepoConfig, sha: str) -> list[dict[str, str]] | 
 
 def _commit_changed_paths(repo: RepoConfig, sha: str) -> list[str] | None:
     return _changed_file_paths(_commit_changed_files(repo, sha))
+
+
+def _recent_main_publish_components(repo: RepoConfig, limit: int = 20) -> list[str]:
+    commits = _main_commit_shas(repo, limit=limit)
+    if not commits:
+        return []
+    seen_paths: list[str] = []
+    for commit_sha in commits[1:]:
+        if check_run_satisfied(repo, sha=commit_sha, event="push"):
+            break
+        changed_paths = _commit_changed_paths(repo, commit_sha)
+        if changed_paths is None:
+            return publish_component_names(repo)
+        seen_paths.extend(changed_paths)
+    return publish_components_for_changed_paths(repo, seen_paths)
+
+
+def _main_commit_shas(repo: RepoConfig, *, limit: int = 20) -> list[str]:
+    result = _gh(
+        [
+            "api",
+            f"repos/{repo.github_repo}/commits",
+            "-f",
+            "sha=main",
+            "-f",
+            f"per_page={limit}",
+            "--jq",
+            ".[].sha",
+        ]
+    )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _pull_request_changed_files(
