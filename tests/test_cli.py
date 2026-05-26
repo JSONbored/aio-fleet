@@ -4380,6 +4380,7 @@ repos:
     cli._run_generator_for_write(load_manifest(manifest).repo("example-aio"))
 
     assert observed.get("SAFE_TEST_FLAG") == "present"  # nosec B101
+    assert "aio-fleet-generator-home-" in observed.get("HOME", "")  # nosec B101
     assert "APP_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_UPSTREAM_TOKEN" not in observed  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in observed  # nosec B101

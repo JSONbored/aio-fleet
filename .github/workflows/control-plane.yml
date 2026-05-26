@@ -291,6 +291,7 @@ jobs:
         run: |
           set -euo pipefail
           handoff="${RUNNER_TEMP}/upstream-monitor"
+          monitor_home="$(mktemp -d "${RUNNER_TEMP}/upstream-monitor-home.XXXXXX")"
           args=(workflow upstream-monitor --manifest "${handoff}/manifest.yml" --output "${handoff}/report.json")
           if [[ "${MUTATE}" == "true" ]]; then
             args+=(--mutate)
@@ -299,12 +300,14 @@ jobs:
             args+=(--dry-run)
           fi
           env -i \
-            HOME="${HOME}" \
+            HOME="${monitor_home}" \
             PATH="${PATH}" \
             python -m aio_fleet "${args[@]}"
 
       - name: Restore trusted aio-fleet after upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        env:
+          PYTHONNOUSERSITE: "1"
         run: |
           set -euo pipefail
           git reset --hard HEAD
@@ -313,6 +316,8 @@ jobs:
 
       - name: Validate upstream monitor handoff
         if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          PYTHONNOUSERSITE: "1"
         run: |
           set -euo pipefail
           handoff="${RUNNER_TEMP}/upstream-monitor"
@@ -327,6 +332,7 @@ jobs:
         env:
           AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
+          PYTHONNOUSERSITE: "1"
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token after tokenless generator monitoring completes
         run: |
           set -euo pipefail

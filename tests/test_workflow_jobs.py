@@ -82,6 +82,13 @@ def test_poll_outputs_writes_github_matrix(tmp_path: Path) -> None:
     assert "targets<<__AIO_FLEET_TARGETS__" in text  # nosec B101
 
 
+def test_upstream_monitor_subprocess_env_uses_disposable_home(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", "/tmp/real-home")
+    env = workflow_jobs._upstream_monitor_subprocess_env()
+    assert env["HOME"] != "/tmp/real-home"  # nosec B101
+    assert "aio-fleet-upstream-monitor-home-" in env["HOME"]  # nosec B101
+
+
 def test_upstream_summary_renders_updates(tmp_path: Path) -> None:
     report = tmp_path / "upstream-report.json"
     report.write_text(

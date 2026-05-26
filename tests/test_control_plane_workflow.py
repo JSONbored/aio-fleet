@@ -111,14 +111,19 @@ def test_upstream_monitor_scopes_git_auth_without_standard_tokens() -> None:
     assert "workflow upstream-monitor" in monitor["run"]  # nosec B101
     assert "${RUNNER_TEMP}/upstream-monitor" in monitor["run"]  # nosec B101
     assert "env -i" in monitor["run"]  # nosec B101
+    assert 'HOME="${monitor_home}"' in monitor["run"]  # nosec B101
+    assert "mktemp -d" in monitor["run"]  # nosec B101
     assert "git reset --hard HEAD" in restore["run"]  # nosec B101
     assert "git clean -ffdx" in restore["run"]  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in restore.get("env", {})  # nosec B101
+    assert restore["env"]["PYTHONNOUSERSITE"] == "1"  # nosec B101
     assert "workflow upstream-validate" in validate["run"]  # nosec B101
     assert "validated-report.json" in validate["run"]  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in validate.get("env", {})  # nosec B101
+    assert validate["env"]["PYTHONNOUSERSITE"] == "1"  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" in apply["env"]  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" in apply["env"]  # nosec B101
+    assert apply["env"]["PYTHONNOUSERSITE"] == "1"  # nosec B101
     assert "workflow upstream-actions" in apply["run"]  # nosec B101
     assert "--manifest fleet.yml" in apply["run"]  # nosec B101
     assert "--checkout-root" in apply["run"]  # nosec B101
