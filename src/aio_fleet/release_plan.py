@@ -610,6 +610,17 @@ def _registry_only_component_patterns(
     components = repo.raw.get("components")
     if not isinstance(components, dict):
         return patterns
+
+    normal_patterns: set[str] = set()
+    for name, config in components.items():
+        if component is not None and name == component:
+            continue
+        if not isinstance(config, dict):
+            continue
+        if str(config.get("release_policy", "")).strip() == "registry_only":
+            continue
+        normal_patterns.update(_component_release_patterns(repo, str(name)))
+
     for name, config in components.items():
         if component is not None and name != component:
             continue
@@ -618,7 +629,11 @@ def _registry_only_component_patterns(
         if str(config.get("release_policy", "")).strip() != "registry_only":
             continue
         patterns.add(".aio-fleet.yml")
-        patterns.update(_component_release_patterns(repo, str(name)))
+        patterns.update(
+            path
+            for path in _component_release_patterns(repo, str(name))
+            if path not in normal_patterns
+        )
     return {pattern for pattern in patterns if pattern}
 
 

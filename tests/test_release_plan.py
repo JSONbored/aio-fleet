@@ -425,6 +425,55 @@ def test_release_plan_ignores_registry_only_component_changes(
     assert plan["state"] == "current"  # nosec B101
 
 
+
+
+def test_release_plan_does_not_treat_shared_paths_as_registry_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=0.7.0\n")
+    (repo_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=0.7.0-alpha.1\n")
+    (repo_path / "upstream.toml").write_text("[upstream]\nversion = \"0.7.0\"\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.0-aio.1")
+    _git(repo_path, "tag", "0.7.0-aio.1")
+    (repo_path / "upstream.toml").write_text("[upstream]\nversion = \"0.7.1\"\n")
+    _git(repo_path, "add", "upstream.toml")
+    _git(repo_path, "commit", "-m", "chore(deps): bump upstream")
+
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "aio": {"dockerfile": "Dockerfile", "upstream_config": "upstream.toml"},
+                "sure-alpha": {
+                    "dockerfile": "Dockerfile.alpha",
+                    "upstream_config": "upstream.toml",
+                    "release_policy": "registry_only",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+
+    patterns = release_plan_module._registry_only_component_patterns(repo)
+    assert "upstream.toml" not in patterns  # nosec B101
+    assert release_plan_module._only_registry_only_component_changes(repo) is False  # nosec B101
+
+
 def test_release_plan_marks_registry_only_component_changes_due(
     tmp_path: Path, monkeypatch
 ) -> None:
