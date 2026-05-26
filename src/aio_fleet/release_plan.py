@@ -115,15 +115,22 @@ def release_plan_for_repo(
         release_due = _safe_has_semver_changes(repo)
     elif component != "aio":
         latest_tag = _safe_latest_component_tag(repo, component)
-        ignored_release_changes = _only_ignored_release_changes(repo, latest_tag)
+        registry_baseline_tag = (
+            _component_release_tag(repo, component)
+            if registry_only and not latest_tag
+            else latest_tag
+        )
+        ignored_release_changes = _only_ignored_release_changes(
+            repo, registry_baseline_tag
+        )
         next_version = (
             _safe_next_component(repo, component)
             if github_release_required
-            else latest_tag
+            else registry_baseline_tag
         )
         registry_only_component_changes = registry_only
         release_due = (
-            _has_registry_only_component_changes(repo, component, latest_tag)
+            _has_registry_only_component_changes(repo, component, registry_baseline_tag)
             if registry_only
             else _safe_has_component_changes(repo, component)
         )
@@ -144,14 +151,20 @@ def release_plan_for_repo(
     if repo.publish_profile != "template" and release_due and ignored_release_changes:
         release_due = False
 
+    github_release_lookup_tag = latest_tag
+    if registry_only and component != "aio" and not github_release_lookup_tag:
+        github_release_lookup_tag = _component_release_tag(repo, component)
+
     github_release = (
-        _latest_github_release(repo, tag=latest_tag)
+        _latest_github_release(repo, tag=github_release_lookup_tag)
         if github_release_required
         else {
             "state": "not-applicable",
             "detail": "registry-only component without GitHub release history",
         }
     )
+    if not latest_tag and github_release_lookup_tag:
+        latest_tag = github_release_lookup_tag
     if (
         not latest_tag
         and github_release_required

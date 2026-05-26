@@ -425,8 +425,6 @@ def test_release_plan_ignores_registry_only_component_changes(
     assert plan["state"] == "current"  # nosec B101
 
 
-
-
 def test_release_plan_does_not_treat_shared_paths_as_registry_only(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -439,11 +437,11 @@ def test_release_plan_does_not_treat_shared_paths_as_registry_only(
     _git(repo_path, "config", "user.name", "Tests")
     (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=0.7.0\n")
     (repo_path / "Dockerfile.alpha").write_text("ARG UPSTREAM_VERSION=0.7.0-alpha.1\n")
-    (repo_path / "upstream.toml").write_text("[upstream]\nversion = \"0.7.0\"\n")
+    (repo_path / "upstream.toml").write_text('[upstream]\nversion = "0.7.0"\n')
     _git(repo_path, "add", ".")
     _git(repo_path, "commit", "-m", "chore(release): 0.7.0-aio.1")
     _git(repo_path, "tag", "0.7.0-aio.1")
-    (repo_path / "upstream.toml").write_text("[upstream]\nversion = \"0.7.1\"\n")
+    (repo_path / "upstream.toml").write_text('[upstream]\nversion = "0.7.1"\n')
     _git(repo_path, "add", "upstream.toml")
     _git(repo_path, "commit", "-m", "chore(deps): bump upstream")
 
@@ -471,7 +469,9 @@ def test_release_plan_does_not_treat_shared_paths_as_registry_only(
 
     patterns = release_plan_module._registry_only_component_patterns(repo)
     assert "upstream.toml" not in patterns  # nosec B101
-    assert release_plan_module._only_registry_only_component_changes(repo) is False  # nosec B101
+    assert (
+        release_plan_module._only_registry_only_component_changes(repo) is False
+    )  # nosec B101
 
 
 def test_release_plan_marks_registry_only_component_changes_due(
@@ -1046,6 +1046,73 @@ def test_release_plan_marks_missing_registry_only_prerelease_due(
         f"python -m aio_fleet release transaction --repo sure-aio "
         f"--component sure-alpha --sha {sha} --dry-run"
     )
+
+
+def test_release_plan_registry_only_uses_component_tag_for_missing_prerelease_lookup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_tag_prefix": "sure-alpha/",
+                    "release_suffix": "aio",
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module, "_safe_latest_component_tag", lambda _repo, _component: ""
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_component_release_tag",
+        lambda _repo, _component: "sure-alpha/0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_next_component",
+        lambda _repo, _component: "0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.1-alpha.10-aio.1",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_has_registry_only_component_changes",
+        lambda _repo, _component, _latest_tag: False,
+    )
+
+    lookup_tags: list[str] = []
+
+    def fake_latest_release(_repo, **kwargs):
+        lookup_tags.append(str(kwargs.get("tag", "")))
+        return {"state": "unknown", "detail": "release not found"}
+
+    monkeypatch.setattr(
+        release_plan_module, "_latest_github_release", fake_latest_release
+    )
+
+    plan = release_plan_for_repo(repo, component="sure-alpha")
+
+    assert lookup_tags == ["sure-alpha/0.7.1-alpha.10-aio.1"]  # nosec B101
+    assert plan["release_due"] is True  # nosec B101
 
 
 def test_release_plan_keeps_registry_only_helper_out_of_formal_release_lane(
