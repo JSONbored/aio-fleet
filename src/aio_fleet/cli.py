@@ -88,6 +88,7 @@ from aio_fleet.registry import (
 from aio_fleet.release import (
     extract_release_notes,
     find_release_publish_target_commit,
+    git,
     latest_changelog_version,
     latest_component_changelog_version,
     read_upstream_version,
@@ -3870,7 +3871,12 @@ def _github_prerelease_target_commit(
         )
         if normalized_version != normalized_release_package_tag:
             raise
-        return _git_head(repo.path)
+        tracked_paths = [
+            str(config.get("dockerfile", "Dockerfile")),
+            str(config.get("upstream_config", "upstream.toml")),
+            str(config.get("release_changelog", "CHANGELOG.md")),
+        ]
+        return git(repo.path, "log", "-n", "1", "--format=%H", "--", *tracked_paths)
 
 
 def _github_cli_env() -> dict[str, str] | None:
