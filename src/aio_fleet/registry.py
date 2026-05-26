@@ -651,8 +651,16 @@ def _registry_only_release_target_commit(
         repo, component=component, release_package_tag=release_package_tag
     ):
         return ""
+    config = component_config(repo, component)
+    tracked_paths = [
+        str(config.get("dockerfile", "Dockerfile")),
+        str(config.get("upstream_config", "upstream.toml")),
+        str(config.get("release_changelog", "CHANGELOG.md")),
+    ]
     try:
-        return git(repo.path, "rev-parse", "HEAD").strip()
+        return git(
+            repo.path, "log", "-n", "1", "--format=%H", "--", *tracked_paths
+        ).strip()
     except (Exception, SystemExit):
         return ""
 
