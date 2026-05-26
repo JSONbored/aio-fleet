@@ -41,7 +41,7 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
     assert steps[2].command[-1].endswith("[app-tests]")  # nosec B101
 
 
-def test_central_check_steps_skip_pr_integration_when_submodule_checkout_is_missing(
+def test_central_check_steps_keep_pr_integration_when_submodule_checkout_is_missing(
     tmp_path: Path,
 ) -> None:
     repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("mem0-aio"), tmp_path)
@@ -51,7 +51,7 @@ def test_central_check_steps_skip_pr_integration_when_submodule_checkout_is_miss
     steps = central_check_steps(repo, event="pull_request", include_trunk=False)
 
     names = [step.name for step in steps]
-    assert "integration-tests" not in names  # nosec B101
+    assert "integration-tests" in names  # nosec B101
 
 
 def test_central_check_steps_keep_push_integration_for_submodule_repos(
@@ -66,18 +66,6 @@ def test_central_check_steps_keep_push_integration_for_submodule_repos(
     names = [step.name for step in steps]
     assert "integration-tests" in names  # nosec B101
 
-
-def test_central_check_steps_keep_pr_integration_when_submodule_is_initialized(
-    tmp_path: Path,
-) -> None:
-    repo = _repo_with_path(load_manifest(ROOT / "fleet.yml").repo("mem0-aio"), tmp_path)
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "openmemory" / ".git").mkdir(parents=True)
-
-    steps = central_check_steps(repo, event="pull_request", include_trunk=False)
-
-    names = [step.name for step in steps]
-    assert "integration-tests" in names  # nosec B101
 
 
 def test_central_check_steps_use_trusted_python_for_app_tests(
