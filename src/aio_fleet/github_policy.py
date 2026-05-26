@@ -109,6 +109,17 @@ def _branch_protection_failures(
         for context, app_id in expected_check_app_ids.items()
         if context in expected_checks
     }
+    per_check_app_ids = policy.get("required_check_app_ids")
+    enforce_check_app_coverage = expected_check_app_id is not None or bool(per_check_app_ids)
+    if enforce_check_app_coverage:
+        missing_expected_check_app_ids = sorted(
+            set(expected_checks) - set(known_expected_check_app_ids)
+        )
+        for context in missing_expected_check_app_ids:
+            failures.append(
+                f"{repo_name}: required check {context!r} is missing required_check_app_id coverage"
+            )
+
     if known_expected_check_app_ids:
         check_app_failures = _required_check_app_failures(
             repo_name,

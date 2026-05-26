@@ -436,6 +436,64 @@ repositories:
     ]
 
 
+
+
+def test_validate_github_policy_rejects_missing_per_check_app_id_coverage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "github-policy.yml"
+    policy.write_text("""
+owner: JSONbored
+defaults:
+  repository:
+    visibility: public
+  branch_protection:
+    strict_required_status_checks: true
+  actions:
+    enabled: true
+repositories:
+  example-aio:
+    required_checks:
+      - Security scan
+      - Contributor trust
+    required_check_app_ids:
+      Security scan: 3287076
+""")
+
+    def fake_gh_json(args: list[str]) -> Any:
+        joined = " ".join(args)
+        if joined == "api repos/JSONbored/example-aio":
+            return {"visibility": "public"}
+        if joined == "api repos/JSONbored/example-aio/branches/main/protection":
+            return {
+                "required_status_checks": {
+                    "contexts": ["Security scan", "Contributor trust"],
+                    "checks": [
+                        {"context": "Security scan", "app_id": 3287076},
+                        {"context": "Contributor trust", "app_id": 999999},
+                    ],
+                    "strict": True,
+                }
+            }
+        if joined == "api repos/JSONbored/example-aio/actions/permissions":
+            return {"enabled": True}
+        if (
+            joined
+            == "api repos/JSONbored/example-aio/actions/permissions/selected-actions"
+        ):
+            return {}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(github_policy, "_gh_json", fake_gh_json)
+
+    failures = github_policy.validate_github_policy(
+        policy, repos=["example-aio"], check_secrets=False
+    )
+
+    assert failures == [  # nosec B101
+        "example-aio: required check 'Contributor trust' is missing required_check_app_id coverage"
+    ]
 def test_validate_github_policy_rejects_same_context_wrong_app_id(
     tmp_path: Path,
     monkeypatch,
