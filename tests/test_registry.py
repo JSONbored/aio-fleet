@@ -154,6 +154,12 @@ def test_release_tag_allows_changelog_format_followup(monkeypatch) -> None:
             f"{release_sha}..{publish_sha}",
         ):
             return "CHANGELOG.md"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-status",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "M	CHANGELOG.md"
         raise AssertionError(f"unexpected git call: {(command, *args)}")
 
     monkeypatch.setattr(registry, "git", fake_git)
@@ -689,22 +695,27 @@ def test_component_release_tag_allows_centralized_cleanup_followup(
             f"{release_sha}..{publish_sha}",
         ):
             return "chore(cleanup): remove centralized repo files (#44)"
+        cleanup_paths = [
+            ".github/FUNDING.yml",
+            ".github/ISSUE_TEMPLATE/bug_report.yml",
+            ".github/pull_request_template.md",
+            "SECURITY.md",
+            "cliff.toml",
+            "renovate.json",
+            "upstream.toml",
+        ]
         if (command, *args[:2]) == (
             "diff",
             "--name-only",
             f"{release_sha}..{publish_sha}",
         ):
-            return "\n".join(
-                [
-                    ".github/FUNDING.yml",
-                    ".github/ISSUE_TEMPLATE/bug_report.yml",
-                    ".github/pull_request_template.md",
-                    "SECURITY.md",
-                    "cliff.toml",
-                    "renovate.json",
-                    "upstream.toml",
-                ]
-            )
+            return "\n".join(cleanup_paths)
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-status",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "\n".join(f"D\t{path}" for path in cleanup_paths)
         raise AssertionError(f"unexpected git call: {(command, *args)}")
 
     monkeypatch.setattr(registry, "git", fake_git)
@@ -749,6 +760,12 @@ def test_component_release_tag_rejects_cleanup_subject_with_runtime_changes(
             f"{release_sha}..{publish_sha}",
         ):
             return "Dockerfile"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-status",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "A\tDockerfile"
         raise AssertionError(f"unexpected git call: {(command, *args)}")
 
     monkeypatch.setattr(registry, "git", fake_git)
@@ -1365,3 +1382,53 @@ def test_changelog_version_profile_uses_latest_changelog_heading(monkeypatch) ->
     assert tags.release_package_tag == "app-2024.05"  # nosec B101
     assert "jsonbored/khoj-aio:app-2024.05" in tags.dockerhub  # nosec B101
     assert "ghcr.io/jsonbored/khoj-aio:app-2024.05" in tags.ghcr  # nosec B101
+
+
+def test_component_release_tag_rejects_cleanup_rename_into_allowed_path(
+    monkeypatch,
+) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("nanoclaw-aio")
+    release_sha = "e" * 40
+    publish_sha = "f" * 40
+
+    monkeypatch.setattr(
+        registry, "_read_component_upstream_version", lambda *_: "v2.0.64"
+    )
+    monkeypatch.setattr(
+        registry,
+        "latest_component_changelog_version",
+        lambda *_args, **_kwargs: "v2.0.64-aio.3",
+    )
+    monkeypatch.setattr(
+        registry, "find_release_target_commit", lambda *_args, **_kwargs: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "log",
+            "--format=%s",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "chore(cleanup): move centralized repo files (#44)"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return ".github/workflows/entrypoint.sh"
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-status",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "R100\trootfs/entrypoint.sh\t.github/workflows/entrypoint.sh"
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
+
+    tags = registry.compute_registry_tags(repo, sha=publish_sha, component="aio")
+
+    assert tags.release_package_tag == ""  # nosec B101
+    assert "jsonbored/nanoclaw-aio:v2.0.64-aio.3" not in tags.dockerhub  # nosec B101
+    assert "ghcr.io/jsonbored/nanoclaw-aio:v2.0.64-aio.3" not in tags.ghcr  # nosec B101

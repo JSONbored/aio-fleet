@@ -718,6 +718,9 @@ def _release_tag_sha_allowed(
         changed_files = git(
             repo.path, "diff", "--name-only", f"{release_target_commit}..{sha}"
         )
+        changed_status = git(
+            repo.path, "diff", "--name-status", f"{release_target_commit}..{sha}"
+        )
     except (Exception, SystemExit):
         return False
 
@@ -741,7 +744,12 @@ def _release_tag_sha_allowed(
     if not subject_lines:
         return False
     if _cleanup_followup_allowed(
-        repo, subject_lines=subject_lines, paths=changed_paths
+        repo,
+        subject_lines=subject_lines,
+        paths=changed_paths,
+        name_status_lines=[
+            line.strip() for line in changed_status.splitlines() if line.strip()
+        ],
     ):
         return True
     if all(_RELEASE_FORMAT_SUBJECT.match(subject) for subject in subject_lines):
@@ -756,18 +764,33 @@ def _release_tag_sha_allowed(
 
 
 def _cleanup_followup_allowed(
-    repo: RepoConfig, *, subject_lines: list[str], paths: list[str]
+    repo: RepoConfig,
+    *,
+    subject_lines: list[str],
+    paths: list[str],
+    name_status_lines: list[str],
 ) -> bool:
-    if not paths or not subject_lines:
+    if not paths or not subject_lines or not name_status_lines:
         return False
     if not all(_RELEASE_CLEANUP_SUBJECT.match(subject) for subject in subject_lines):
         return False
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
-    return bool(patterns) and all(
-        _matches_release_pattern(path, patterns) for path in paths
-    )
+    if not patterns or not all(_matches_release_pattern(path, patterns) for path in paths):
+        return False
+    return all(_cleanup_status_line_allowed(line, patterns) for line in name_status_lines)
 
+
+
+def _cleanup_status_line_allowed(line: str, patterns: set[str]) -> bool:
+    parts = line.split("\t")
+    if len(parts) < 2:
+        return False
+    status = parts[0]
+    if status != "D":
+        return False
+    path = parts[1].strip()
+    return bool(path) and _matches_release_pattern(path, patterns)
 
 def _non_publish_patterns(repo: RepoConfig) -> set[str]:
     patterns = set(repo.list_value("non_release_paths"))
