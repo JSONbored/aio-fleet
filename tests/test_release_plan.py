@@ -497,6 +497,83 @@ def test_release_plan_marks_registry_only_component_changes_due(
     assert plan["state"] == "release-due"  # nosec B101
 
 
+def test_release_plan_registry_only_revision_bump_without_tag_still_due(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=0.7.0\n" "ARG UPSTREAM_IMAGE_DIGEST=sha256:stable\n"
+    )
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.9\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:alpha\n"
+        "ARG AIO_REVISION=1\n"
+    )
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "## 0.7.1-alpha.9-aio.1\n\n- Initial alpha package.\n"
+    )
+    (repo_path / "rootfs-alpha").mkdir()
+    (repo_path / "rootfs-alpha" / "overlay.rb").write_text("old\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.1-alpha.9-aio.1")
+    _git(repo_path, "tag", "0.7.0-aio.1")
+    _git(repo_path, "tag", "sure-alpha/0.7.1-alpha.9-aio.1")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.9\n"
+        "ARG UPSTREAM_IMAGE_DIGEST=sha256:alpha\n"
+        "ARG AIO_REVISION=2\n"
+    )
+    (repo_path / "rootfs-alpha" / "overlay.rb").write_text("new\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "fix(alpha): bump registry revision")
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+            "components": {
+                "aio": {"image_name": "jsonbored/sure-aio"},
+                "sure-alpha": {
+                    "image_name": "jsonbored/sure-aio-alpha",
+                    "dockerfile": "Dockerfile.alpha",
+                    "release_policy": "registry_only",
+                    "release_history": "github_prerelease",
+                    "release_changelog": "CHANGELOG.alpha.md",
+                    "release_tag_prefix": "sure-alpha/",
+                    "release_suffix": "aio",
+                    "registry_revision_arg": "AIO_REVISION",
+                    "publish_paths": ["rootfs-alpha/**", "Dockerfile.alpha"],
+                },
+            },
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo, **_kwargs: {"state": "unknown"},
+    )
+
+    plan = release_plan_for_repo(repo, component="sure-alpha")
+
+    assert plan["latest_release_tag"] == "sure-alpha/0.7.1-alpha.9-aio.1"  # nosec B101
+    assert plan["next_version"] == "0.7.1-alpha.9-aio.2"  # nosec B101
+    assert plan["release_due"] is True  # nosec B101
+    assert plan["state"] == "release-due"  # nosec B101
+
+
 def test_changed_paths_since_rejects_untrusted_option_like_ref(tmp_path: Path) -> None:
     repo_path = tmp_path / "safe-repo"
     repo_path.mkdir()
@@ -881,7 +958,7 @@ def test_release_plan_marks_missing_registry_only_prerelease_due(
     )
     monkeypatch.setattr(
         release_plan_module,
-        "_component_release_tag",
+        "_safe_latest_component_tag",
         lambda _repo, _component: "sure-alpha/0.7.1-alpha.10-aio.1",
     )
     monkeypatch.setattr(
@@ -952,7 +1029,7 @@ def test_release_plan_keeps_registry_only_helper_out_of_formal_release_lane(
     monkeypatch.setattr(release_plan_module, "_git_head", lambda _path: sha)
     monkeypatch.setattr(
         release_plan_module,
-        "_component_release_tag",
+        "_safe_latest_component_tag",
         lambda _repo, _component: "v2.0.64-agent.2",
     )
     monkeypatch.setattr(

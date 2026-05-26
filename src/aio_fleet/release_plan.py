@@ -114,11 +114,7 @@ def release_plan_for_repo(
         next_version = _safe_next_semver(repo)
         release_due = _safe_has_semver_changes(repo)
     elif component != "aio":
-        latest_tag = (
-            _component_release_tag(repo, component)
-            if registry_only
-            else _safe_latest_component_tag(repo, component)
-        )
+        latest_tag = _safe_latest_component_tag(repo, component)
         ignored_release_changes = _only_ignored_release_changes(repo, latest_tag)
         next_version = (
             _safe_next_component(repo, component)
@@ -451,15 +447,6 @@ def _safe_latest_aio_tag(repo: RepoConfig) -> str:
         return ""
 
 
-def _component_release_tag(repo: RepoConfig, component: str) -> str:
-    try:
-        release_tag = component_registry_release_tag(repo, component)
-        prefix = str(component_config(repo, component).get("release_tag_prefix", ""))
-        return f"{prefix}{release_tag}" if release_tag and prefix else release_tag
-    except (Exception, SystemExit):
-        return ""
-
-
 def _safe_latest_component_tag(repo: RepoConfig, component: str) -> str:
     try:
         config = component_config(repo, component)
@@ -474,6 +461,15 @@ def _safe_latest_component_tag(repo: RepoConfig, component: str) -> str:
             )
             or ""
         )
+    except (Exception, SystemExit):
+        return ""
+
+
+def _component_release_tag(repo: RepoConfig, component: str) -> str:
+    try:
+        release_tag = component_registry_release_tag(repo, component)
+        prefix = str(component_config(repo, component).get("release_tag_prefix", ""))
+        return f"{prefix}{release_tag}" if release_tag and prefix else release_tag
     except (Exception, SystemExit):
         return ""
 
