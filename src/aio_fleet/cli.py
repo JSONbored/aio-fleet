@@ -683,7 +683,13 @@ def _standards_release_actions(
     repo: RepoConfig, *, include_registry: bool
 ) -> list[dict[str, object]]:
     actions: list[dict[str, object]] = []
-    for row in release_plan_rows_for_repo(repo, include_registry=include_registry):
+    if not repo.path.is_dir():
+        return [_standards_missing_release_checkout_action(repo)]
+    try:
+        rows = release_plan_rows_for_repo(repo, include_registry=include_registry)
+    except FileNotFoundError:
+        return [_standards_missing_release_checkout_action(repo)]
+    for row in rows:
         state = str(row.get("state", ""))
         if state in {"current", "private-skipped"}:
             continue
@@ -705,6 +711,19 @@ def _standards_release_actions(
             )
         )
     return actions
+
+
+def _standards_missing_release_checkout_action(repo: RepoConfig) -> dict[str, object]:
+    return _standards_action(
+        repo,
+        kind="release",
+        cls="release-checkout-missing",
+        severity="warning",
+        detail="checkout path missing; release state unavailable",
+        command="",
+        can_write=False,
+        provenance="local-missing",
+    )
 
 
 def _standards_action(
