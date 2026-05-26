@@ -51,6 +51,8 @@ def run_local_trunk_overlay(
             "--ci",
             "--fix" if fix else "--no-fix",
         ]
+        if backup_trunk is not None:
+            command.insert(6, f"--ignore={backup_trunk.name}/**")
         if all_files:
             command.insert(3, "--all")
         env = _step_environment(inherit_secrets=False)
