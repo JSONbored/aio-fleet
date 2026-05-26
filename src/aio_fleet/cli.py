@@ -2845,7 +2845,11 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
         print("--repo is required unless --all is used", file=sys.stderr)
         return 1
     if args.all:
-        plans = release_plan_for_manifest(manifest, include_registry=args.registry)
+        plans = release_plan_for_manifest(
+            manifest,
+            include_registry=args.registry,
+            redact_private=True,
+        )
     else:
         repo = _repo_for_identifier(manifest, args.repo)
         if args.repo_path:
