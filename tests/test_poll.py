@@ -642,3 +642,32 @@ repos:
 {agent_components.rstrip()}
 """)
     return manifest
+
+
+def test_resolve_changed_files_uses_commit_sha_for_pull_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+    seen: dict[str, object] = {}
+
+    def fake_commit_changed_files(_repo, sha: str):
+        seen["sha"] = sha
+        return [{"path": "Dockerfile", "status": "modified"}]
+
+    monkeypatch.setattr(poll, "_commit_changed_files", fake_commit_changed_files)
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda *_args, **_kwargs: pytest.fail("PR number resolver should not be used"),
+    )
+
+    changed = poll.resolve_changed_files(
+        repo,
+        sha="a" * 40,
+        event="pull_request",
+        source="pr:42",
+    )
+
+    assert changed == [{"path": "Dockerfile", "status": "modified"}]  # nosec B101
+    assert seen["sha"] == "a" * 40  # nosec B101

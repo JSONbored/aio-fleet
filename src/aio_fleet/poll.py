@@ -131,11 +131,8 @@ def publish_components_required(repo: RepoConfig, *, sha: str, event: str) -> li
 def resolve_changed_files(
     repo: RepoConfig, *, sha: str, event: str, source: str
 ) -> list[dict[str, str]] | None:
-    if event == "pull_request" and source.startswith("pr:"):
-        number = source.removeprefix("pr:").strip()
-        if number:
-            return _pull_request_changed_files(repo, number)
-    if event == "push":
+    del source
+    if event in {"pull_request", "push"}:
         return _commit_changed_files(repo, sha)
     return None
 
