@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from aio_fleet.poll import PublishPathResolutionError
 from aio_fleet import workflow_jobs
 from aio_fleet.workflow_jobs import (
     poll_outputs,
@@ -356,6 +357,63 @@ repos:
     assert (
         json.loads(output.read_text())["repos"][0]["repo"] == "sure-aio"
     )  # nosec B101
+
+
+def test_registry_audit_handles_publish_path_resolution_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "fleet.yml"
+    checkout_root = tmp_path / "checkouts"
+    output = tmp_path / "registry-report.json"
+    manifest.write_text("""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: /tmp/sure-aio
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio
+    pytest_image_tag: sure-aio:pytest
+""")
+
+    def fake_checkout_refs(refs, *, token: str, submodules: str):
+        results = []
+        for name, github_repo, path in refs:
+            path.mkdir(parents=True)
+            results.append(
+                {"repo": name, "github_repo": github_repo, "path": str(path)}
+            )
+        return results
+
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(
+        workflow_jobs,
+        "publish_components_required",
+        lambda _repo, *, sha, event: (_ for _ in ()).throw(
+            PublishPathResolutionError("sure-aio: unable to resolve changed files")
+        ),
+    )
+    monkeypatch.setattr(workflow_jobs.subprocess, "check_output", lambda *_a, **_k: "a" * 40)
+
+    report = registry_audit_checkouts(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_path=output,
+        token="token",  # nosec B106
+        github_output=None,
+    )
+
+    assert report["status"] == 1  # nosec B101
+    assert report["repos"] == [  # nosec B101
+        {
+            "repo": "sure-aio",
+            "sha": "a" * 40,
+            "dockerhub": [],
+            "ghcr": [],
+            "failures": ["sure-aio: unable to resolve changed files"],
+        }
+    ]
 
 
 def test_upstream_monitor_checkouts_rejects_secret_bearing_launcher(
