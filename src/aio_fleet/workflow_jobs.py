@@ -15,7 +15,7 @@ import yaml
 from aio_fleet.changelog import component_config
 from aio_fleet.control_plane import _secret_environment_key
 from aio_fleet.manifest import RepoConfig, load_manifest
-from aio_fleet.poll import publish_components_required
+from aio_fleet.poll import PublishPathResolutionError, publish_components_required
 from aio_fleet.upstream import (
     UpstreamMonitorResult,
     _upstream_commit_paths,
@@ -702,7 +702,20 @@ def registry_audit_checkouts(
             env=_minimal_env(),
             text=True,
         ).strip()
-        components = publish_components_required(repo_config, sha=sha, event="push")
+        try:
+            components = publish_components_required(repo_config, sha=sha, event="push")
+        except PublishPathResolutionError as exc:
+            status = 1
+            report["repos"].append(
+                {
+                    "repo": repo,
+                    "sha": sha,
+                    "dockerhub": [],
+                    "ghcr": [],
+                    "failures": [str(exc)],
+                }
+            )
+            continue
         for component in components:
             verify = subprocess.run(  # nosec B603
                 [
