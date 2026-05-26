@@ -1574,18 +1574,20 @@ def test_release_plan_outputs_all_repo_states(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     manifest, _repo_path = _write_minimal_manifest(tmp_path)
-    monkeypatch.setattr(
-        cli,
-        "release_plan_for_manifest",
-        lambda *_args, **_kwargs: [
+    captured: dict[str, object] = {}
+
+    def fake_release_plan_for_manifest(*_args, **kwargs):
+        captured.update(kwargs)
+        return [
             {
                 "repo": "example-aio",
                 "state": "release-due",
                 "next_version": "1.0.0-aio.2",
                 "next_action": "python -m aio_fleet release prepare --repo example-aio --dry-run",
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(cli, "release_plan_for_manifest", fake_release_plan_for_manifest)
 
     result = cmd_release_plan(
         Namespace(
@@ -1602,6 +1604,7 @@ def test_release_plan_outputs_all_repo_states(
     payload = json.loads(capsys.readouterr().out)
     assert payload["summary"]["release_due"] == 1  # nosec B101
     assert payload["repos"][0]["state"] == "release-due"  # nosec B101
+    assert captured["redact_private"] is True  # nosec B101
 
 
 def test_release_reconcile_routes_publish_through_transaction(
