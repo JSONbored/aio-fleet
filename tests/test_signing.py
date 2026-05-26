@@ -133,6 +133,34 @@ def test_generated_pr_signature_blockers_ignores_cross_repo_prs(monkeypatch) -> 
 
     assert signing.generated_pr_signature_blockers("JSONbored/example-aio") == []  # nosec B101
 
+
+
+def test_generated_pr_signature_blockers_fail_closed_on_gh_error(monkeypatch) -> None:
+    monkeypatch.setattr(signing, "_gh_json", lambda command, *, check: None)  # noqa: ARG005
+
+    assert signing.generated_pr_signature_blockers("JSONbored/example-aio") == [  # nosec B101
+        "unable to inspect generated PR signatures (gh authentication/api failure)"
+    ]
+
+
+def test_current_generated_pr_signature_blockers_fail_closed_on_gh_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo_path = tmp_path / "example-aio"
+    repo_path.mkdir()
+
+    monkeypatch.setattr(
+        signing,
+        "_git",
+        lambda command, *, cwd: subprocess.CompletedProcess(command, 0, "codex/update\n", ""),  # noqa: ARG005
+    )
+    monkeypatch.setattr(signing, "_gh_json", lambda command, *, check: None)  # noqa: ARG005
+
+    assert signing.current_generated_pr_signature_blockers(
+        "JSONbored/example-aio", repo_path
+    ) == [
+        "unable to inspect generated PR signatures for branch codex/update (gh authentication/api failure)"
+    ]
 def test_workflow_writer_accepts_signed_github_app_create_pull_request(
     tmp_path: Path,
 ) -> None:

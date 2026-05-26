@@ -212,6 +212,10 @@ def _generated_pr_checks(target: SigningTarget) -> list[dict[str, str]]:
 
 def generated_pr_signature_blockers(github_repo: str) -> list[str]:
     prs = open_generated_prs(github_repo)
+    if prs is None:
+        return [
+            "unable to inspect generated PR signatures (gh authentication/api failure)"
+        ]
     if not prs:
         return []
     blockers: list[str] = []
@@ -272,7 +276,11 @@ def current_generated_pr_signature_blockers(
         ],
         check=False,
     )
-    if not isinstance(prs, list) or not prs:
+    if not isinstance(prs, list):
+        return [
+            f"unable to inspect generated PR signatures for branch {head} (gh authentication/api failure)"
+        ]
+    if not prs:
         return []
     blockers: list[str] = []
     for pr in prs:
