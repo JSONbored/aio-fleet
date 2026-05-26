@@ -1668,6 +1668,95 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
     assert issue["number"] == 55  # nosec B101
 
 
+def test_upsert_dashboard_issue_updates_with_body_file(monkeypatch) -> None:
+    body = "Fleet dashboard\n" * 100
+    body_paths: list[Path] = []
+
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_dashboard_issue_by_number",
+        lambda issue_repo, issue_number: {
+            "number": issue_number,
+            "url": f"https://github.com/{issue_repo}/issues/{issue_number}",
+        },
+    )
+    monkeypatch.setattr(
+        fleet_dashboard, "_ensure_label", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        fleet_dashboard, "_add_dashboard_label", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_close_duplicate_dashboard_issues",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd
+        assert cli_scope == "issue"  # nosec B101
+        assert "--body" not in command  # nosec B101
+        assert "--body-file" in command  # nosec B101
+        body_path = Path(command[command.index("--body-file") + 1])
+        body_paths.append(body_path)
+        assert body_path.read_text(encoding="utf-8") == body  # nosec B101
+        assert command[:4] == ["gh", "issue", "edit", "55"]  # nosec B101
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
+
+    result = fleet_dashboard.upsert_dashboard_issue(
+        issue_repo="JSONbored/aio-fleet",
+        issue_number=55,
+        body=body,
+        dry_run=False,
+    )
+
+    assert result.action == "updated"  # nosec B101
+    assert body_paths and not body_paths[0].exists()  # nosec B101
+
+
+def test_upsert_dashboard_issue_creates_with_body_file(monkeypatch) -> None:
+    body = "Fleet dashboard\n" * 100
+    body_paths: list[Path] = []
+
+    monkeypatch.setattr(
+        fleet_dashboard, "_find_dashboard_issue", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        fleet_dashboard, "_ensure_label", lambda *_args, **_kwargs: None
+    )
+
+    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
+        del check, cwd
+        assert cli_scope == "issue"  # nosec B101
+        assert "--body" not in command  # nosec B101
+        assert "--body-file" in command  # nosec B101
+        body_path = Path(command[command.index("--body-file") + 1])
+        body_paths.append(body_path)
+        assert body_path.read_text(encoding="utf-8") == body  # nosec B101
+        assert command[:3] == ["gh", "issue", "create"]  # nosec B101
+        assert "--label" in command  # nosec B101
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="https://github.com/JSONbored/aio-fleet/issues/55\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
+
+    result = fleet_dashboard.upsert_dashboard_issue(
+        issue_repo="JSONbored/aio-fleet",
+        body=body,
+        dry_run=False,
+    )
+
+    assert result.action == "created"  # nosec B101
+    assert result.number == 55  # nosec B101
+    assert body_paths and not body_paths[0].exists()  # nosec B101
+
+
 def test_dashboard_issue_commands_accepts_labeled_dashboard_issue(
     monkeypatch,
 ) -> None:
