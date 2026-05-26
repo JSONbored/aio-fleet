@@ -2613,6 +2613,7 @@ def _run_generator_for_write(repo: RepoConfig) -> None:
         for key, value in os.environ.items()
         if not _secret_environment_key(key)
     }
+    safe_env["HOME"] = tempfile.mkdtemp(prefix="aio-fleet-generator-home-")
     result = _run(command, cwd=repo.path, env=safe_env)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()

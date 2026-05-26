@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,9 @@ def _sanitized_subprocess_env() -> dict[str, str]:
 
 
 def _upstream_monitor_subprocess_env() -> dict[str, str]:
-    return _sanitized_subprocess_env()
+    env = _sanitized_subprocess_env()
+    env["HOME"] = tempfile.mkdtemp(prefix="aio-fleet-upstream-monitor-home-")
+    return env
 
 
 def _secret_environment_keys() -> list[str]:
