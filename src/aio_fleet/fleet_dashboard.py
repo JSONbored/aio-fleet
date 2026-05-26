@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess  # nosec B404
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -675,7 +676,7 @@ def upsert_dashboard_issue(
     _ensure_label(issue_repo, label=label)
     if existing:
         number = int(existing["number"])
-        _run(
+        _run_with_issue_body_file(
             [
                 "gh",
                 "issue",
@@ -685,9 +686,8 @@ def upsert_dashboard_issue(
                 issue_repo,
                 "--title",
                 title,
-                "--body",
-                body,
             ],
+            body=body,
             cli_scope="issue",
         )
         _add_dashboard_label(issue_repo, number=number, label=label)
@@ -701,7 +701,7 @@ def upsert_dashboard_issue(
             number=number,
             url=str(existing.get("url", "")),
         )
-    created = _run(
+    created = _run_with_issue_body_file(
         [
             "gh",
             "issue",
@@ -710,11 +710,10 @@ def upsert_dashboard_issue(
             issue_repo,
             "--title",
             title,
-            "--body",
-            body,
             "--label",
             label,
         ],
+        body=body,
         cli_scope="issue",
     )
     url = created.stdout.strip()
@@ -723,6 +722,21 @@ def upsert_dashboard_issue(
         number=_issue_number_from_url(url),
         url=url,
     )
+
+
+def _run_with_issue_body_file(
+    command: list[str],
+    *,
+    body: str,
+    cli_scope: str,
+) -> subprocess.CompletedProcess[str]:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+        handle.write(body)
+        body_path = Path(handle.name)
+    try:
+        return _run([*command, "--body-file", str(body_path)], cli_scope=cli_scope)
+    finally:
+        body_path.unlink(missing_ok=True)
 
 
 def dashboard_commands_from_body(body: str) -> dict[str, bool]:
