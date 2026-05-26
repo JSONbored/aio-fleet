@@ -644,22 +644,30 @@ repos:
     return manifest
 
 
-def test_resolve_changed_files_uses_commit_sha_for_pull_request(
+def test_resolve_changed_files_uses_head_verified_pull_request_files(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest_path = _write_manifest(tmp_path)
     repo = load_manifest(manifest_path).repo("example-aio")
-    seen: dict[str, object] = {}
+    seen_numbers: list[str] = []
 
-    def fake_commit_changed_files(_repo, sha: str):
-        seen["sha"] = sha
-        return [{"path": "Dockerfile", "status": "modified"}]
-
-    monkeypatch.setattr(poll, "_commit_changed_files", fake_commit_changed_files)
     monkeypatch.setattr(
         poll,
-        "_pull_request_changed_files",
-        lambda *_args, **_kwargs: pytest.fail("PR number resolver should not be used"),
+        "_commit_changed_files",
+        lambda *_args, **_kwargs: pytest.fail("commit resolver should not be used"),
+    )
+
+    def fake_pull_request_head_sha(_repo, number: str) -> str:
+        seen_numbers.append(number)
+        return "a" * 40
+
+    def fake_pull_request_changed_files(_repo, number: str):
+        seen_numbers.append(number)
+        return [{"path": "Dockerfile", "status": "modified"}]
+
+    monkeypatch.setattr(poll, "_pull_request_head_sha", fake_pull_request_head_sha)
+    monkeypatch.setattr(
+        poll, "_pull_request_changed_files", fake_pull_request_changed_files
     )
 
     changed = poll.resolve_changed_files(
@@ -670,4 +678,57 @@ def test_resolve_changed_files_uses_commit_sha_for_pull_request(
     )
 
     assert changed == [{"path": "Dockerfile", "status": "modified"}]  # nosec B101
-    assert seen["sha"] == "a" * 40  # nosec B101
+    assert seen_numbers == ["42", "42", "42"]  # nosec B101
+
+
+def test_resolve_changed_files_fails_closed_when_pr_head_mismatches_check_sha(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+
+    monkeypatch.setattr(poll, "_pull_request_head_sha", lambda _repo, _number: "b" * 40)
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda *_args, **_kwargs: pytest.fail("PR files should not be trusted"),
+    )
+
+    assert (  # nosec B101
+        poll.resolve_changed_files(
+            repo,
+            sha="a" * 40,
+            event="pull_request",
+            source="pr:42",
+        )
+        is None
+    )
+
+
+def test_resolve_changed_files_fails_closed_when_pr_head_moves_during_lookup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    repo = load_manifest(manifest_path).repo("example-aio")
+    head_shas = iter(["a" * 40, "b" * 40])
+
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_head_sha",
+        lambda _repo, _number: next(head_shas),
+    )
+    monkeypatch.setattr(
+        poll,
+        "_pull_request_changed_files",
+        lambda _repo, _number: [{"path": "Dockerfile", "status": "modified"}],
+    )
+
+    assert (  # nosec B101
+        poll.resolve_changed_files(
+            repo,
+            sha="a" * 40,
+            event="pull_request",
+            source="pr:42",
+        )
+        is None
+    )
