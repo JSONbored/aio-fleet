@@ -238,6 +238,41 @@ def test_run_local_trunk_overlay_uses_central_config_when_repo_trunk_exists(
     assert not (repo_trunk / "out" / "generated").exists()  # nosec B101
 
 
+def test_run_local_trunk_overlay_ignores_temporary_trunk_backup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, repo_path = _write_minimal_manifest(tmp_path)
+    repo_trunk = repo_path / ".trunk"
+    repo_trunk.mkdir()
+    existing = repo_trunk / "runtime-state"
+    existing.write_text("keep\n")
+    fake_trunk = tmp_path / "trunk"
+    fake_trunk.write_text(
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "backup_dirs = [\n"
+        "    path.name\n"
+        "    for path in Path('.').glob('.trunk.aio-fleet-backup-*')\n"
+        "    if path.is_dir()\n"
+        "]\n"
+        "if not backup_dirs:\n"
+        "    sys.exit(4)\n"
+        "ignore_args = [arg for arg in sys.argv if arg.startswith('--ignore=')]\n"
+        "expected = f'--ignore={backup_dirs[0]}/**'\n"
+        "if expected not in ignore_args:\n"
+        "    sys.exit(3)\n"
+    )
+    fake_trunk.chmod(0o755)
+    monkeypatch.setenv("TRUNK_PATH", str(fake_trunk))
+
+    result = run_local_trunk_overlay(load_manifest(manifest).repo("example-aio"))
+
+    assert result.returncode == 0  # nosec B101
+    assert existing.read_text() == "keep\n"  # nosec B101
+    assert not list(repo_path.glob(".trunk.aio-fleet-backup-*"))  # nosec B101
+
+
 def test_run_local_trunk_overlay_restores_existing_trunk_on_copy_error(
     tmp_path: Path, monkeypatch
 ) -> None:
