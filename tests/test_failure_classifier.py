@@ -96,3 +96,29 @@ def test_workflow_classification_keeps_current_failure() -> None:
 
     assert len(failures) == 1  # nosec B101
     assert failures[0]["run_id"] == "200"  # nosec B101
+
+
+def test_workflow_classification_does_not_hide_unrelated_success() -> None:
+    failures = classify_workflow_state(
+        {
+            "repo": "JSONbored/aio-fleet",
+            "state": "success",
+            "latest": {
+                "id": 200,
+                "conclusion": "success",
+                "event": "schedule",
+                "title": "fleet-dashboard",
+                "updated_at": "2026-05-22T15:21:44Z",
+            },
+            "last_failure": {
+                "id": 100,
+                "conclusion": "failure",
+                "event": "workflow_dispatch",
+                "title": "control-check",
+                "updated_at": "2026-05-22T13:15:04Z",
+            },
+        }
+    )
+
+    assert len(failures) == 1  # nosec B101
+    assert failures[0]["run_id"] == "100"  # nosec B101

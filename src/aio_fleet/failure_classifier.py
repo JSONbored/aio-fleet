@@ -266,6 +266,8 @@ def _workflow_recovered_after_failure(
     latest = latest if isinstance(latest, dict) else {}
     if latest.get("conclusion") != "success":
         return False
+    if not _same_workflow_context(latest, last_failure):
+        return False
     success_time = str(latest.get("updated_at") or latest.get("created_at") or "")
     failure_time = str(
         last_failure.get("updated_at") or last_failure.get("created_at") or ""
@@ -273,6 +275,15 @@ def _workflow_recovered_after_failure(
     if success_time and failure_time:
         return success_time > failure_time
     return latest.get("id") != last_failure.get("id")
+
+
+def _same_workflow_context(latest: dict[str, Any], failure: dict[str, Any]) -> bool:
+    for key in ("event", "branch", "title"):
+        latest_value = str(latest.get(key) or "").strip().lower()
+        failure_value = str(failure.get(key) or "").strip().lower()
+        if latest_value and failure_value and latest_value != failure_value:
+            return False
+    return True
 
 
 def _summary_for(text: str, *, root_cause: str) -> str:
