@@ -356,7 +356,7 @@ jobs:
             --output upstream-summary.md
 
       - name: Checkout dashboard repos
-        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
+        if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard' || inputs.mode == 'standards-reconcile')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
         env:
           AIO_FLEET_WORKFLOW_TOKEN: ${{ steps.app-token.outputs.token }}
         #checkov:skip=CKV_SECRET_6:the script handles a masked runtime GitHub App token for dashboard checkout auth
@@ -430,10 +430,13 @@ jobs:
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          args=(standards reconcile --github --release --format json --allow-drift)
-          if [[ -f fleet-dashboard.manifest.yml ]]; then
-            args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
+          if [[ ! -f fleet-dashboard.manifest.yml ]]; then
+            printf '{"status":"ok","actions":[],"applied":[],"summary":{"repos":0,"actions":0,"actionable":0,"applied":0,"by_kind":{},"by_class":{}}}\n' \
+              | tee standards-reconcile-report.json
+            exit 0
           fi
+          args=(standards reconcile --github --release --format json --allow-drift)
+          args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
           python -m aio_fleet "${args[@]}" | tee standards-reconcile-report.json
 
       - name: Alert upstream monitor

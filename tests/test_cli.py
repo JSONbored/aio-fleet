@@ -590,6 +590,63 @@ def test_standards_reconcile_marks_untracked_cleanup_as_local_only(
     assert report["actions"][0]["provenance"] == "local-only"  # nosec B101
 
 
+def test_standards_reconcile_reports_missing_release_checkout(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    missing_repo_path = tmp_path / "missing-repo"
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {missing_repo_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+
+    monkeypatch.setattr(cli, "_standards_manifest_actions", lambda *_args: [])
+    monkeypatch.setattr(cli, "cleanup_findings", lambda *_args: [])
+    monkeypatch.setattr(
+        cli,
+        "release_plan_rows_for_repo",
+        lambda *_args, **_kwargs: pytest.fail("missing checkouts must not be planned"),
+    )
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=True,
+            registry=False,
+            write=False,
+            allow_drift=True,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["status"] == "actionable"  # nosec B101
+    assert report["actions"] == [  # nosec B101
+        {
+            "can_write": False,
+            "class": "release-checkout-missing",
+            "command": "",
+            "component": "",
+            "detail": "checkout path missing; release state unavailable",
+            "kind": "release",
+            "provenance": "local-missing",
+            "repo": "example-aio",
+            "severity": "warning",
+        }
+    ]
+
+
 def test_standards_reconcile_write_applies_safe_local_fixes(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -1622,7 +1679,9 @@ def test_release_plan_outputs_all_repo_states(
             }
         ]
 
-    monkeypatch.setattr(cli, "release_plan_for_manifest", fake_release_plan_for_manifest)
+    monkeypatch.setattr(
+        cli, "release_plan_for_manifest", fake_release_plan_for_manifest
+    )
 
     result = cmd_release_plan(
         Namespace(

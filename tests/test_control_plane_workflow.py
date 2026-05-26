@@ -137,6 +137,7 @@ def test_dashboard_checkout_does_not_put_auth_header_in_git_argv() -> None:
     dashboard = _step(workflow["jobs"]["control-plane"], "Checkout dashboard repos")
 
     assert "workflow checkout-dashboard" in dashboard["run"]  # nosec B101
+    assert "standards-reconcile" in dashboard["if"]  # nosec B101
     assert "extraheader=AUTHORIZATION" not in dashboard["run"]  # nosec B101
     assert '"config",' not in dashboard["run"]  # nosec B101
 
@@ -578,6 +579,8 @@ def test_control_plane_can_reconcile_standards_drift() -> None:
     assert "--release" in reconcile["run"]  # nosec B101
     assert "--allow-drift" in reconcile["run"]  # nosec B101
     assert "fleet-dashboard.manifest.yml" in reconcile["run"]  # nosec B101
+    assert "standards-reconcile-report.json" in reconcile["run"]  # nosec B101
+    assert "actions" in reconcile["run"]  # nosec B101
     assert "GH_TOKEN" in reconcile["env"]  # nosec B101
     assert "standards-reconcile-report.json" in upload["with"]["path"]  # nosec B101
 
