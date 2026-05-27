@@ -228,11 +228,17 @@ def test_app_code_checkouts_do_not_persist_credentials() -> None:
         assert checkout["with"]["persist-credentials"] is False  # nosec B101
 
 
-def test_app_code_checkouts_disable_submodules_for_pull_requests() -> None:
+def test_app_code_checkouts_keep_manual_and_publish_pr_submodule_guards() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     manual = _step(workflow["jobs"]["control-plane"], "Checkout app repo")
     poll = _step(workflow["jobs"]["poll-checks"], "Checkout app repo")
+    manual_trusted = _step(
+        workflow["jobs"]["control-plane"], "Initialize trusted PR submodules"
+    )
+    poll_trusted = _step(
+        workflow["jobs"]["poll-checks"], "Initialize trusted PR submodules"
+    )
     manual_publish = _step(
         workflow["jobs"]["manual-registry-publish"], "Checkout app repo"
     )
@@ -246,6 +252,10 @@ def test_app_code_checkouts_disable_submodules_for_pull_requests() -> None:
     assert (
         "matrix.target.event != 'pull_request'" in poll["with"]["submodules"]
     )  # nosec B101
+    assert "inputs.event == 'pull_request'" in manual_trusted["if"]  # nosec B101
+    assert "matrix.target.event == 'pull_request'" in poll_trusted["if"]  # nosec B101
+    assert "gitmodules" in manual_trusted["run"]  # nosec B101
+    assert "untrusted submodule url" in poll_trusted["run"]  # nosec B101
     assert "checkout_submodules" in manual_publish["with"]["submodules"]  # nosec B101
     assert (
         "inputs.event != 'pull_request'" in manual_publish["with"]["submodules"]

@@ -554,6 +554,107 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
+      - name: Initialize trusted PR submodules
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && inputs.event == 'pull_request' && steps.control-check-policy.outputs.checkout_submodules == 'true' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          def run(args: list[str]) -> None:
+              subprocess.run(args, check=True)
+
+          def output(args: list[str]) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          app_repo = Path("app-repo")
+          trusted = 0
+          for config in repo.raw.get("upstream_monitor") or []:
+              if not isinstance(config, dict):
+                  continue
+              path = str(config.get("submodule_path") or "").strip()
+              upstream_repo = str(config.get("repo") or "").strip()
+              if not path:
+                  continue
+              submodule_path = Path(path)
+              if submodule_path.is_absolute() or ".." in submodule_path.parts:
+                  raise SystemExit(f"{repo.name}: unsafe submodule path: {path}")
+              if not upstream_repo:
+                  raise SystemExit(f"{repo.name}: missing trusted repo for {path}")
+              allowed_urls = {
+                  f"https://github.com/{upstream_repo}",
+                  f"https://github.com/{upstream_repo}.git",
+              }
+              actual_url = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-f",
+                      ".gitmodules",
+                      "--get",
+                      f"submodule.{path}.url",
+                  ]
+              )
+              if actual_url not in allowed_urls:
+                  raise SystemExit(
+                      f"{repo.name}: untrusted submodule url for {path}: {actual_url}"
+                  )
+              tree = output(["git", "-C", str(app_repo), "ls-tree", "HEAD", path])
+              parts = tree.split()
+              if len(parts) < 3 or parts[1] != "commit":
+                  raise SystemExit(f"{repo.name}: {path} is not a gitlink")
+              expected_sha = parts[2]
+              trusted_url = f"https://github.com/{upstream_repo}.git"
+              run(["git", "-C", str(app_repo), "submodule", "init", "--", path])
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      f"submodule.{path}.url",
+                      trusted_url,
+                  ]
+              )
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "-c",
+                      "credential.helper=",
+                      "-c",
+                      "http.extraHeader=",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--depth=1",
+                      "--",
+                      path,
+                  ]
+              )
+              actual_sha = output(
+                  ["git", "-C", str(app_repo / path), "rev-parse", "HEAD"]
+              )
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{repo.name}: {path} checked out {actual_sha}, "
+                      f"expected {expected_sha}"
+                  )
+              trusted += 1
+          if trusted == 0:
+              raise SystemExit(f"{repo.name}: no trusted submodules configured")
+          PY
+
       - name: Run central control check
         id: central-control-check
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && (inputs.dry_run || steps.start-central-control-check.outcome == 'success') }}
@@ -1149,6 +1250,107 @@ jobs:
           submodules: ${{ matrix.target.event != 'pull_request' && matrix.target.checkout_submodules == true && 'recursive' || 'false' }}
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
+
+      - name: Initialize trusted PR submodules
+        if: ${{ matrix.target.event == 'pull_request' && matrix.target.checkout_submodules == true && steps.start-poll-central-control-check.outcome == 'success' && steps.fast-cleanup-scope.outcome != 'success' }}
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from aio_fleet.manifest import load_manifest
+
+          def run(args: list[str]) -> None:
+              subprocess.run(args, check=True)
+
+          def output(args: list[str]) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
+          app_repo = Path("app-repo")
+          trusted = 0
+          for config in repo.raw.get("upstream_monitor") or []:
+              if not isinstance(config, dict):
+                  continue
+              path = str(config.get("submodule_path") or "").strip()
+              upstream_repo = str(config.get("repo") or "").strip()
+              if not path:
+                  continue
+              submodule_path = Path(path)
+              if submodule_path.is_absolute() or ".." in submodule_path.parts:
+                  raise SystemExit(f"{repo.name}: unsafe submodule path: {path}")
+              if not upstream_repo:
+                  raise SystemExit(f"{repo.name}: missing trusted repo for {path}")
+              allowed_urls = {
+                  f"https://github.com/{upstream_repo}",
+                  f"https://github.com/{upstream_repo}.git",
+              }
+              actual_url = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-f",
+                      ".gitmodules",
+                      "--get",
+                      f"submodule.{path}.url",
+                  ]
+              )
+              if actual_url not in allowed_urls:
+                  raise SystemExit(
+                      f"{repo.name}: untrusted submodule url for {path}: {actual_url}"
+                  )
+              tree = output(["git", "-C", str(app_repo), "ls-tree", "HEAD", path])
+              parts = tree.split()
+              if len(parts) < 3 or parts[1] != "commit":
+                  raise SystemExit(f"{repo.name}: {path} is not a gitlink")
+              expected_sha = parts[2]
+              trusted_url = f"https://github.com/{upstream_repo}.git"
+              run(["git", "-C", str(app_repo), "submodule", "init", "--", path])
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      f"submodule.{path}.url",
+                      trusted_url,
+                  ]
+              )
+              run(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "-c",
+                      "credential.helper=",
+                      "-c",
+                      "http.extraHeader=",
+                      "submodule",
+                      "update",
+                      "--init",
+                      "--depth=1",
+                      "--",
+                      path,
+                  ]
+              )
+              actual_sha = output(
+                  ["git", "-C", str(app_repo / path), "rev-parse", "HEAD"]
+              )
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{repo.name}: {path} checked out {actual_sha}, "
+                      f"expected {expected_sha}"
+                  )
+              trusted += 1
+          if trusted == 0:
+              raise SystemExit(f"{repo.name}: no trusted submodules configured")
+          PY
 
       - name: Run central control check
         id: poll-central-control-check
