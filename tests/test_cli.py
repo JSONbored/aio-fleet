@@ -1413,6 +1413,45 @@ def test_fleet_report_closeout_splits_remote_and_local_posture(
     )
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["fleet-report", "closeout"],
+        ["fleet-queue", "generate"],
+        ["fleet-queue", "dispatch", "--id", "registry-publish:example-aio:aio"],
+        ["fleetbot", "render-command", "--command", "closeout"],
+        ["registry", "delete-dockerhub-tags"],
+        ["workflow", "checkout-upstream"],
+        ["workflow", "upstream-monitor"],
+        ["workflow", "upstream-validate"],
+        ["workflow", "upstream-actions"],
+    ],
+)
+def test_nested_manifest_options_preserve_global_manifest(
+    command: list[str],
+) -> None:
+    args = cli.build_parser().parse_args(
+        ["--manifest", "fleet-dashboard.manifest.yml", *command]
+    )
+
+    assert args.manifest == "fleet-dashboard.manifest.yml"  # nosec B101
+
+
+def test_nested_manifest_options_can_override_global_manifest() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "--manifest",
+            "fleet-dashboard.manifest.yml",
+            "fleet-report",
+            "closeout",
+            "--manifest",
+            "fleet-closeout.manifest.yml",
+        ]
+    )
+
+    assert args.manifest == "fleet-closeout.manifest.yml"  # nosec B101
+
+
 def test_fleet_report_schema_and_validate(tmp_path: Path, capsys) -> None:
     result = cmd_fleet_report_schema(Namespace())
 
