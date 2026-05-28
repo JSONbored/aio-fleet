@@ -592,6 +592,39 @@ jobs:
                   f"https://github.com/{upstream_repo}",
                   f"https://github.com/{upstream_repo}.git",
               }
+              matches = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-z",
+                      "-f",
+                      ".gitmodules",
+                      "--get-regexp",
+                      r"^submodule\..*\.path$",
+                  ]
+              ).split("\0")
+              section_names = []
+              for record in matches:
+                  if not record:
+                      continue
+                  key, sep, value = record.partition("\n")
+                  if not sep:
+                      raise SystemExit(
+                          f"{repo.name}: malformed .gitmodules path record: {record}"
+                      )
+                  key = key.strip()
+                  value = value.strip()
+                  if value != path:
+                      continue
+                  section_names.append(key.removeprefix("submodule.").removesuffix(".path"))
+              if len(section_names) != 1:
+                  raise SystemExit(
+                      f"{repo.name}: expected exactly one .gitmodules section for {path}, "
+                      f"found {len(section_names)}"
+                  )
+              section_name = section_names[0]
               actual_url = output(
                   [
                       "git",
@@ -601,7 +634,7 @@ jobs:
                       "-f",
                       ".gitmodules",
                       "--get",
-                      f"submodule.{path}.url",
+                      f"submodule.{section_name}.url",
                   ]
               )
               if actual_url not in allowed_urls:
@@ -621,7 +654,7 @@ jobs:
                       "-C",
                       str(app_repo),
                       "config",
-                      f"submodule.{path}.url",
+                      f"submodule.{section_name}.url",
                       trusted_url,
                   ]
               )
@@ -1289,6 +1322,39 @@ jobs:
                   f"https://github.com/{upstream_repo}",
                   f"https://github.com/{upstream_repo}.git",
               }
+              matches = output(
+                  [
+                      "git",
+                      "-C",
+                      str(app_repo),
+                      "config",
+                      "-z",
+                      "-f",
+                      ".gitmodules",
+                      "--get-regexp",
+                      r"^submodule\..*\.path$",
+                  ]
+              ).split("\0")
+              section_names = []
+              for record in matches:
+                  if not record:
+                      continue
+                  key, sep, value = record.partition("\n")
+                  if not sep:
+                      raise SystemExit(
+                          f"{repo.name}: malformed .gitmodules path record: {record}"
+                      )
+                  key = key.strip()
+                  value = value.strip()
+                  if value != path:
+                      continue
+                  section_names.append(key.removeprefix("submodule.").removesuffix(".path"))
+              if len(section_names) != 1:
+                  raise SystemExit(
+                      f"{repo.name}: expected exactly one .gitmodules section for {path}, "
+                      f"found {len(section_names)}"
+                  )
+              section_name = section_names[0]
               actual_url = output(
                   [
                       "git",
@@ -1298,7 +1364,7 @@ jobs:
                       "-f",
                       ".gitmodules",
                       "--get",
-                      f"submodule.{path}.url",
+                      f"submodule.{section_name}.url",
                   ]
               )
               if actual_url not in allowed_urls:
@@ -1318,7 +1384,7 @@ jobs:
                       "-C",
                       str(app_repo),
                       "config",
-                      f"submodule.{path}.url",
+                      f"submodule.{section_name}.url",
                       trusted_url,
                   ]
               )

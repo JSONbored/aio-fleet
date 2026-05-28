@@ -255,6 +255,12 @@ def test_app_code_checkouts_keep_manual_and_publish_pr_submodule_guards() -> Non
     assert "inputs.event == 'pull_request'" in manual_trusted["if"]  # nosec B101
     assert "matrix.target.event == 'pull_request'" in poll_trusted["if"]  # nosec B101
     assert "gitmodules" in manual_trusted["run"]  # nosec B101
+    assert 'record.partition("\\n")' in manual_trusted["run"]  # nosec B101
+    assert "range(0, len(matches) - 1, 2)" not in manual_trusted["run"]  # nosec B101
+    assert "submodule.{section_name}.url" in manual_trusted["run"]  # nosec B101
+    assert 'record.partition("\\n")' in poll_trusted["run"]  # nosec B101
+    assert "range(0, len(matches) - 1, 2)" not in poll_trusted["run"]  # nosec B101
+    assert "submodule.{section_name}.url" in poll_trusted["run"]  # nosec B101
     assert "untrusted submodule url" in poll_trusted["run"]  # nosec B101
     assert "checkout_submodules" in manual_publish["with"]["submodules"]  # nosec B101
     assert (
