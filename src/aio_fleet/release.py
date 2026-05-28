@@ -358,19 +358,30 @@ def extract_release_notes(
 
 
 def find_release_commit(repo_path: Path, version: str) -> str:
-    exact = f"chore(release): {version}"
-    with_suffix = re.compile(rf"^{re.escape(exact)} \(#\d+\)$")
     output = git(repo_path, "log", "--format=%H\t%s", "HEAD")
     for line in output.splitlines():
         if not line.strip():
             continue
         sha, subject = line.split("\t", 1)
-        if subject == exact or with_suffix.match(subject):
+        if release_subject_matches(subject, version):
             return sha
     raise SystemExit(
         f"Unable to find a merged release commit for {version} on main. "
-        f"Expected '{exact}' or '{exact} (#123)'."
+        f"Expected a chore(release) subject containing {version}."
     )
+
+
+def release_subject_matches(subject: str, version: str) -> bool:
+    normalized = re.sub(r" \(#\d+\)$", "", subject.strip())
+    prefix = "chore(release): "
+    if not normalized.startswith(prefix):
+        return False
+    versions = [
+        item.strip()
+        for item in re.split(r"\s+and\s+|,\s*", normalized.removeprefix(prefix))
+        if item.strip()
+    ]
+    return version in versions
 
 
 def find_release_target_commit(repo_path: Path, version: str) -> str:
