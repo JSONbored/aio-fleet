@@ -13,6 +13,7 @@ from aio_fleet.release import (
     next_aio_release_version,
     next_semver_release_version,
     read_upstream_version,
+    release_subject_matches,
 )
 
 
@@ -238,6 +239,42 @@ def test_release_publish_target_allows_changelog_format_followup(
     assert release_commit != publish_commit  # nosec B101
     assert (  # nosec B101
         find_release_publish_target_commit(tmp_path, "v1.0.0-aio.1") == publish_commit
+    )
+
+
+def test_release_publish_target_accepts_combined_component_release_commit(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n\n- initial\n")
+    _commit(tmp_path, "feat(test): initial")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "\n".join(
+            [
+                "## 0.153.0-agent.1 - 2026-05-28",
+                "",
+                "- agent",
+                "",
+                "## v0.126.0-aio.1 - 2026-05-28",
+                "",
+                "- aio",
+                "",
+            ]
+        )
+    )
+    _commit(tmp_path, "chore(release): v0.126.0-aio.1 and 0.153.0-agent.1")
+    release_commit = _git_output(tmp_path, "rev-parse", "HEAD")
+
+    assert release_subject_matches(  # nosec B101
+        "chore(release): v0.126.0-aio.1 and 0.153.0-agent.1 (#87)",
+        "0.153.0-agent.1",
+    )
+    assert (  # nosec B101
+        find_release_publish_target_commit(tmp_path, "v0.126.0-aio.1") == release_commit
+    )
+    assert (  # nosec B101
+        find_release_publish_target_commit(tmp_path, "0.153.0-agent.1")
+        == release_commit
     )
 
 
