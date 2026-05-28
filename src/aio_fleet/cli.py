@@ -5664,7 +5664,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_generate.add_argument("--format", choices=["text", "json"], default="json")
     report_generate.set_defaults(func=cmd_fleet_report_generate)
     report_closeout = report_sub.add_parser("closeout")
-    report_closeout.add_argument("--manifest", default="fleet.yml")
+    report_closeout.add_argument("--manifest", default=argparse.SUPPRESS)
     report_closeout.add_argument("--issue-repo", default="JSONbored/aio-fleet")
     report_closeout.add_argument(
         "--registry",
@@ -5695,7 +5695,7 @@ def build_parser() -> argparse.ArgumentParser:
     queue = sub.add_parser("fleet-queue")
     queue_sub = queue.add_subparsers(dest="fleet_queue_command", required=True)
     queue_generate = queue_sub.add_parser("generate")
-    queue_generate.add_argument("--manifest", default="fleet.yml")
+    queue_generate.add_argument("--manifest", default=argparse.SUPPRESS)
     queue_generate.add_argument("--issue-repo", default="JSONbored/aio-fleet")
     queue_generate.add_argument("--input", default="")
     queue_generate.add_argument("--registry", action="store_true")
@@ -5709,7 +5709,7 @@ def build_parser() -> argparse.ArgumentParser:
     queue_generate.set_defaults(func=cmd_fleet_queue_generate)
     queue_dispatch = queue_sub.add_parser("dispatch")
     queue_dispatch.add_argument("--id", required=True)
-    queue_dispatch.add_argument("--manifest", default="fleet.yml")
+    queue_dispatch.add_argument("--manifest", default=argparse.SUPPRESS)
     queue_dispatch.add_argument("--issue-repo", default="JSONbored/aio-fleet")
     queue_dispatch.add_argument("--input", default="")
     queue_dispatch.add_argument("--registry", action="store_true")
@@ -5731,7 +5731,7 @@ def build_parser() -> argparse.ArgumentParser:
     fleetbot_render.add_argument("--command", dest="command_name", required=True)
     fleetbot_render.add_argument("--repo", default="")
     fleetbot_render.add_argument("--run-id", default="")
-    fleetbot_render.add_argument("--manifest", default="fleet.yml")
+    fleetbot_render.add_argument("--manifest", default=argparse.SUPPRESS)
     fleetbot_render.add_argument("--issue-repo", default="JSONbored/aio-fleet")
     fleetbot_render.add_argument("--input", default="")
     fleetbot_render.add_argument("--registry", action="store_true")
@@ -5873,7 +5873,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     registry_publish.set_defaults(func=cmd_registry_publish)
     registry_delete = registry_sub.add_parser("delete-dockerhub-tags")
-    registry_delete.add_argument("--manifest", default="fleet.yml")
+    registry_delete.add_argument("--manifest", default=argparse.SUPPRESS)
     registry_delete.add_argument("--repo")
     registry_delete.add_argument("--repo-path")
     registry_delete.add_argument("--component", default="aio")
@@ -6155,7 +6155,7 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_upstream_checkout.add_argument(
         "--checkout-root", default="upstream-checkouts"
     )
-    workflow_upstream_checkout.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_checkout.add_argument("--manifest", default=argparse.SUPPRESS)
     workflow_upstream_checkout.add_argument(
         "--output-manifest", default="upstream-monitor.manifest.yml"
     )
@@ -6163,13 +6163,13 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_upstream_checkout.add_argument("--token")
     workflow_upstream_checkout.set_defaults(func=cmd_workflow_checkout_upstream)
     workflow_upstream = workflow_sub.add_parser("upstream-monitor")
-    workflow_upstream.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream.add_argument("--manifest", default=argparse.SUPPRESS)
     workflow_upstream.add_argument("--output", default="upstream-report.json")
     workflow_upstream.add_argument("--mutate", action="store_true")
     workflow_upstream.add_argument("--dry-run", action="store_true")
     workflow_upstream.set_defaults(func=cmd_workflow_upstream_monitor)
     workflow_upstream_validate = workflow_sub.add_parser("upstream-validate")
-    workflow_upstream_validate.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_validate.add_argument("--manifest", default=argparse.SUPPRESS)
     workflow_upstream_validate.add_argument(
         "--checkout-root", default="upstream-checkouts"
     )
@@ -6177,7 +6177,7 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_upstream_validate.add_argument("--output", default="upstream-report.json")
     workflow_upstream_validate.set_defaults(func=cmd_workflow_upstream_validate)
     workflow_upstream_actions = workflow_sub.add_parser("upstream-actions")
-    workflow_upstream_actions.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_actions.add_argument("--manifest", default=argparse.SUPPRESS)
     workflow_upstream_actions.add_argument(
         "--checkout-root", default="upstream-checkouts"
     )
