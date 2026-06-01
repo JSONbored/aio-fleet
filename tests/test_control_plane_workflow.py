@@ -824,6 +824,28 @@ def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None
     assert "AIO_FLEET_ALERT_WEBHOOK_URL" not in poll_run.get("env", {})  # nosec B101
 
 
+def test_catalog_changelog_mode_uses_central_generator_and_signed_pr() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    job = workflow["jobs"]["control-plane"]
+    modes = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"][
+        "mode"
+    ]["options"]
+    checkout = _step(job, "Checkout catalog for changelog")
+    generate = _step(job, "Generate catalog changelog")
+    create_pr = _step(job, "Create catalog changelog PR")
+
+    assert "catalog-changelog" in modes  # nosec B101
+    assert "JSONbored/awesome-unraid" == checkout["with"]["repository"]  # nosec B101
+    assert "steps.app-token.outputs.token" in checkout["with"]["token"]  # nosec B101
+    assert "catalog-changelog" in generate["run"]  # nosec B101
+    assert "--catalog-path" in generate["run"]  # nosec B101
+    assert "--write" in generate["run"]  # nosec B101
+    assert "status --porcelain -- CHANGELOG.md" in generate["run"]  # nosec B101
+    assert "peter-evans/create-pull-request@" in create_pr["uses"]  # nosec B101
+    assert create_pr["with"]["sign-commits"] is True  # nosec B101
+    assert create_pr["with"]["add-paths"] == "CHANGELOG.md"  # nosec B101
+
+
 def _step(job: dict[str, object], name: str) -> dict[str, object]:
     for step in job["steps"]:
         if step.get("name") == name:

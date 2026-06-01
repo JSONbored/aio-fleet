@@ -59,6 +59,8 @@ def _write_catalog_readme(
     in_progress: list[str] | None = None,
     candidates: list[str] | None = None,
     available_count: int | None = None,
+    image_names: list[str] | None = None,
+    image_count: int | None = None,
     star_repos: list[str] | None = None,
     star_type: str = "Date",
 ) -> None:
@@ -66,6 +68,8 @@ def _write_catalog_readme(
     in_progress = [] if in_progress is None else in_progress
     candidates = [] if candidates is None else candidates
     count = len(available) if available_count is None else available_count
+    image_names = ["jsonbored/example-aio"] if image_names is None else image_names
+    image_count = len(image_names) if image_count is None else image_count
     star_repos = star_repos or ["JSONbored/awesome-unraid", "JSONbored/example-aio"]
     image_query = f"repos={','.join(star_repos)}&type={star_type}&theme=dark"
     link_fragment = "&".join(star_repos + ["Date"])
@@ -73,6 +77,7 @@ def _write_catalog_readme(
         "# Awesome Unraid",
         "",
         f"- Available templates: `{count}`",
+        f"- Published image packages: `{image_count}`",
         "",
         f"### Available Templates ({count})",
         "",
@@ -91,6 +96,18 @@ def _write_catalog_readme(
         "### Upcoming Candidates",
         "",
         *[f"- **{name}** - Candidate." for name in candidates],
+        "",
+        "## Published Image Packages",
+        "",
+        "| Image | Source | Notes |",
+        "| --- | --- | --- |",
+        *[
+            "| "
+            f"[`{image}`](https://hub.docker.com/r/{image}) "
+            "| [`JSONbored/example-aio`](https://github.com/JSONbored/example-aio) "
+            "| `example-aio` |"
+            for image in image_names
+        ],
         "",
         "## Star History",
         "",
@@ -1012,6 +1029,35 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
     assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
 
 
+def test_catalog_validation_allows_padded_published_image_rows(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path / "missing-repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(catalog_path)
+    readme = catalog_path / "README.md"
+    readme.write_text(readme.read_text().replace("| [`jsonbored/", "|    [`jsonbored/"))
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+""")
+
+    assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
+
+
 def test_catalog_validation_reports_readme_template_drift(tmp_path: Path) -> None:
     repo = _repo(tmp_path / "missing-repo")
     manifest = _Manifest()
@@ -1094,6 +1140,57 @@ def test_catalog_validation_reports_star_history_drift(tmp_path: Path) -> None:
     )  # nosec B101
     assert any(
         "Star History image URL must set type=Date" in failure for failure in failures
+    )  # nosec B101
+
+
+def test_catalog_validation_reports_published_image_drift(tmp_path: Path) -> None:
+    repo = _repo(
+        tmp_path / "missing-repo",
+        components={
+            "helper": {
+                "image_name": "jsonbored/example-helper",
+                "release_policy": "registry_only",
+            }
+        },
+    )
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(
+        catalog_path,
+        image_names=["jsonbored/example-aio", "jsonbored/extra-image"],
+        image_count=3,
+    )
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+""")
+
+    failures = catalog_repo_failures(manifest, catalog_path)  # type: ignore[arg-type]
+
+    assert any(
+        "published image package count must be 2, got 3" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Published Image Packages missing image(s): jsonbored/example-helper" in failure
+        for failure in failures
+    )  # nosec B101
+    assert any(
+        "Published Image Packages includes unexpected image(s): jsonbored/extra-image"
+        in failure
+        for failure in failures
     )  # nosec B101
 
 

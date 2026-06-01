@@ -793,7 +793,48 @@ def _catalog_readme_failures(manifest: FleetManifest, catalog_path: Path) -> lis
                 + ", ".join(sorted(misplaced))
             )
 
+    failures.extend(_catalog_published_image_failures(manifest, text))
     failures.extend(_catalog_star_history_failures(manifest, text))
+    return failures
+
+
+def _catalog_published_image_failures(
+    manifest: FleetManifest, readme_text: str
+) -> list[str]:
+    expected = _expected_published_images(manifest)
+    if not expected:
+        return []
+
+    failures: list[str] = []
+    count = _readme_count(
+        readme_text, r"^- Published image packages:\s*`?(?P<count>\d+)`?\s*$"
+    )
+    if count != len(expected):
+        failures.append(
+            "catalog README published image package count must be "
+            f"{len(expected)}, got {_count_label(count)}"
+        )
+
+    listed = _catalog_readme_published_images(readme_text)
+    missing = expected - set(listed)
+    extra = set(listed) - expected
+    if missing:
+        failures.append(
+            "catalog README Published Image Packages missing image(s): "
+            + ", ".join(sorted(missing))
+        )
+    if extra:
+        failures.append(
+            "catalog README Published Image Packages includes unexpected image(s): "
+            + ", ".join(sorted(extra))
+        )
+
+    duplicates = sorted({image for image in listed if listed.count(image) > 1})
+    if duplicates:
+        failures.append(
+            "catalog README Published Image Packages duplicates image(s): "
+            + ", ".join(duplicates)
+        )
     return failures
 
 
@@ -864,6 +905,29 @@ def _expected_star_history_repos(manifest: FleetManifest) -> set[str]:
     return repos
 
 
+def _expected_published_images(manifest: FleetManifest) -> set[str]:
+    images: set[str] = set()
+    for repo in manifest.repos.values():
+        if repo.raw.get("catalog_published") is False:
+            continue
+        if repo.raw.get("public") is not True:
+            continue
+        image = str(repo.image_name).strip()
+        if image:
+            images.add(image)
+        components = repo.raw.get("components", {})
+        if isinstance(components, dict):
+            for raw_component in components.values():
+                if not isinstance(raw_component, dict):
+                    continue
+                if raw_component.get("publish") is False:
+                    continue
+                component_image = str(raw_component.get("image_name", "")).strip()
+                if component_image:
+                    images.add(component_image)
+    return images
+
+
 def _catalog_readme_section_names(readme_text: str, heading: str) -> set[str]:
     section = _catalog_readme_section(readme_text, heading)
     names: set[str] = set()
@@ -892,6 +956,16 @@ def _catalog_readme_section(readme_text: str, heading: str) -> str:
             end = index
             break
     return "\n".join(lines[start:end])
+
+
+def _catalog_readme_published_images(readme_text: str) -> list[str]:
+    match = re.search(
+        r"^## Published Image Packages\s*\n(?P<section>.*?)(?:^## |\Z)",
+        readme_text,
+        re.MULTILINE | re.DOTALL,
+    )
+    section = match.group("section") if match else ""
+    return re.findall(r"^\|\s*\[`([^`]+)`\]\(", section, re.MULTILINE)
 
 
 def _readme_count(readme_text: str, pattern: str) -> int | None:

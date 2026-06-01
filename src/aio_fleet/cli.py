@@ -27,6 +27,17 @@ from aio_fleet.app_manifest import (
     render_app_manifest,
 )
 from aio_fleet.catalog import sync_catalog_assets, unpublished_xml_targets
+from aio_fleet.catalog_changelog import (
+    catalog_changelog_drift,
+    render_catalog_changelog,
+)
+from aio_fleet.catalog_workflow import (
+    RETIRED_CATALOG_PATHS,
+    catalog_workflow_findings,
+    current_aio_fleet_ref,
+    render_validate_catalog_workflow,
+    write_validate_catalog_workflow,
+)
 from aio_fleet.change_scope import (
     CHECK_MODE_FAST_CLEANUP,
     CHECK_MODE_FULL,
@@ -563,6 +574,14 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
             actions.extend(
                 _standards_release_actions(repo, include_registry=args.registry)
             )
+    destinations = _public_destination_paths(manifest, selected)
+    aio_fleet_ref = ""
+    if destinations:
+        aio_fleet_ref = current_aio_fleet_ref(Path(__file__).resolve().parents[2])
+        for name, path in destinations.items():
+            actions.extend(
+                _standards_catalog_destination_actions(name, path, aio_fleet_ref)
+            )
 
     if args.write:
         applied_cleanup_repos: set[str] = set()
@@ -578,6 +597,21 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
                     remove_cleanup_findings(cleanup_by_repo.get(repo_name, []))
                     applied_cleanup_repos.add(repo_name)
                 applied.append({**action, "applied": True})
+            elif action["kind"] == "catalog-workflow":
+                destination = destinations[str(action["repo"])]
+                write_validate_catalog_workflow(
+                    destination, aio_fleet_ref=aio_fleet_ref
+                )
+                applied.append({**action, "applied": True})
+            elif action["kind"] == "catalog-cleanup":
+                destination = destinations[str(action["repo"])]
+                relative = str(action.get("path", ""))
+                target = destination / relative
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                applied.append({**action, "applied": True})
 
     actionable = [
         action for action in actions if action.get("severity") in {"failure", "warning"}
@@ -587,7 +621,7 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
         "actions": actions,
         "applied": applied,
         "summary": {
-            "repos": len(repos),
+            "repos": len(repos) + len(destinations),
             "actions": len(actions),
             "actionable": len(actionable),
             "applied": len(applied),
@@ -615,6 +649,80 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
         if applied:
             print(f"applied: {len(applied)} safe local fix(es)")
     return 1 if actionable and not args.allow_drift else 0
+
+
+def _public_destination_paths(
+    manifest: FleetManifest, selected: set[str]
+) -> dict[str, Path]:
+    destinations = (
+        manifest.raw.get("dashboard", {}).get("destination_repos", {})
+        if isinstance(manifest.raw.get("dashboard", {}), dict)
+        else {}
+    )
+    if not isinstance(destinations, dict):
+        return {}
+    paths: dict[str, Path] = {}
+    for name, config in sorted(destinations.items()):
+        if selected and name not in selected:
+            continue
+        if not isinstance(config, dict) or config.get("public") is not True:
+            continue
+        path = str(config.get("path", "")).strip()
+        if path:
+            paths[str(name)] = Path(path)
+    return paths
+
+
+def _standards_catalog_destination_actions(
+    name: str, path: Path, aio_fleet_ref: str
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    for relative, reason in RETIRED_CATALOG_PATHS.items():
+        target = path / relative
+        if not target.exists():
+            continue
+        provenance = (
+            "remote-confirmed" if _git_tracks_path(path, relative) else "local-only"
+        )
+        actions.append(
+            _standards_raw_action(
+                repo=name,
+                kind="catalog-cleanup",
+                cls="retired-catalog-path",
+                severity="info" if provenance == "local-only" else "failure",
+                provenance=provenance,
+                detail=f"{relative}: {reason}",
+                command=f"python -m aio_fleet standards reconcile --repo {name} --write",
+                can_write=True,
+                path=relative,
+            )
+        )
+
+    for finding in catalog_workflow_findings(path, aio_fleet_ref=aio_fleet_ref):
+        if any(
+            finding.startswith(f"{relative}:") for relative in RETIRED_CATALOG_PATHS
+        ):
+            continue
+        actions.append(
+            _standards_raw_action(
+                repo=name,
+                kind="catalog-workflow",
+                cls="catalog-workflow-drift",
+                severity="failure",
+                detail=finding,
+                command=(
+                    "python -m aio_fleet catalog-workflow "
+                    f"--catalog-path {shlex.quote(str(path))} --write"
+                ),
+                can_write=True,
+            )
+        )
+    return actions
+
+
+def _git_tracks_path(repo_path: Path, relative: str) -> bool:
+    result = _run(["git", "ls-files", "--", relative], cwd=repo_path)
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def _standards_manifest_actions(repo: RepoConfig) -> list[dict[str, object]]:
@@ -738,8 +846,34 @@ def _standards_action(
     component: str = "",
     provenance: str = "remote-confirmed",
 ) -> dict[str, object]:
+    return _standards_raw_action(
+        repo=repo.name,
+        component=component,
+        kind=kind,
+        cls=cls,
+        severity=severity,
+        provenance=provenance,
+        detail=detail,
+        command=command,
+        can_write=can_write,
+    )
+
+
+def _standards_raw_action(
+    *,
+    repo: str,
+    kind: str,
+    cls: str,
+    severity: str,
+    detail: str,
+    command: str,
+    can_write: bool,
+    component: str = "",
+    provenance: str = "remote-confirmed",
+    path: str = "",
+) -> dict[str, object]:
     return {
-        "repo": repo.name,
+        "repo": repo,
         "component": component,
         "kind": kind,
         "class": cls,
@@ -748,6 +882,7 @@ def _standards_action(
         "detail": detail,
         "command": command,
         "can_write": can_write,
+        **({"path": path} if path else {}),
     }
 
 
@@ -1840,6 +1975,46 @@ def cmd_catalog_audit(args: argparse.Namespace) -> int:
         else:
             print("catalog audit passed")
     return 1 if findings else 0
+
+
+def cmd_catalog_changelog(args: argparse.Namespace) -> int:
+    catalog_path = Path(args.catalog_path).resolve()
+    rendered = render_catalog_changelog(catalog_path)
+    drifted = catalog_changelog_drift(catalog_path)
+    if args.write:
+        (catalog_path / "CHANGELOG.md").write_text(rendered)
+        drifted = False
+    if args.check:
+        if drifted:
+            print(
+                "catalog changelog drifted; run aio-fleet catalog-changelog --write",
+                file=sys.stderr,
+            )
+            return 1
+        print("catalog changelog is current")
+        return 0
+    if not args.write:
+        print(rendered, end="")
+    return 0
+
+
+def cmd_catalog_workflow(args: argparse.Namespace) -> int:
+    catalog_path = Path(args.catalog_path).resolve()
+    aio_fleet_ref = args.aio_fleet_ref or current_aio_fleet_ref(
+        Path(__file__).resolve().parents[2]
+    )
+    if args.write:
+        write_validate_catalog_workflow(catalog_path, aio_fleet_ref=aio_fleet_ref)
+    findings = catalog_workflow_findings(catalog_path, aio_fleet_ref=aio_fleet_ref)
+    if args.check:
+        if findings:
+            print("\n".join(findings), file=sys.stderr)
+            return 1
+        print("catalog workflow is current")
+        return 0
+    if not args.write:
+        print(render_validate_catalog_workflow(aio_fleet_ref), end="")
+    return 0
 
 
 def cmd_registry_verify(args: argparse.Namespace) -> int:
@@ -5526,6 +5701,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", choices=["text", "json", "markdown"], default="text"
     )
     catalog_audit.set_defaults(func=cmd_catalog_audit)
+
+    catalog_changelog = sub.add_parser("catalog-changelog")
+    catalog_changelog.add_argument("--catalog-path", required=True)
+    catalog_changelog.add_argument("--write", action="store_true")
+    catalog_changelog.add_argument("--check", action="store_true")
+    catalog_changelog.set_defaults(func=cmd_catalog_changelog)
+
+    catalog_workflow = sub.add_parser("catalog-workflow")
+    catalog_workflow.add_argument("--catalog-path", required=True)
+    catalog_workflow.add_argument("--aio-fleet-ref")
+    catalog_workflow.add_argument("--write", action="store_true")
+    catalog_workflow.add_argument("--check", action="store_true")
+    catalog_workflow.set_defaults(func=cmd_catalog_workflow)
 
     github = sub.add_parser("validate-github")
     github.add_argument("--policy", default="infra/github/github-policy.yml")

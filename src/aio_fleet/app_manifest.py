@@ -64,6 +64,7 @@ def render_app_manifest(repo: RepoConfig) -> str:
         sort_keys=False,
         allow_unicode=False,
         default_flow_style=False,
+        width=4096,
     )
 
 
@@ -119,7 +120,9 @@ class _IndentedSafeDumper(yaml.SafeDumper):
 
 
 def _represent_string(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
-    style = '"' if value.endswith(":") or value.isdigit() else None
+    style = (
+        '"' if value.endswith(":") or value.isdigit() or value.startswith("*") else None
+    )
     return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
 
 
