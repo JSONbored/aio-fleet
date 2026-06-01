@@ -43,3 +43,19 @@ def test_catalog_workflow_write_repairs_validate_workflow(tmp_path: Path) -> Non
     args.write = False
     args.check = True
     assert cmd_catalog_workflow(args) == 0  # nosec B101
+
+
+def test_catalog_workflow_default_prints_rendered_workflow(
+    tmp_path: Path, capsys
+) -> None:
+    args = Namespace(
+        catalog_path=str(tmp_path),
+        aio_fleet_ref="1" * 40,
+        write=False,
+        check=False,
+    )
+
+    assert cmd_catalog_workflow(args) == 0  # nosec B101
+    assert capsys.readouterr().out == render_validate_catalog_workflow(
+        "1" * 40
+    )  # nosec B101

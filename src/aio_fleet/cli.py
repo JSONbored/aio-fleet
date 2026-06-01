@@ -35,6 +35,7 @@ from aio_fleet.catalog_workflow import (
     RETIRED_CATALOG_PATHS,
     catalog_workflow_findings,
     current_aio_fleet_ref,
+    render_validate_catalog_workflow,
     write_validate_catalog_workflow,
 )
 from aio_fleet.change_scope import (
@@ -574,11 +575,13 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
                 _standards_release_actions(repo, include_registry=args.registry)
             )
     destinations = _public_destination_paths(manifest, selected)
-    aio_fleet_ref = current_aio_fleet_ref(Path(__file__).resolve().parents[2])
-    for name, path in destinations.items():
-        actions.extend(
-            _standards_catalog_destination_actions(name, path, aio_fleet_ref)
-        )
+    aio_fleet_ref = ""
+    if destinations:
+        aio_fleet_ref = current_aio_fleet_ref(Path(__file__).resolve().parents[2])
+        for name, path in destinations.items():
+            actions.extend(
+                _standards_catalog_destination_actions(name, path, aio_fleet_ref)
+            )
 
     if args.write:
         applied_cleanup_repos: set[str] = set()
@@ -707,7 +710,10 @@ def _standards_catalog_destination_actions(
                 cls="catalog-workflow-drift",
                 severity="failure",
                 detail=finding,
-                command=f"python -m aio_fleet catalog-workflow --catalog-path ../{name} --write",
+                command=(
+                    "python -m aio_fleet catalog-workflow "
+                    f"--catalog-path {shlex.quote(str(path))} --write"
+                ),
                 can_write=True,
             )
         )
@@ -2007,8 +2013,7 @@ def cmd_catalog_workflow(args: argparse.Namespace) -> int:
         print("catalog workflow is current")
         return 0
     if not args.write:
-        for finding in findings:
-            print(finding)
+        print(render_validate_catalog_workflow(aio_fleet_ref), end="")
     return 0
 
 

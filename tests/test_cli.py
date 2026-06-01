@@ -658,7 +658,43 @@ repos:
         ("awesome-unraid", "catalog-cleanup", "retired-catalog-path"),
         ("awesome-unraid", "catalog-workflow", "catalog-workflow-drift"),
     }
+    workflow_action = next(
+        action for action in report["actions"] if action["kind"] == "catalog-workflow"
+    )
+    assert f"--catalog-path {catalog_path}" in workflow_action["command"]  # nosec B101
     assert "private-catalog" not in json.dumps(report)  # nosec B101
+
+
+def test_standards_reconcile_skips_ref_lookup_without_public_destinations(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, _repo_path = _write_minimal_manifest(tmp_path)
+
+    monkeypatch.setattr(cli, "_standards_manifest_actions", lambda *_args: [])
+    monkeypatch.setattr(cli, "cleanup_findings", lambda *_args: [])
+    monkeypatch.setattr(
+        cli,
+        "current_aio_fleet_ref",
+        lambda *_args: pytest.fail("ref lookup should not run without destinations"),
+    )
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=False,
+            registry=False,
+            write=False,
+            allow_drift=False,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["status"] == "ok"  # nosec B101
 
 
 def test_standards_reconcile_reports_missing_release_checkout(
