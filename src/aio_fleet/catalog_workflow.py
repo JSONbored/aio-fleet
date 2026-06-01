@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import subprocess  # nosec B404
 from pathlib import Path
 
 VALIDATE_WORKFLOW = ".github/workflows/validate-catalog.yml"
+COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 RETIRED_CATALOG_PATHS = {
     ".github/workflows/changelog.yml": "catalog changelog PRs are created by aio-fleet",
     "scripts/validate-readme-inventory.py": "catalog README inventory validation runs in aio-fleet",
@@ -26,6 +28,8 @@ def current_aio_fleet_ref(aio_fleet_root: Path) -> str:
 
 
 def render_validate_catalog_workflow(aio_fleet_ref: str) -> str:
+    if not COMMIT_SHA_RE.fullmatch(aio_fleet_ref):
+        raise ValueError("aio_fleet_ref must be a 40-character lowercase commit SHA")
     return f"""name: Validate Catalog
 
 on:

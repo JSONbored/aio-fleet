@@ -3,6 +3,8 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 from aio_fleet.catalog_workflow import (
     VALIDATE_WORKFLOW,
     catalog_workflow_findings,
@@ -59,3 +61,8 @@ def test_catalog_workflow_default_prints_rendered_workflow(
     assert capsys.readouterr().out == render_validate_catalog_workflow(
         "1" * 40
     )  # nosec B101
+
+
+def test_catalog_workflow_rejects_unpinned_ref() -> None:
+    with pytest.raises(ValueError, match="40-character lowercase commit SHA"):
+        render_validate_catalog_workflow("main")
