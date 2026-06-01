@@ -840,6 +840,7 @@ def test_catalog_changelog_mode_uses_central_generator_and_signed_pr() -> None:
     assert "catalog-changelog" in generate["run"]  # nosec B101
     assert "--catalog-path" in generate["run"]  # nosec B101
     assert "--write" in generate["run"]  # nosec B101
+    assert "status --porcelain -- CHANGELOG.md" in generate["run"]  # nosec B101
     assert "peter-evans/create-pull-request@" in create_pr["uses"]  # nosec B101
     assert create_pr["with"]["sign-commits"] is True  # nosec B101
     assert create_pr["with"]["add-paths"] == "CHANGELOG.md"  # nosec B101

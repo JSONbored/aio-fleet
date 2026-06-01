@@ -1029,6 +1029,35 @@ def test_catalog_validation_allows_catalog_only_ci_without_source_checkout(
     assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
 
 
+def test_catalog_validation_allows_padded_published_image_rows(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path / "missing-repo")
+    manifest = _Manifest()
+    manifest.repos = {"example-aio": repo}
+    catalog_path = tmp_path / "catalog"
+    (catalog_path / "icons").mkdir(parents=True)
+    (catalog_path / "icons" / "example.png").write_bytes(b"icon")
+    _write_catalog_readme(catalog_path)
+    readme = catalog_path / "README.md"
+    readme.write_text(readme.read_text().replace("| [`jsonbored/", "|    [`jsonbored/"))
+    (catalog_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+</Container>
+""")
+
+    assert catalog_repo_failures(manifest, catalog_path) == []  # type: ignore[arg-type] # nosec B101
+
+
 def test_catalog_validation_reports_readme_template_drift(tmp_path: Path) -> None:
     repo = _repo(tmp_path / "missing-repo")
     manifest = _Manifest()

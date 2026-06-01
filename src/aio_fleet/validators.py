@@ -912,7 +912,7 @@ def _expected_published_images(manifest: FleetManifest) -> set[str]:
             continue
         if repo.raw.get("public") is not True:
             continue
-        image = str(repo.raw.get("image_name", "")).strip()
+        image = str(repo.image_name).strip()
         if image:
             images.add(image)
         components = repo.raw.get("components", {})
@@ -965,7 +965,7 @@ def _catalog_readme_published_images(readme_text: str) -> list[str]:
         re.MULTILINE | re.DOTALL,
     )
     section = match.group("section") if match else ""
-    return re.findall(r"^\| \[`([^`]+)`\]\(", section, re.MULTILINE)
+    return re.findall(r"^\|\s*\[`([^`]+)`\]\(", section, re.MULTILINE)
 
 
 def _readme_count(readme_text: str, pattern: str) -> int | None:

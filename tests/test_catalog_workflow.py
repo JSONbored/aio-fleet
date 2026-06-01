@@ -9,6 +9,7 @@ from aio_fleet.catalog_workflow import (
     VALIDATE_WORKFLOW,
     catalog_workflow_findings,
     render_validate_catalog_workflow,
+    write_validate_catalog_workflow,
 )
 from aio_fleet.cli import cmd_catalog_workflow
 
@@ -45,6 +46,16 @@ def test_catalog_workflow_write_repairs_validate_workflow(tmp_path: Path) -> Non
     args.write = False
     args.check = True
     assert cmd_catalog_workflow(args) == 0  # nosec B101
+
+
+def test_catalog_workflow_reports_missing_checkout(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    assert catalog_workflow_findings(missing, aio_fleet_ref="1" * 40) == [  # nosec B101
+        f"{missing}: catalog checkout is missing"
+    ]
+    with pytest.raises(FileNotFoundError, match="catalog checkout is missing"):
+        write_validate_catalog_workflow(missing, aio_fleet_ref="1" * 40)
 
 
 def test_catalog_workflow_default_prints_rendered_workflow(

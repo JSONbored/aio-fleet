@@ -458,7 +458,7 @@ jobs:
           python -m aio_fleet catalog-changelog \
             --catalog-path catalog-changelog/awesome-unraid \
             --write
-          if git -C catalog-changelog/awesome-unraid diff --quiet -- CHANGELOG.md; then
+          if [[ -z "$(git -C catalog-changelog/awesome-unraid status --porcelain -- CHANGELOG.md)" ]]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
           else
             echo "changed=true" >> "${GITHUB_OUTPUT}"

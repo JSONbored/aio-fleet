@@ -18,7 +18,7 @@ Notable changes are typically driven by:
 - sync and maintenance cleanup
 
 For app-specific release history, use the individual AIO repositories.
-Automated catalog sync commits are intentionally omitted here so this file stays readable.
+Some high-volume maintenance commits may be omitted here so this file stays readable.
 
 This catalog is maintained continuously on `main` and does not require formal GitHub Releases.
 """

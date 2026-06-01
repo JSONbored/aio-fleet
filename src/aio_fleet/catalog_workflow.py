@@ -68,6 +68,9 @@ jobs:
 
 
 def catalog_workflow_findings(catalog_path: Path, *, aio_fleet_ref: str) -> list[str]:
+    if not catalog_path.is_dir():
+        return [f"{catalog_path}: catalog checkout is missing"]
+
     findings: list[str] = []
     workflow = catalog_path / VALIDATE_WORKFLOW
     expected = render_validate_catalog_workflow(aio_fleet_ref)
@@ -83,6 +86,9 @@ def catalog_workflow_findings(catalog_path: Path, *, aio_fleet_ref: str) -> list
 
 
 def write_validate_catalog_workflow(catalog_path: Path, *, aio_fleet_ref: str) -> Path:
+    if not catalog_path.is_dir():
+        raise FileNotFoundError(f"{catalog_path}: catalog checkout is missing")
+
     workflow = catalog_path / VALIDATE_WORKFLOW
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(render_validate_catalog_workflow(aio_fleet_ref))
