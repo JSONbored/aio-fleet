@@ -36,11 +36,11 @@ def test_catalog_changelog_matches_catalog_grouping(tmp_path: Path) -> None:
 
     changelog = render_catalog_changelog(tmp_path)
 
-    assert "### CI\n- Publish catalog metadata" in changelog  # nosec B101
-    assert "### Documentation\n- Refresh catalog list" in changelog  # nosec B101
-    assert "### Fixes\n- Normalize icon" in changelog  # nosec B101
+    assert "### CI\n\n- Publish catalog metadata" in changelog  # nosec B101
+    assert "### Documentation\n\n- Refresh catalog list" in changelog  # nosec B101
+    assert "### Fixes\n\n- Normalize icon" in changelog  # nosec B101
     assert (
-        "### Dependency Updates\n- Update create-pull-request" in changelog
+        "### Dependency Updates\n\n- Update create-pull-request" in changelog
     )  # nosec B101
     assert "update catalog history" not in changelog  # nosec B101
     assert "(#123)" not in changelog  # nosec B101

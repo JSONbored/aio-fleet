@@ -50,12 +50,12 @@ def render_catalog_changelog(catalog_path: Path) -> str:
         group, description = parsed
         groups[group].append(_upper_first(description))
 
-    lines = [HEADER.rstrip(), "## Unreleased"]
+    lines = [HEADER.rstrip(), "", "## Unreleased", ""]
     for group in GROUP_ORDER:
         commits = groups.get(group, [])
         if not commits:
             continue
-        lines.extend([f"### {group}"])
+        lines.extend([f"### {group}", ""])
         lines.extend(f"- {message}" for message in commits)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
