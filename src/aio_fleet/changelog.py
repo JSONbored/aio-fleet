@@ -60,6 +60,9 @@ class ReleasePlan:
     component: str = "aio"
     release_suffix: str = "aio"
     release_tag_prefix: str = ""
+    registry_revision_path: Path | None = None
+    registry_revision_arg: str = ""
+    registry_revision_value: str = ""
 
 
 def render_git_cliff_config(
@@ -146,6 +149,12 @@ def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePl
     release_tag_prefix = str(config.get("release_tag_prefix", "") or "")
     version = _next_version(repo, component=component)
     changelog_path = repo.path / str(config.get("release_changelog", "CHANGELOG.md"))
+    revision_arg = str(config.get("registry_revision_arg", "") or "").strip()
+    revision_value = (
+        _version_revision(version, release_suffix=release_suffix)
+        if revision_arg
+        else ""
+    )
     return ReleasePlan(
         version=version,
         changelog_path=changelog_path,
@@ -160,7 +169,41 @@ def build_release_plan(repo: RepoConfig, *, component: str = "aio") -> ReleasePl
         component=component,
         release_suffix=release_suffix,
         release_tag_prefix=release_tag_prefix,
+        registry_revision_path=(
+            repo.path / str(config.get("dockerfile", "Dockerfile"))
+            if revision_arg and revision_value
+            else None
+        ),
+        registry_revision_arg=revision_arg,
+        registry_revision_value=revision_value,
     )
+
+
+def update_registry_revision_arg(plan: ReleasePlan) -> bool:
+    if (
+        plan.registry_revision_path is None
+        or not plan.registry_revision_arg
+        or not plan.registry_revision_value
+    ):
+        return False
+    pattern = re.compile(
+        rf"^ARG {re.escape(plan.registry_revision_arg)}=(?P<value>.+)$",
+        flags=re.MULTILINE,
+    )
+    content = plan.registry_revision_path.read_text()
+    matches = list(pattern.finditer(content))
+    if len(matches) != 1:
+        raise ValueError(
+            f"Expected exactly one ARG {plan.registry_revision_arg} in "
+            f"{plan.registry_revision_path}"
+        )
+    updated = pattern.sub(
+        f"ARG {plan.registry_revision_arg}={plan.registry_revision_value}",
+        content,
+        count=1,
+    )
+    plan.registry_revision_path.write_text(updated)
+    return updated != content
 
 
 def update_template_changes(
@@ -259,6 +302,11 @@ def _next_version(repo: RepoConfig, *, component: str) -> str:
         version_key=str(config.get("upstream_version_key", "UPSTREAM_VERSION")),
         tag_prefix=str(config.get("release_tag_prefix", "") or ""),
     )
+
+
+def _version_revision(version: str, *, release_suffix: str) -> str:
+    match = re.search(rf"-{re.escape(release_suffix)}\.(\d+)$", version)
+    return match.group(1) if match else ""
 
 
 def _release_xml_sources(repo: RepoConfig, *, component: str) -> list[str]:
