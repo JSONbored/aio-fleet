@@ -2247,6 +2247,93 @@ def test_release_prepare_dry_run_prepends_changelog_section(
     assert "--output" not in output  # nosec B101
 
 
+def test_release_prepare_updates_registry_only_revision_arg(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        upstream_version_key: UPSTREAM_VERSION
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        xml_paths:
+          - sure-aio-alpha.xml
+""")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.11\nARG AIO_REVISION=1\n"
+    )
+    (repo_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "UPSTREAM_VERSION"\n'
+    )
+    (repo_path / "CHANGELOG.alpha.md").write_text("# Alpha Changelog\n")
+    (repo_path / "sure-aio-alpha.xml").write_text(
+        "<Container><Changes>old</Changes></Container>\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 0.7.1-alpha.11-aio.1")
+    _git(repo_path, "tag", "sure-alpha/0.7.1-alpha.11-aio.1")
+
+    def fake_run(command: list[str], **kwargs):
+        assert kwargs.get("cwd") == repo_path  # nosec B101
+        assert command[:2] == ["git", "cliff"]  # nosec B101
+        (repo_path / "CHANGELOG.alpha.md").write_text(
+            "# Alpha Changelog\n\n"
+            "## 0.7.1-alpha.11-aio.2 - 2026-06-01\n\n"
+            "- Publish alpha proxy fixes.\n"
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cli.cmd_release_prepare(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            repo_path=None,
+            component="sure-alpha",
+            dry_run=False,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert (  # nosec B101
+        "ARG AIO_REVISION=2" in (repo_path / "Dockerfile.alpha").read_text()
+    )
+    assert (
+        "0.7.1-alpha.11-aio.2"
+        in (repo_path / "CHANGELOG.alpha.md").read_text()  # nosec B101
+    )
+    assert (
+        "Publish alpha proxy fixes"
+        in (repo_path / "sure-aio-alpha.xml").read_text()  # nosec B101
+    )
+
+
 def test_release_publish_uses_changelog_version_for_changelog_profile(
     tmp_path: Path, capsys
 ) -> None:

@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from aio_fleet.changelog import (
+    ReleasePlan,
     build_release_plan,
     normalize_markdown_changelog,
     render_git_cliff_config,
+    update_registry_revision_arg,
     update_template_changes,
 )
 from aio_fleet.manifest import RepoConfig
@@ -171,6 +173,29 @@ def test_component_release_plan_uses_prefixed_component_tags(
     assert alpha.version == "0.7.1-alpha.9-aio.2"  # nosec B101
     assert alpha.release_tag_prefix == "sure-alpha/"  # nosec B101
     assert "^sure\\-alpha/v?[0-9].*-aio\\.[0-9]+" in alpha.cliff_config  # nosec B101
+
+
+def test_registry_revision_update_rejects_duplicate_args(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile.alpha"
+    dockerfile.write_text(
+        "ARG UPSTREAM_VERSION=0.7.1-alpha.11\n"
+        "ARG AIO_REVISION=1\n"
+        "ARG AIO_REVISION=1\n"
+    )
+    plan = ReleasePlan(
+        version="0.7.1-alpha.11-aio.2",
+        changelog_path=tmp_path / "CHANGELOG.alpha.md",
+        xml_paths=[],
+        cliff_config="",
+        registry_revision_path=dockerfile,
+        registry_revision_arg="AIO_REVISION",
+        registry_revision_value="2",
+    )
+
+    with pytest.raises(ValueError, match="Expected exactly one ARG AIO_REVISION"):
+        update_registry_revision_arg(plan)
+
+    assert dockerfile.read_text().count("ARG AIO_REVISION=1") == 2  # nosec B101
 
 
 def test_component_xml_changes_note_uses_component_changelog(tmp_path: Path) -> None:

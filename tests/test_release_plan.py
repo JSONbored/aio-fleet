@@ -816,6 +816,63 @@ def test_release_plan_ignores_manifest_only_component_commit(
     assert plan["state"] == "current"  # nosec B101
 
 
+def test_release_plan_ignores_test_only_package_noise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "nanoclaw-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=2.0.64\n")
+    (repo_path / "upstream.toml").write_text("")
+    (repo_path / "CHANGELOG.md").write_text("## v2.0.64-aio.6\n")
+    (repo_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (repo_path / "tests").mkdir()
+    (repo_path / "tests" / "helpers.py").write_text("# helpers\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.0.64-aio.6")
+    _git(repo_path, "tag", "v2.0.64-aio.6")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    (repo_path / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\naddopts = '-ra'\n"
+    )
+    (repo_path / "tests" / "helpers.py").write_text("# shared helper shim\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "test(smoke): align pytest helpers")
+    repo = RepoConfig(
+        name="nanoclaw-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "nanoclaw-aio",
+            "image_name": "jsonbored/nanoclaw-aio",
+            "docker_cache_scope": "nanoclaw-aio-image",
+            "pytest_image_tag": "nanoclaw-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={"non_release_paths": ["pyproject.toml", "tests/**"]},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr(
+        release_plan_module,
+        "_latest_github_release",
+        lambda _repo, **_kwargs: {
+            "state": "ok",
+            "tag": "v2.0.64-aio.6",
+            "target_commitish": release_sha,
+        },
+    )
+
+    plan = release_plan_for_repo(repo)
+
+    assert plan["release_due"] is False  # nosec B101
+    assert plan["state"] == "current"  # nosec B101
+
+
 def test_release_plan_warns_instead_of_due_for_tagless_history(
     tmp_path: Path, monkeypatch
 ) -> None:

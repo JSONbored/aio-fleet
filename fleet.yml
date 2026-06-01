@@ -23,6 +23,8 @@ defaults:
     - README.md
     - AGENTS.md
     - docs/**
+    - pyproject.toml
+    - tests/**
     - .github/**
     - .trunk/**
   release_transaction:

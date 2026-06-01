@@ -48,6 +48,7 @@ from aio_fleet.changelog import (
     build_release_plan,
     component_config,
     normalize_markdown_changelog,
+    update_registry_revision_arg,
     update_template_changes,
     write_temp_git_cliff_config,
 )
@@ -3353,6 +3354,12 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
         print(f"{repo.name}: would prepare release {plan.version}")
         for command in commands:
             print(" ".join(shlex.quote(part) for part in command))
+        if plan.registry_revision_path is not None:
+            print(
+                "would update "
+                f"ARG {plan.registry_revision_arg}={plan.registry_revision_value} "
+                f"in {plan.registry_revision_path}"
+            )
         for xml_path in plan.xml_paths:
             print(f"would update <Changes> in {xml_path}")
         return 0
@@ -3365,6 +3372,12 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
         if result.returncode != 0:
             return result.returncode
     normalize_markdown_changelog(plan.changelog_path)
+    if update_registry_revision_arg(plan):
+        print(
+            "updated "
+            f"ARG {plan.registry_revision_arg}={plan.registry_revision_value} "
+            f"in {plan.registry_revision_path}"
+        )
     for xml_path in plan.xml_paths:
         update_template_changes(
             version=plan.version,
