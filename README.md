@@ -63,6 +63,8 @@ python -m aio_fleet status --github --catalog-path ../awesome-unraid
 python -m aio_fleet debt-report --catalog-path ../awesome-unraid --format markdown
 python -m aio_fleet validate-template-common --all
 python -m aio_fleet catalog-audit --catalog-path ../awesome-unraid
+python -m aio_fleet catalog-workflow --catalog-path ../awesome-unraid --check
+python -m aio_fleet catalog-changelog --catalog-path ../awesome-unraid --check
 python -m aio_fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
 python -m aio_fleet poll --format json
 python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run

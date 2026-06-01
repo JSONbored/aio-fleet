@@ -590,6 +590,77 @@ def test_standards_reconcile_marks_untracked_cleanup_as_local_only(
     assert report["actions"][0]["provenance"] == "local-only"  # nosec B101
 
 
+def test_standards_reconcile_reports_public_catalog_destination_drift(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    catalog_path = tmp_path / "awesome-unraid"
+    private_path = tmp_path / "private-catalog"
+    catalog_path.mkdir()
+    private_path.mkdir()
+    _git(catalog_path, "init")
+    _git(catalog_path, "config", "user.email", "tests@example.invalid")
+    _git(catalog_path, "config", "user.name", "aio-fleet tests")
+    _git(catalog_path, "config", "commit.gpgsign", "false")
+    (catalog_path / "scripts").mkdir()
+    (catalog_path / "scripts" / "validate-readme-inventory.py").write_text("")
+    _git(catalog_path, "add", ".")
+    _git(catalog_path, "commit", "-m", "chore(test): init catalog")
+    (private_path / "cliff.toml").write_text("[changelog]\n")
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+dashboard:
+  destination_repos:
+    awesome-unraid:
+      path: {catalog_path}
+      public: true
+    private-catalog:
+      path: {private_path}
+      public: false
+repos:
+  example-aio:
+    path: {repo_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+
+    monkeypatch.setattr(cli, "_standards_manifest_actions", lambda *_args: [])
+    monkeypatch.setattr(cli, "cleanup_findings", lambda *_args: [])
+    monkeypatch.setattr(cli, "current_aio_fleet_ref", lambda *_args: "1" * 40)
+
+    result = cmd_standards_reconcile(
+        Namespace(
+            manifest=str(manifest),
+            repo=None,
+            github=False,
+            policy="unused.yml",
+            release=False,
+            registry=False,
+            write=False,
+            allow_drift=True,
+            format="json",
+        )
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert result == 0  # nosec B101
+    assert report["status"] == "actionable"  # nosec B101
+    assert report["summary"]["repos"] == 2  # nosec B101
+    assert {
+        (action["repo"], action["kind"], action["class"])
+        for action in report["actions"]
+    } == {  # nosec B101
+        ("awesome-unraid", "catalog-cleanup", "retired-catalog-path"),
+        ("awesome-unraid", "catalog-workflow", "catalog-workflow-drift"),
+    }
+    assert "private-catalog" not in json.dumps(report)  # nosec B101
+
+
 def test_standards_reconcile_reports_missing_release_checkout(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

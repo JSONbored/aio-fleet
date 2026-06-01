@@ -22,6 +22,7 @@ on:
           - upstream-monitor
           - fleet-dashboard
           - standards-reconcile
+          - catalog-changelog
           - alert-test
           - dockerhub-tag-cleanup
       repo:
@@ -438,6 +439,52 @@ jobs:
           args=(standards reconcile --github --release --format json --allow-drift)
           args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
           python -m aio_fleet "${args[@]}" | tee standards-reconcile-report.json
+
+      - name: Checkout catalog for changelog
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/awesome-unraid
+          token: ${{ steps.app-token.outputs.token }}
+          path: catalog-changelog/awesome-unraid
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate catalog changelog
+        id: catalog-changelog
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' }}
+        run: |
+          set -euo pipefail
+          python -m aio_fleet catalog-changelog \
+            --catalog-path catalog-changelog/awesome-unraid \
+            --write
+          if git -C catalog-changelog/awesome-unraid diff --quiet -- CHANGELOG.md; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create catalog changelog PR
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'catalog-changelog' && steps.catalog-changelog.outputs.changed == 'true' && !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: catalog-changelog/awesome-unraid
+          add-paths: CHANGELOG.md
+          commit-message: "chore(changelog): update catalog history"
+          title: "chore(changelog): update catalog history"
+          body: |
+            This PR refreshes `CHANGELOG.md` for the current catalog history.
+
+            ## Summary
+            - regenerates the catalog changelog with `aio-fleet`
+            - does not create tags or GitHub Releases
+
+            ## Validation
+            - `python -m aio_fleet catalog-changelog --catalog-path . --write`
+          branch: "changelog/update-catalog-history"
+          delete-branch: true
+          sign-commits: true
 
       - name: Alert upstream monitor
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
