@@ -75,6 +75,17 @@ def test_render_app_manifest_quotes_numeric_string_targets() -> None:
     assert '    - "8765"\n' in content  # nosec B101
 
 
+def test_render_app_manifest_uses_prettier_stable_yaml() -> None:
+    dify = render_app_manifest(load_manifest(ROOT / "fleet.yml").repo("dify-aio"))
+    signoz = render_app_manifest(load_manifest(ROOT / "fleet.yml").repo("signoz-aio"))
+
+    assert '    - "*.xml"\n' in dify  # nosec B101
+    assert (  # nosec B101
+        "image_description: Unraid-friendly SigNoz OpenTelemetry collector companion for remote and local hosts\n"
+        in signoz
+    )
+
+
 def test_load_app_manifest_validates_required_sections(tmp_path: Path) -> None:
     path = tmp_path / APP_MANIFEST_NAME
     path.write_text("""
