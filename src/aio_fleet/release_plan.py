@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import subprocess  # nosec B404
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,7 @@ from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
+    registry_failures_are_sha_only,
     registry_sha_tag_required,
     verify_registry_tags,
 )
@@ -32,6 +36,8 @@ from aio_fleet.release import (
 from aio_fleet.signing import generated_pr_signature_blockers
 
 _REGISTRY_VERIFY_CACHE: dict[tuple[tuple[str, ...], int, int], list[str]] = {}
+_REGISTRY_VERIFY_STARTED_AT = time.monotonic()
+_REGISTRY_VERIFY_BUDGET_PREFIX = "registry verification budget exhausted"
 
 
 def release_plan_for_manifest(
@@ -108,6 +114,8 @@ def release_plan_for_repo(
     registry_only_component_changes = False
     ignored_release_changes = False
     release_history_incomplete = False
+    sha_tag_missing = False
+    registry_check_timed_out = False
 
     if repo.publish_profile == "template":
         latest_tag = latest_semver_tag(repo.path)
@@ -218,11 +226,22 @@ def release_plan_for_repo(
         registry_tags["ghcr"].extend(tags.ghcr)
         registry_failures.extend(
             _verify_registry_tags_for_plan(
-                tags.all_tags, dockerhub_attempts=registry_verify_attempts
+                tags.all_tags,
+                repo=repo.name,
+                component=component,
+                dockerhub_attempts=registry_verify_attempts,
             )
         )
-        if registry_failures:
+        sha_tag_missing = registry_failures_are_sha_only(registry_failures)
+        registry_check_timed_out = _registry_verification_budget_exhausted(
+            registry_failures
+        )
+        if registry_failures and not sha_tag_missing and not registry_check_timed_out:
             blockers.append("missing or unreachable registry tags")
+        elif sha_tag_missing:
+            warnings.append("sha registry tag missing for current source commit")
+        elif registry_check_timed_out:
+            warnings.append(registry_failures[0])
 
     if catalog_sync_needed:
         warnings.append("catalog sync needed after source merge")
@@ -246,12 +265,16 @@ def release_plan_for_repo(
     state = "current"
     if signing_blockers:
         state = "blocked"
-    elif registry_failures:
+    elif registry_failures and not sha_tag_missing and not registry_check_timed_out:
         state = "publish-missing"
     elif catalog_sync_needed:
         state = "catalog-sync-needed"
     elif release_due:
         state = "release-due"
+    elif sha_tag_missing:
+        state = "sha-tag-missing"
+    elif registry_check_timed_out:
+        state = "watch"
     elif release_history_incomplete:
         state = "watch"
     elif not latest_tag or (changelog_required and not changelog_version):
@@ -268,7 +291,7 @@ def release_plan_for_repo(
         "next_version": next_version,
         "release_due": bool(release_due),
         "catalog_sync_needed": catalog_sync_needed,
-        "registry_state": "failed" if registry_failures else "ok",
+        "registry_state": _registry_state(registry_failures),
         "registry_verified": bool(
             include_registry and repo.publish_profile != "template"
         ),
@@ -316,11 +339,22 @@ def _private_release_plan(repo: RepoConfig) -> dict[str, Any]:
 
 
 def _verify_registry_tags_for_plan(
-    tags: list[str], *, dockerhub_attempts: int
+    tags: list[str], *, repo: str, component: str, dockerhub_attempts: int
 ) -> list[str]:
     key = (tuple(tags), dockerhub_attempts, id(verify_registry_tags))
     if key in _REGISTRY_VERIFY_CACHE:
         return list(_REGISTRY_VERIFY_CACHE[key])
+    budget = _registry_verify_budget_seconds()
+    if budget and time.monotonic() - _REGISTRY_VERIFY_STARTED_AT > budget:
+        return [
+            f"{_REGISTRY_VERIFY_BUDGET_PREFIX} after {budget}s; "
+            f"rerun targeted registry verify for {repo}:{component}"
+        ]
+    if tags:
+        print(
+            f"release plan: verifying {len(tags)} registry tag(s) for {repo}:{component}",
+            file=sys.stderr,
+        )
     failures = verify_registry_tags(tags, dockerhub_attempts=dockerhub_attempts)
     if failures:
         retry_failures = verify_registry_tags(
@@ -331,8 +365,34 @@ def _verify_registry_tags_for_plan(
     return failures
 
 
+def _registry_verify_budget_seconds() -> int:
+    raw = os.environ.get("AIO_FLEET_RELEASE_PLAN_REGISTRY_TIMEOUT_SECONDS", "180")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 180
+
+
+def _registry_verification_budget_exhausted(failures: list[str]) -> bool:
+    return bool(failures) and all(
+        failure.startswith(_REGISTRY_VERIFY_BUDGET_PREFIX) for failure in failures
+    )
+
+
+def _registry_state(failures: list[str]) -> str:
+    if not failures:
+        return "ok"
+    if registry_failures_are_sha_only(failures):
+        return "sha-tag-missing"
+    if _registry_verification_budget_exhausted(failures):
+        return "timeout"
+    return "failed"
+
+
 def _release_plan_provenance(state: str, registry_failures: list[str]) -> str:
     if state == "publish-missing" and registry_failures:
+        return "remote-confirmed"
+    if state == "sha-tag-missing":
         return "remote-confirmed"
     if state in {"release-due", "catalog-sync-needed", "blocked"}:
         return "operator-action"
@@ -355,6 +415,11 @@ def _next_release_action(
         return "none"
     if state == "publish-missing":
         return release_transaction_command(repo, component=component, sha=sha)
+    if state == "sha-tag-missing":
+        return (
+            f"python -m aio_fleet registry verify --repo {repo.name} "
+            f"--component {component} --sha {sha or '<sha>'} --verbose"
+        )
     if state == "catalog-sync-needed":
         return f"python -m aio_fleet sync-catalog --repo {repo.name} --catalog-path ../awesome-unraid --dry-run"
     if state == "release-due" and next_version:

@@ -1275,6 +1275,113 @@ repos:
     assert "publish-missing" in str(report["body"])  # nosec B101
 
 
+def test_dashboard_registry_mode_splits_sha_tag_gaps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app_path = tmp_path / "example-aio"
+    app_path.mkdir()
+    sha = "a" * 40
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {app_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+""")
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "monitor_repo",
+        lambda *_args, **_kwargs: [
+            UpstreamMonitorResult(
+                repo="example-aio",
+                component="aio",
+                name="Example",
+                strategy="pr",
+                source="github-tags",
+                current_version="1.0.0",
+                latest_version="1.0.0",
+                current_digest="",
+                latest_digest="",
+                version_update=False,
+                digest_update=False,
+                dockerfile=app_path / "Dockerfile",
+                version_key="UPSTREAM_VERSION",
+                digest_key="",
+                release_notes_url="https://example.invalid/releases",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        fleet_dashboard,
+        "_repo_registry_states",
+        lambda _repo: {
+            "aio": {
+                "repo": "example-aio",
+                "component": "aio",
+                "sha": sha,
+                "dockerhub": [f"jsonbored/example-aio:sha-{sha}"],
+                "ghcr": [f"ghcr.io/jsonbored/example-aio:sha-{sha}"],
+                "failures": [f"jsonbored/example-aio:sha-{sha}: missing"],
+                "state": "sha-tag-missing",
+                "verified_at": "2026-05-05T00:00:00+00:00",
+            }
+        },
+    )
+
+    def fake_release_plan(_manifest, **_kwargs):
+        return [
+            {
+                "repo": "example-aio",
+                "component": "aio",
+                "state": "sha-tag-missing",
+                "profile": "upstream-aio-track",
+                "sha": sha,
+                "latest_release_tag": "1.0.0-aio.1",
+                "latest_github_release": {"state": "ok", "tag": "1.0.0-aio.1"},
+                "next_version": "1.0.0-aio.1",
+                "release_due": False,
+                "registry_verified": True,
+                "registry_state": "sha-tag-missing",
+                "registry_failures": [f"jsonbored/example-aio:sha-{sha}: missing"],
+                "registry_failure_evidence": [
+                    {
+                        "failure": f"jsonbored/example-aio:sha-{sha}: missing",
+                        "provenance": "remote-confirmed",
+                    }
+                ],
+                "next_action": (
+                    "python -m aio_fleet registry verify "
+                    f"--repo example-aio --component aio --sha {sha} --verbose"
+                ),
+                "operator_commands": {},
+            }
+        ]
+
+    monkeypatch.setattr(fleet_dashboard, "release_plan_for_manifest", fake_release_plan)
+
+    report = fleet_dashboard.dashboard_report(
+        load_manifest(manifest),
+        include_activity=False,
+        include_registry=True,
+        env={"AIO_FLEET_ALERT_WEBHOOK_URL": "https://hook"},
+    )
+
+    row = report["state"]["rows"][0]
+    assert row["registry"] == "sha-missing:1"  # nosec B101
+    assert row["release"] == "sha-tag-missing"  # nosec B101
+    assert report["state"]["summary"]["registry_failures"] == 0  # nosec B101
+    assert report["state"]["summary"]["sha_tag_missing"] == 1  # nosec B101
+    assert report["state"]["summary"]["publish_missing"] == 0  # nosec B101
+    assert report["state"]["summary"]["posture"] == "green"  # nosec B101
+    assert report["state"]["actions"] == []  # nosec B101
+    assert "SHA Tag Gaps" in str(report["body"])  # nosec B101
+
+
 def test_dashboard_routes_safety_warning_to_triage(tmp_path: Path, monkeypatch) -> None:
     app_path = tmp_path / "example-aio"
     app_path.mkdir()

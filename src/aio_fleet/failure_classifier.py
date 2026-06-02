@@ -278,7 +278,7 @@ def _workflow_recovered_after_failure(
 
 
 def _same_workflow_context(latest: dict[str, Any], failure: dict[str, Any]) -> bool:
-    for key in ("event", "branch", "title"):
+    for key in ("branch", "title"):
         latest_value = str(latest.get(key) or "").strip().lower()
         failure_value = str(failure.get(key) or "").strip().lower()
         if latest_value and failure_value and latest_value != failure_value:

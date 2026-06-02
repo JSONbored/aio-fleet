@@ -77,6 +77,69 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
     )
 
 
+def test_release_plan_classifies_sha_tag_gap_separately(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sha = "a" * 40
+    repo = RepoConfig(
+        name="sure-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "sure-aio",
+            "image_name": "jsonbored/sure-aio",
+            "docker_cache_scope": "sure-aio-image",
+            "pytest_image_tag": "sure-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr("aio_fleet.release_plan._git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_latest_aio_tag", lambda _repo: "0.7.0-aio.1"
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_next_aio", lambda _repo: "0.7.0-aio.2"
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_has_aio_changes", lambda _repo: False
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_changelog_version",
+        lambda _repo, *, component="aio": "0.7.0-aio.1",
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._latest_github_release",
+        lambda _repo, **_kwargs: {"state": "ok", "tag": "0.7.0-aio.1"},
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan.compute_registry_tags",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            dockerhub=[f"jsonbored/sure-aio:sha-{sha}"],
+            ghcr=[f"ghcr.io/jsonbored/sure-aio:sha-{sha}"],
+            all_tags=[f"jsonbored/sure-aio:sha-{sha}"],
+        ),
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan.verify_registry_tags",
+        lambda _tags, **_kwargs: [f"jsonbored/sure-aio:sha-{sha}: missing"],
+    )
+
+    plan = release_plan_for_repo(repo, include_registry=True)
+
+    assert plan["state"] == "sha-tag-missing"  # nosec B101
+    assert plan["registry_state"] == "sha-tag-missing"  # nosec B101
+    assert plan["registry_verified"] is True  # nosec B101
+    assert plan["blockers"] == []  # nosec B101
+    assert plan["warnings"] == [  # nosec B101
+        "sha registry tag missing for current source commit"
+    ]
+    assert plan["next_action"] == (  # nosec B101
+        f"python -m aio_fleet registry verify --repo sure-aio "
+        f"--component aio --sha {sha} --verbose"
+    )
+
+
 def test_release_plan_classifies_catalog_sync_needed(
     tmp_path: Path, monkeypatch
 ) -> None:
