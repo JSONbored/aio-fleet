@@ -631,7 +631,7 @@ repos:
 
     monkeypatch.setattr(cli, "_standards_manifest_actions", lambda *_args: [])
     monkeypatch.setattr(cli, "cleanup_findings", lambda *_args: [])
-    monkeypatch.setattr(cli, "current_aio_fleet_ref", lambda *_args: "1" * 40)
+    monkeypatch.setattr(cli, "resolve_aio_fleet_ref", lambda *_args: "1" * 40)
 
     result = cmd_standards_reconcile(
         Namespace(
@@ -674,7 +674,7 @@ def test_standards_reconcile_skips_ref_lookup_without_public_destinations(
     monkeypatch.setattr(cli, "cleanup_findings", lambda *_args: [])
     monkeypatch.setattr(
         cli,
-        "current_aio_fleet_ref",
+        "resolve_aio_fleet_ref",
         lambda *_args: pytest.fail("ref lookup should not run without destinations"),
     )
 

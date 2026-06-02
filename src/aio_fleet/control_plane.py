@@ -311,9 +311,9 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             )
         except subprocess.TimeoutExpired as exc:
             if exc.stdout:
-                print(exc.stdout, end="")
+                print(_timeout_output_text(exc.stdout), end="")
             if exc.stderr:
-                print(exc.stderr, file=sys.stderr, end="")
+                print(_timeout_output_text(exc.stderr), file=sys.stderr, end="")
             timeout = step.timeout_seconds or 0
             failures.append(f"{step.name}: timed out after {timeout}s")
             break
@@ -327,6 +327,12 @@ def run_steps(steps: list[Step], *, dry_run: bool = False) -> list[str]:
             failures.append(f"{step.name}: exit {result.returncode}{suffix}")
             break
     return failures
+
+
+def _timeout_output_text(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def _failure_detail(stdout: str, stderr: str) -> str:

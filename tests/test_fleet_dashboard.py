@@ -1465,6 +1465,72 @@ def test_dashboard_redacts_non_public_text_from_body_and_hidden_state() -> None:
     assert "<redacted: Discord webhook URL>" in hidden  # nosec B101
 
 
+def test_dashboard_body_compacts_before_github_issue_limit() -> None:
+    rows = []
+    for index in range(80):
+        rows.append(
+            {
+                "repo": f"example-{index}-aio",
+                "component": "aio",
+                "current": "1.0.0",
+                "latest": "1.1.0",
+                "strategy": "pr",
+                "update": True,
+                "pr": "",
+                "check": "missing",
+                "signed": "missing",
+                "registry": "not-run",
+                "release": "after-merge",
+                "safety": "warn",
+                "safety_confidence": "",
+                "config_delta": "unknown",
+                "template_impact": "review-template-config-delta",
+                "runtime_smoke": "unknown",
+                "safety_signals": [],
+                "safety_warnings": ["manual review required"],
+                "safety_failures": [],
+                "next_action": "review " + ("x" * 2000),
+            }
+        )
+    state = {
+        "schema_version": 4,
+        "generated_at": "2026-05-05T00:00:00+00:00",
+        "issue_repo": "JSONbored/aio-fleet",
+        "summary": {
+            "posture": "action required",
+            "remote_posture": "action required",
+            "local_posture": "clean",
+            "active_repos": 80,
+            "upstream_updates": 80,
+            "triage_updates": 80,
+        },
+        "warnings": [],
+        "rows": rows,
+        "actions": [],
+        "failures": [],
+        "approvals": [],
+        "catalog": {},
+        "standards": {},
+        "candidates": {},
+        "activity": [],
+        "destination_repos": [],
+        "rehab_repos": [],
+        "registry": [],
+        "releases": [],
+        "cleanup": [],
+        "workflow": {},
+    }
+
+    body = fleet_dashboard.render_dashboard(state)
+    hidden = json.loads(_hidden_dashboard_state(body))
+
+    assert len(body) <= fleet_dashboard.GITHUB_ISSUE_BODY_SOFT_LIMIT  # nosec B101
+    assert "Detailed fleet tables were compacted" in body  # nosec B101
+    assert "## Controls" in body  # nosec B101
+    assert hidden["summary"]["active_repos"] == 80  # nosec B101
+    assert "x" * 1000 not in hidden  # nosec B101
+
+
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
     def days_ago(days: int) -> str:
         value = datetime.now(UTC).replace(microsecond=0) - timedelta(days=days)

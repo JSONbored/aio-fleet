@@ -9,6 +9,7 @@ from aio_fleet.catalog_workflow import (
     VALIDATE_WORKFLOW,
     catalog_workflow_findings,
     render_validate_catalog_workflow,
+    resolve_aio_fleet_ref,
     write_validate_catalog_workflow,
 )
 from aio_fleet.cli import cmd_catalog_workflow
@@ -77,3 +78,16 @@ def test_catalog_workflow_default_prints_rendered_workflow(
 def test_catalog_workflow_rejects_unpinned_ref() -> None:
     with pytest.raises(ValueError, match="40-character lowercase commit SHA"):
         render_validate_catalog_workflow("main")
+
+
+def test_resolve_aio_fleet_ref_prefers_github_sha() -> None:
+    assert resolve_aio_fleet_ref(env={"GITHUB_SHA": "A" * 40}) == "a" * 40  # nosec B101
+
+
+def test_resolve_aio_fleet_ref_prefers_explicit_ref() -> None:
+    assert (
+        resolve_aio_fleet_ref(  # nosec B101
+            env={"AIO_FLEET_REF": "b" * 40, "GITHUB_SHA": "a" * 40}
+        )
+        == "b" * 40
+    )

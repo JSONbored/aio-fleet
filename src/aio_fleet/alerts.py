@@ -6,7 +6,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from aio_fleet.public_text import assert_public_text
+from aio_fleet.public_text import assert_public_text, public_text_safe_value
 
 SUCCESS_STATES = {"success", "succeeded", "ok", "up", "passed"}
 FAILURE_STATES = {"failure", "failed", "error", "down", "timed_out", "cancelled"}
@@ -71,17 +71,19 @@ def alert_payload(
     )
     key_parts = [event, repo or "fleet", component or "all"]
     key = dedupe_key or ":".join(key_parts)
+    safe_annotations = public_text_safe_value(annotations or [])
+    safe_details = public_text_safe_value(details or {})
     return AlertPayload(
-        event=event,
+        event=str(public_text_safe_value(event)),
         status=normalized,
         severity=severity,
-        summary=summary or f"{event}: {normalized}",
-        dedupe_key=key,
-        repo=repo,
-        component=component,
-        details_url=details_url,
-        annotations=annotations or [],
-        details=details or {},
+        summary=str(public_text_safe_value(summary or f"{event}: {normalized}")),
+        dedupe_key=str(public_text_safe_value(key)),
+        repo=str(public_text_safe_value(repo)),
+        component=str(public_text_safe_value(component)),
+        details_url=str(public_text_safe_value(details_url)),
+        annotations=(safe_annotations if isinstance(safe_annotations, list) else []),
+        details=safe_details if isinstance(safe_details, dict) else {},
     )
 
 
