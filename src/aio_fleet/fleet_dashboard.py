@@ -19,7 +19,12 @@ from aio_fleet.fleet_queue import enrich_command_center_state
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
 from aio_fleet.public_text import assert_public_text
-from aio_fleet.registry import compute_registry_tags, verify_registry_tags
+from aio_fleet.registry import (
+    compute_registry_tags,
+    registry_failures_are_sha_only,
+    registry_sha_tag_required,
+    verify_registry_tags,
+)
 from aio_fleet.release_plan import release_plan_for_manifest
 from aio_fleet.report import FleetReport, public_fleet_report_state, stable_report_json
 from aio_fleet.safety import assess_upstream_pr
@@ -195,7 +200,22 @@ def dashboard_summary(
 ) -> dict[str, Any]:
     repo_names = {str(row.get("repo", "")) for row in active_rows if row.get("repo")}
     update_rows = [row for row in active_rows if row.get("update")]
-    registry_failures = sum(len(row.get("failures", [])) for row in registry_rows)
+    registry_failures = sum(
+        len(row.get("failures", []))
+        for row in registry_rows
+        if not registry_failures_are_sha_only(
+            [str(failure) for failure in row.get("failures", [])]
+        )
+    )
+    sha_tag_missing = len(
+        [
+            row
+            for row in registry_rows
+            if registry_failures_are_sha_only(
+                [str(failure) for failure in row.get("failures", [])]
+            )
+        ]
+    )
     release_due = len(
         [
             row
@@ -250,6 +270,7 @@ def dashboard_summary(
         "stale_prs": stale_prs,
         "registry_verified": len(registry_rows),
         "registry_failures": registry_failures,
+        "sha_tag_missing": sha_tag_missing,
         "release_due": release_due,
         "publish_missing": publish_missing,
         "cleanup_findings": cleanup_findings_total,
@@ -312,9 +333,9 @@ def render_dashboard(state: dict[str, Any]) -> str:
                 f"Local: `{summary.get('local_posture', 'unknown')}`"
             ),
             "",
-            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
-            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | SHA Tag Gaps | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {sha_tag_missing} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
                 **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
             ),
             "",
@@ -447,9 +468,9 @@ def _compact_dashboard_lines(state: dict[str, Any]) -> list[str]:
                 f"Local: `{summary.get('local_posture', 'unknown')}`"
             ),
             "",
-            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
-            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | SHA Tag Gaps | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {sha_tag_missing} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
                 **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
             ),
             "",
@@ -485,9 +506,9 @@ def _emergency_dashboard_lines(state: dict[str, Any]) -> list[str]:
             f"Local: `{summary.get('local_posture', 'unknown')}`"
         ),
         "",
-        "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+        "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | SHA Tag Gaps | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {sha_tag_missing} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
             **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
         ),
         "",
@@ -1458,7 +1479,14 @@ def _repo_registry_states(repo: RepoConfig) -> dict[str, dict[str, Any]]:
     components = _publish_components(repo)
     for component in components:
         try:
-            tags = compute_registry_tags(repo, sha=sha, component=component)
+            tags = compute_registry_tags(
+                repo,
+                sha=sha,
+                component=component,
+                include_sha_tag=registry_sha_tag_required(
+                    repo, sha=sha, component=component
+                ),
+            )
             failures = verify_registry_tags(tags.all_tags, dockerhub_attempts=1)
             states[component] = {
                 "repo": repo.name,
@@ -1467,7 +1495,7 @@ def _repo_registry_states(repo: RepoConfig) -> dict[str, dict[str, Any]]:
                 "dockerhub": tags.dockerhub,
                 "ghcr": tags.ghcr,
                 "failures": failures,
-                "state": "failed" if failures else "ok",
+                "state": _registry_row_state(failures),
                 "verified_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             }
         except Exception as exc:
@@ -1489,10 +1517,19 @@ def _registry_label(state: dict[str, Any] | None) -> str:
         return "unknown"
     failures = state.get("failures", [])
     if isinstance(failures, list) and failures:
-        return f"failed:{len(failures)}"
+        prefix = "sha-missing" if registry_failures_are_sha_only(failures) else "failed"
+        return f"{prefix}:{len(failures)}"
     dockerhub = len(state.get("dockerhub", []))
     ghcr = len(state.get("ghcr", []))
     return f"ok:{dockerhub}+{ghcr} tags"
+
+
+def _registry_row_state(failures: list[str]) -> str:
+    if not failures:
+        return "ok"
+    if registry_failures_are_sha_only(failures):
+        return "sha-tag-missing"
+    return "failed"
 
 
 def _publish_components(repo: RepoConfig) -> list[str]:
@@ -2655,6 +2692,7 @@ def _summary_keys() -> list[str]:
         "triage_updates",
         "blocked_updates",
         "registry_failures",
+        "sha_tag_missing",
         "release_due",
         "publish_missing",
         "cleanup_findings",

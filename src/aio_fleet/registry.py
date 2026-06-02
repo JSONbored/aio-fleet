@@ -29,6 +29,7 @@ from aio_fleet.release import (
 REGISTRY_IMAGETOOLS_TIMEOUT_SECONDS = int(
     os.environ.get("AIO_FLEET_REGISTRY_INSPECT_TIMEOUT", "20")
 )
+SHA_TAG_RE = re.compile(r":sha-[0-9a-f]{40}(?::|\b)")
 _REGISTRY_TAG_SUCCESS_CACHE: set[tuple[str, int, tuple[tuple[str, str], ...]]] = set()
 
 
@@ -124,6 +125,12 @@ def registry_sha_tag_required(
     if not changed_paths:
         return False
     return True
+
+
+def registry_failures_are_sha_only(failures: list[str]) -> bool:
+    return bool(failures) and all(
+        SHA_TAG_RE.search(str(failure)) for failure in failures
+    )
 
 
 def component_registry_release_tag(repo: RepoConfig, component: str = "aio") -> str:
@@ -776,10 +783,13 @@ def _cleanup_followup_allowed(
         return False
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
-    if not patterns or not all(_matches_release_pattern(path, patterns) for path in paths):
+    if not patterns or not all(
+        _matches_release_pattern(path, patterns) for path in paths
+    ):
         return False
-    return all(_cleanup_status_line_allowed(line, patterns) for line in name_status_lines)
-
+    return all(
+        _cleanup_status_line_allowed(line, patterns) for line in name_status_lines
+    )
 
 
 def _cleanup_status_line_allowed(line: str, patterns: set[str]) -> bool:
@@ -791,6 +801,7 @@ def _cleanup_status_line_allowed(line: str, patterns: set[str]) -> bool:
         return False
     path = parts[1].strip()
     return bool(path) and _matches_release_pattern(path, patterns)
+
 
 def _non_publish_patterns(repo: RepoConfig) -> set[str]:
     patterns = set(repo.list_value("non_release_paths"))

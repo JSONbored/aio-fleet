@@ -3083,6 +3083,13 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
             "publish_missing": len(
                 [plan for plan in plans if plan.get("state") == "publish-missing"]
             ),
+            "sha_tag_missing": len(
+                [
+                    plan
+                    for plan in plans
+                    if plan.get("registry_state") == "sha-tag-missing"
+                ]
+            ),
         },
     }
     if args.format == "json":
