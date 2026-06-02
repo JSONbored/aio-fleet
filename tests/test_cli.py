@@ -3127,6 +3127,69 @@ def test_prerelease_publish_skips_matching_github_prerelease(
     )  # nosec B101
 
 
+def test_prerelease_publish_falls_back_without_is_latest_field(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest, repo_path, expected_sha = _write_alpha_prerelease_repo(tmp_path)
+    report = tmp_path / "control-report.json"
+    _write_control_report(report, sha=expected_sha)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token")
+    real_run = cli._run
+    view_commands: list[list[str]] = []
+
+    def fake_run(command: list[str], cwd: Path | None = None, env=None):
+        if command[:2] in (["git", "rev-parse"], ["git", "status"]):
+            return real_run(command, cwd=cwd, env=env)
+        if command[:3] == ["gh", "release", "view"]:
+            view_commands.append(command)
+            if len(view_commands) == 1:
+                assert command[-1] == (  # nosec B101
+                    "targetCommitish,name,body,isPrerelease,isLatest"
+                )
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr='Unknown JSON field: "isLatest"',
+                )
+            assert command[-1] == "targetCommitish,name,body,isPrerelease"  # nosec B101
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "targetCommitish": expected_sha,
+                        "name": "0.7.1-alpha.7-aio.1",
+                        "body": "- alpha release notes",
+                        "isPrerelease": True,
+                    }
+                ),
+                stderr="",
+            )
+        if command[:3] in (["gh", "release", "create"], ["gh", "release", "edit"]):
+            raise AssertionError(command)
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish_github_prereleases(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            component=["sure-alpha"],
+            repo_path=str(repo_path),
+            dry_run=False,
+            control_report_json=str(report),
+            expected_sha=expected_sha,
+        )
+    )
+
+    assert result == 0  # nosec B101
+    assert len(view_commands) == 2  # nosec B101
+    assert (
+        "sure-aio:sure-alpha: prerelease=already-present "
+        "sure-alpha/0.7.1-alpha.7-aio.1" in capsys.readouterr().out
+    )  # nosec B101
+
+
 def test_prerelease_publish_targets_registry_only_sync_commit(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

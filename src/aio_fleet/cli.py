@@ -3895,20 +3895,7 @@ def _publish_github_prerelease(
     )
     head_target = _git_head(repo.path)
     env = _github_cli_env()
-    view = _run(
-        [
-            "gh",
-            "release",
-            "view",
-            tag,
-            "--repo",
-            repo.github_repo,
-            "--json",
-            "targetCommitish,name,body,isPrerelease,isLatest",
-        ],
-        cwd=repo.path,
-        env=env,
-    )
+    view = _github_prerelease_view(repo, tag, env=env)
     action = "updated" if view.returncode == 0 else "created"
     target = head_target if action == "created" else release_target
     allowed_existing_targets = {target}
@@ -3981,20 +3968,7 @@ def _publish_github_prerelease(
         and action == "created"
         and _github_release_already_exists(result)
     ):
-        view = _run(
-            [
-                "gh",
-                "release",
-                "view",
-                tag,
-                "--repo",
-                repo.github_repo,
-                "--json",
-                "targetCommitish,name,body,isPrerelease,isLatest",
-            ],
-            cwd=repo.path,
-            env=env,
-        )
+        view = _github_prerelease_view(repo, tag, env=env)
         if view.returncode == 0:
             existing = _github_release_view_data(view.stdout)
             existing_target = str(existing.get("targetCommitish", "") or "").strip()
@@ -4057,6 +4031,44 @@ def _publish_github_prerelease(
         "url": _github_release_url(repo, tag),
         "release_package_tag": release_package_tag,
     }
+
+
+def _github_prerelease_view(
+    repo: RepoConfig, tag: str, *, env: dict[str, str] | None
+) -> subprocess.CompletedProcess[str]:
+    result = _run(
+        [
+            "gh",
+            "release",
+            "view",
+            tag,
+            "--repo",
+            repo.github_repo,
+            "--json",
+            "targetCommitish,name,body,isPrerelease,isLatest",
+        ],
+        cwd=repo.path,
+        env=env,
+    )
+    if (
+        result.returncode == 0
+        or "unknown json field" not in (result.stderr or "").lower()
+    ):
+        return result
+    return _run(
+        [
+            "gh",
+            "release",
+            "view",
+            tag,
+            "--repo",
+            repo.github_repo,
+            "--json",
+            "targetCommitish,name,body,isPrerelease",
+        ],
+        cwd=repo.path,
+        env=env,
+    )
 
 
 def _github_release_view_data(output: str) -> dict[str, object]:
