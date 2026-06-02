@@ -251,6 +251,14 @@ def extract_release_notes(version: str, changelog: Path) -> str:
     return notes
 
 
+def release_section_exists(version: str, changelog: Path) -> bool:
+    try:
+        extract_release_notes(version, changelog)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def build_changes_body(version: str, notes: str, changelog: Path) -> str:
     lines = [release_heading(version, changelog), generated_note(changelog)]
     for line in notes.splitlines():
