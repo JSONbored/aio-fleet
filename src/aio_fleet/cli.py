@@ -49,6 +49,7 @@ from aio_fleet.changelog import (
     build_release_plan,
     component_config,
     normalize_markdown_changelog,
+    release_section_exists,
     update_registry_revision_arg,
     update_template_changes,
     write_temp_git_cliff_config,
@@ -104,6 +105,7 @@ from aio_fleet.release import (
     git,
     latest_changelog_version,
     latest_component_changelog_version,
+    latest_component_release_tag,
     read_upstream_version,
 )
 from aio_fleet.release_plan import (
@@ -3346,23 +3348,28 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
         release_suffix=plan.release_suffix,
         release_tag_prefix=plan.release_tag_prefix,
     )
-    commands = [
-        [
-            "git",
-            "cliff",
-            "--config",
-            str(cliff_config),
-            "--tag",
-            plan.version,
-            "--unreleased",
-            "--prepend",
-            str(plan.changelog_path),
-        ]
-    ]
+    commands = []
+    if not release_section_exists(plan.version, plan.changelog_path):
+        commands.append(
+            [
+                "git",
+                "cliff",
+                "--config",
+                str(cliff_config),
+                "--tag",
+                plan.version,
+                "--unreleased",
+                "--prepend",
+                str(plan.changelog_path),
+            ]
+        )
     if args.dry_run:
         print(f"{repo.name}: would prepare release {plan.version}")
-        for command in commands:
-            print(" ".join(shlex.quote(part) for part in command))
+        if commands:
+            for command in commands:
+                print(" ".join(shlex.quote(part) for part in command))
+        else:
+            print(f"would reuse existing release section in {plan.changelog_path}")
         if plan.registry_revision_path is not None:
             print(
                 "would update "
@@ -3583,6 +3590,7 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
             print("{repo}:{component}: prerelease={action} {tag}".format(**report))
         return 0
     latest_version = _component_release_version(repo, component=args.component)
+    release_tag = _github_release_tag(repo, latest_version, component=args.component)
     release_target = find_release_publish_target_commit(repo.path, latest_version)
     notes = _run(
         [
@@ -3605,13 +3613,13 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         "gh",
         "release",
         "create",
-        latest_version,
+        release_tag,
         "--repo",
         repo.github_repo,
         "--target",
         release_target,
         "--title",
-        latest_version,
+        release_tag,
         "--notes",
         notes.stdout.strip(),
     ]
@@ -3628,12 +3636,25 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
             "repo": repo.name,
             "component": args.component,
             "status": "success" if result.returncode == 0 else "failure",
-            "tag": latest_version,
+            "tag": release_tag,
             "target": release_target,
-            "url": _github_release_url(repo, latest_version),
+            "url": _github_release_url(repo, release_tag),
         }
         Path(args.report_json).write_text(json.dumps(report, indent=2, sort_keys=True))
     return result.returncode
+
+
+def _github_release_tag(
+    repo: RepoConfig, version: str, *, component: str = "aio"
+) -> str:
+    if version.startswith("v") or repo.publish_profile == "template":
+        return version
+    config = component_config(repo, component)
+    suffix = str(config.get("release_suffix", "aio"))
+    latest_tag = latest_component_release_tag(repo.path, suffix)
+    if latest_tag and latest_tag.startswith("v"):
+        return f"v{version}"
+    return version
 
 
 def _component_release_version(repo: RepoConfig, *, component: str = "aio") -> str:

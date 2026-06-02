@@ -2336,6 +2336,86 @@ repos:
     )
 
 
+def test_release_prepare_reuses_existing_component_changelog_section(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "sure-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  sure-aio:
+    path: {repo_path}
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+    github_repo: JSONbored/sure-aio
+    publish_profile: upstream-aio-track
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        upstream_config: upstream.toml
+        upstream_version_key: UPSTREAM_VERSION
+        release_policy: registry_only
+        release_history: github_prerelease
+        release_changelog: CHANGELOG.alpha.md
+        release_tag_prefix: sure-alpha/
+        release_suffix: aio
+        registry_revision_arg: AIO_REVISION
+        xml_paths:
+          - sure-aio-alpha.xml
+""")
+    (repo_path / "Dockerfile.alpha").write_text(
+        "ARG UPSTREAM_VERSION=0.7.2-alpha.1\nARG AIO_REVISION=1\n"
+    )
+    (repo_path / "upstream.toml").write_text(
+        '[upstream]\nversion_key = "UPSTREAM_VERSION"\n'
+    )
+    (repo_path / "CHANGELOG.alpha.md").write_text(
+        "# Alpha Changelog\n\n"
+        "Alpha releases are testing builds for `sure-aio-alpha`.\n\n"
+        "## 0.7.2-alpha.1-aio.1 - 2026-06-02\n\n"
+        "### Build\n\n"
+        "- Track upstream Sure Alpha 0.7.2-alpha.1.\n"
+    )
+    (repo_path / "sure-aio-alpha.xml").write_text(
+        "<Container><Changes>old</Changes></Container>\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(sync): bump sure alpha")
+    _git(repo_path, "tag", "sure-alpha/0.7.1-alpha.11-aio.2")
+
+    def fail_run(command: list[str], **_kwargs):
+        raise AssertionError(f"git-cliff should not run: {command}")
+
+    monkeypatch.setattr(cli, "_run", fail_run)
+
+    result = cli.cmd_release_prepare(
+        Namespace(
+            manifest=str(manifest),
+            repo="sure-aio",
+            repo_path=None,
+            component="sure-alpha",
+            dry_run=False,
+        )
+    )
+
+    changelog = (repo_path / "CHANGELOG.alpha.md").read_text()
+    template = (repo_path / "sure-aio-alpha.xml").read_text()
+    assert result == 0  # nosec B101
+    assert changelog.startswith("# Alpha Changelog\n")  # nosec B101
+    assert "# Changelog" not in changelog  # nosec B101
+    assert "Track upstream Sure Alpha 0.7.2-alpha.1" in template  # nosec B101
+
+
 def test_release_publish_uses_changelog_version_for_changelog_profile(
     tmp_path: Path, capsys
 ) -> None:
@@ -2385,6 +2465,67 @@ repos:
     assert "gh release create v2.15.3-aio.1" in output  # nosec B101
     assert "--title v2.15.3-aio.1" in output  # nosec B101
     assert "--notes '- Package Penpot 2.15.3 as an AIO image.'" in output  # nosec B101
+
+
+def test_release_publish_preserves_existing_v_prefix_for_changelog_profile(
+    tmp_path: Path, capsys
+) -> None:
+    repo_path = tmp_path / "penpot-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  penpot-aio:
+    path: {repo_path}
+    public: true
+    app_slug: penpot-aio
+    image_name: jsonbored/penpot-aio
+    docker_cache_scope: penpot-aio-image
+    pytest_image_tag: penpot-aio:pytest
+    github_repo: JSONbored/penpot-aio
+    publish_profile: changelog-version
+""")
+    (repo_path / "Dockerfile").write_text("ARG PENPOT_VERSION=2.15.4\n")
+    (repo_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## v2.15.3-aio.4 - 2026-05-31\n\n"
+        "- Package Penpot 2.15.3 as an AIO image.\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.15.3-aio.4")
+    _git(repo_path, "tag", "v2.15.3-aio.4")
+    (repo_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## 2.15.4-aio.1 - 2026-06-02\n\n"
+        "- Update Penpot to 2.15.4.\n\n"
+        "## v2.15.3-aio.4 - 2026-05-31\n\n"
+        "- Package Penpot 2.15.3 as an AIO image.\n"
+    )
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): 2.15.4-aio.1")
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="penpot-aio",
+            component="aio",
+            repo_path=None,
+            dry_run=True,
+            report_json=None,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = capsys.readouterr().out
+    assert "gh release create v2.15.4-aio.1" in output  # nosec B101
+    assert "--title v2.15.4-aio.1" in output  # nosec B101
+    assert "--notes '- Update Penpot to 2.15.4.'" in output  # nosec B101
 
 
 def test_release_publish_dry_run_creates_alpha_prerelease_command(
