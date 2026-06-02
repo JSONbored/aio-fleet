@@ -36,6 +36,7 @@ from aio_fleet.catalog_workflow import (
     catalog_workflow_findings,
     current_aio_fleet_ref,
     render_validate_catalog_workflow,
+    resolve_aio_fleet_ref,
     write_validate_catalog_workflow,
 )
 from aio_fleet.change_scope import (
@@ -578,7 +579,7 @@ def cmd_standards_reconcile(args: argparse.Namespace) -> int:
     destinations = _public_destination_paths(manifest, selected)
     aio_fleet_ref = ""
     if destinations:
-        aio_fleet_ref = current_aio_fleet_ref(Path(__file__).resolve().parents[2])
+        aio_fleet_ref = resolve_aio_fleet_ref(Path.cwd())
         for name, path in destinations.items():
             actions.extend(
                 _standards_catalog_destination_actions(name, path, aio_fleet_ref)

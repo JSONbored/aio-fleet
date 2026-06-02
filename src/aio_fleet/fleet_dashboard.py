@@ -52,6 +52,9 @@ CHECKED_COMMAND_RE = re.compile(
     re.MULTILINE,
 )
 FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+GITHUB_ISSUE_BODY_SOFT_LIMIT = 60000
+COMPACT_STATE_STRING_LIMIT = 500
+COMPACT_STATE_LIST_LIMIT = 25
 
 
 @dataclass(frozen=True)
@@ -335,24 +338,192 @@ def render_dashboard(state: dict[str, Any]) -> str:
     _render_fleet_state_section(lines, rows)
     _render_controls(lines)
     _render_next_commands(lines, rows, destination_rows, rehab_rows)
-    lines.extend(
+    assert_public_text(stable_report_json(state), context="Fleet Command Center state")
+    body = _dashboard_body_within_limit(lines, state)
+    assert_public_text(body, context="Fleet Command Center body")
+    return body
+
+
+def _dashboard_body_within_limit(
+    lines: list[str],
+    state: dict[str, Any],
+    *,
+    limit: int = GITHUB_ISSUE_BODY_SOFT_LIMIT,
+) -> str:
+    body = _dashboard_body(lines, state)
+    if len(body) <= limit:
+        return body
+
+    compact_state = _compact_dashboard_issue_state(state)
+    compact_hidden_body = _dashboard_body(
         [
+            *lines,
+            "",
+            (
+                "> Detailed fleet state was compacted because the full dashboard "
+                "exceeded GitHub's issue body limit. Use the workflow artifact for "
+                "the complete JSON report."
+            ),
+        ],
+        compact_state,
+    )
+    if len(compact_hidden_body) <= limit:
+        return compact_hidden_body
+
+    compact_body = _dashboard_body(
+        _compact_dashboard_lines(state),
+        _minimal_dashboard_issue_state(state),
+    )
+    if len(compact_body) <= limit:
+        return compact_body
+    raise RuntimeError(
+        "Fleet Command Center body still exceeds GitHub issue body budget after "
+        "compaction"
+    )
+
+
+def _dashboard_body(lines: list[str], hidden_state: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            *lines,
             "",
             STATE_START_BASE64,
-            _encoded_dashboard_state(state),
+            _encoded_dashboard_state(hidden_state),
             STATE_END,
             "",
         ]
     )
-    body = "\n".join(lines)
-    assert_public_text(stable_report_json(state), context="Fleet Command Center state")
-    assert_public_text(body, context="Fleet Command Center body")
-    return body
+
+
+def _compact_dashboard_lines(state: dict[str, Any]) -> list[str]:
+    summary = dict(state.get("summary", {}))
+    warnings = list(state.get("warnings", []))
+    actions = list(state.get("actions", []))
+    failures = list(state.get("failures", []))
+    approvals = list(state.get("approvals", []))
+    catalog = dict(state.get("catalog", {}))
+    standards = dict(state.get("standards", {}))
+    candidates = dict(state.get("candidates", {}))
+    lines = [
+        "# Fleet Command Center",
+        "",
+        f"Last updated: `{state.get('generated_at', '')}`",
+        "",
+        (
+            "> Detailed fleet tables were compacted because the full dashboard "
+            "exceeded GitHub's issue body limit. Use the workflow artifact for the "
+            "complete JSON report."
+        ),
+        "",
+    ]
+    _render_command_center_section(
+        lines,
+        summary=summary,
+        actions=actions[:10],
+        approvals=approvals[:10],
+        failures=failures[:10],
+        catalog=catalog,
+        standards=standards,
+        candidates=candidates,
+    )
+    lines.extend(
+        [
+            "## Summary",
+            "",
+            (
+                f"Posture: `{summary.get('posture', 'unknown')}` | "
+                f"Remote: `{summary.get('remote_posture', 'unknown')}` | "
+                f"Local: `{summary.get('local_posture', 'unknown')}`"
+            ),
+            "",
+            "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+                **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
+            ),
+            "",
+        ]
+    )
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        lines.extend(f"- {_cell(warning)}" for warning in warnings[:10])
+        lines.append("")
+    _render_controls(lines)
+    return lines
 
 
 def _encoded_dashboard_state(state: dict[str, Any]) -> str:
     raw = json.dumps(state, indent=2, sort_keys=True).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
+
+
+def _compact_dashboard_issue_state(state: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in state.items():
+        if isinstance(value, list):
+            compact[key] = [
+                _compact_dashboard_value(item)
+                for item in value[:COMPACT_STATE_LIST_LIMIT]
+            ]
+        else:
+            compact[key] = _compact_dashboard_value(value)
+    return public_fleet_report_state(compact)
+
+
+def _minimal_dashboard_issue_state(state: dict[str, Any]) -> dict[str, Any]:
+    minimal = {
+        "schema_version": state.get("schema_version"),
+        "generated_at": state.get("generated_at", ""),
+        "issue_repo": state.get("issue_repo", ""),
+        "warnings": list(state.get("warnings", []))[:10],
+        "summary": dict(state.get("summary", {})),
+        "rows": [],
+        "actions": [
+            _compact_dashboard_value(item)
+            for item in list(state.get("actions", []))[:10]
+        ],
+        "failures": [
+            _compact_dashboard_value(item)
+            for item in list(state.get("failures", []))[:10]
+        ],
+        "approvals": [
+            _compact_dashboard_value(item)
+            for item in list(state.get("approvals", []))[:10]
+        ],
+        "catalog": _compact_dashboard_value(dict(state.get("catalog", {}))),
+        "standards": _compact_dashboard_value(dict(state.get("standards", {}))),
+        "candidates": _compact_dashboard_value(dict(state.get("candidates", {}))),
+        "activity": [],
+        "destination_repos": [],
+        "rehab_repos": [],
+        "registry": [],
+        "releases": [],
+        "cleanup": [],
+        "workflow": _compact_dashboard_value(dict(state.get("workflow", {}))),
+    }
+    return public_fleet_report_state(minimal)
+
+
+def _compact_dashboard_value(value: Any, *, depth: int = 0) -> Any:
+    if isinstance(value, str):
+        if len(value) <= COMPACT_STATE_STRING_LIMIT:
+            return value
+        return f"{value[: COMPACT_STATE_STRING_LIMIT - 3]}..."
+    if isinstance(value, list):
+        if depth >= 4:
+            return []
+        return [
+            _compact_dashboard_value(item, depth=depth + 1)
+            for item in value[:COMPACT_STATE_LIST_LIMIT]
+        ]
+    if isinstance(value, dict):
+        if depth >= 4:
+            return {}
+        return {
+            str(key): _compact_dashboard_value(item, depth=depth + 1)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _render_command_center_section(

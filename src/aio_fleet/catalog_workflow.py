@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404
+from collections.abc import Mapping
 from pathlib import Path
 
 VALIDATE_WORKFLOW = ".github/workflows/validate-catalog.yml"
@@ -25,6 +27,26 @@ def current_aio_fleet_ref(aio_fleet_root: Path) -> str:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "unable to resolve aio-fleet HEAD")
     return result.stdout.strip()
+
+
+def resolve_aio_fleet_ref(
+    aio_fleet_root: Path | None = None, *, env: Mapping[str, str] | None = None
+) -> str:
+    """Resolve the pinned aio-fleet ref for generated downstream workflows."""
+
+    env = os.environ if env is None else env
+    for key in ("AIO_FLEET_REF", "GITHUB_SHA"):
+        ref = _normalized_commit_sha(env.get(key, ""))
+        if ref:
+            return ref
+    return current_aio_fleet_ref(aio_fleet_root or Path.cwd())
+
+
+def _normalized_commit_sha(value: str) -> str:
+    value = value.strip()
+    if not re.fullmatch(r"^[0-9a-fA-F]{40}$", value):
+        return ""
+    return value.lower()
 
 
 def render_validate_catalog_workflow(aio_fleet_ref: str) -> str:

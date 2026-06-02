@@ -67,7 +67,6 @@ def test_central_check_steps_keep_push_integration_for_submodule_repos(
     assert "integration-tests" in names  # nosec B101
 
 
-
 def test_central_check_steps_use_trusted_python_for_app_tests(
     tmp_path: Path,
 ) -> None:
@@ -318,6 +317,29 @@ def test_run_steps_reports_timeout(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert failures == ["slow-step: timed out after 5s"]  # nosec B101
+
+
+def test_run_steps_decodes_timeout_output(monkeypatch, tmp_path: Path, capsys) -> None:
+    def fake_run(*args: object, **kwargs: object):
+        raise subprocess.TimeoutExpired(
+            cmd=["slow"],
+            timeout=5,
+            output=b"partial stdout\n",
+            stderr=b"partial stderr\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    failures = run_steps(
+        [Step("slow-step", ["slow"], tmp_path, timeout_seconds=5)],
+        dry_run=False,
+    )
+    captured = capsys.readouterr()
+
+    assert failures == ["slow-step: timed out after 5s"]  # nosec B101
+    assert captured.out == "partial stdout\n"  # nosec B101
+    assert captured.err == "partial stderr\n"  # nosec B101
+    assert "b'partial" not in captured.out + captured.err  # nosec B101
 
 
 def test_run_steps_includes_failure_detail(monkeypatch, tmp_path: Path) -> None:

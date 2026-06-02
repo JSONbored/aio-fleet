@@ -270,6 +270,40 @@ def test_registry_report_alert_detects_missing_tags() -> None:
     ]
 
 
+def test_report_alert_payload_redacts_local_paths() -> None:
+    payload = alerts.payload_from_report(
+        event="upstream-monitor",
+        status="auto",
+        report={
+            "repos": [
+                {
+                    "repo": "sure-aio",
+                    "results": [
+                        {
+                            "component": "aio",
+                            "state": "blocked",
+                            "current_version": "0.7.1",
+                            "latest_version": "0.7.2",
+                            "blocked_reason": (
+                                "pin drift in "
+                                "/home/runner/work/_temp/checkouts/sure-aio/Dockerfile"
+                            ),
+                            "next_action": (
+                                "inspect "
+                                "/home/runner/work/_temp/checkouts/sure-aio/Dockerfile"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    body = json.dumps(payload.as_dict(), sort_keys=True)
+    assert "/home/runner" not in body  # nosec B101
+    assert "<redacted: Linux home path>" in body  # nosec B101
+
+
 def test_publish_success_alert_includes_registry_and_prerelease_urls() -> None:
     payload = alerts.payload_from_report(
         event="publish",
