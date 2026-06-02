@@ -351,7 +351,7 @@ def _dashboard_body_within_limit(
     limit: int = GITHUB_ISSUE_BODY_SOFT_LIMIT,
 ) -> str:
     body = _dashboard_body(lines, state)
-    if len(body) <= limit:
+    if _body_within_limit(body, limit):
         return body
 
     compact_state = _compact_dashboard_issue_state(state)
@@ -367,19 +367,30 @@ def _dashboard_body_within_limit(
         ],
         compact_state,
     )
-    if len(compact_hidden_body) <= limit:
+    if _body_within_limit(compact_hidden_body, limit):
         return compact_hidden_body
 
     compact_body = _dashboard_body(
         _compact_dashboard_lines(state),
         _minimal_dashboard_issue_state(state),
     )
-    if len(compact_body) <= limit:
+    if _body_within_limit(compact_body, limit):
         return compact_body
+
+    emergency_body = _dashboard_body(
+        _emergency_dashboard_lines(state),
+        _emergency_dashboard_issue_state(state),
+    )
+    if _body_within_limit(emergency_body, limit):
+        return emergency_body
     raise RuntimeError(
         "Fleet Command Center body still exceeds GitHub issue body budget after "
         "compaction"
     )
+
+
+def _body_within_limit(body: str, limit: int) -> bool:
+    return len(body) <= limit and len(body.encode("utf-8")) <= limit
 
 
 def _dashboard_body(lines: list[str], hidden_state: dict[str, Any]) -> str:
@@ -452,6 +463,43 @@ def _compact_dashboard_lines(state: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _emergency_dashboard_lines(state: dict[str, Any]) -> list[str]:
+    summary = dict(state.get("summary", {}))
+    warnings = list(state.get("warnings", []))
+    lines = [
+        "# Fleet Command Center",
+        "",
+        f"Last updated: `{state.get('generated_at', '')}`",
+        "",
+        (
+            "> Dashboard detail was compacted because the generated fleet state "
+            "exceeded GitHub's issue body limit. Use the workflow artifact for "
+            "the complete JSON report."
+        ),
+        "",
+        "## Summary",
+        "",
+        (
+            f"Posture: `{summary.get('posture', 'unknown')}` | "
+            f"Remote: `{summary.get('remote_posture', 'unknown')}` | "
+            f"Local: `{summary.get('local_posture', 'unknown')}`"
+        ),
+        "",
+        "| Active | Destination | Rehab | Updates | Ready | Triage | Blocked | Registry Failures | Release Due | Publish Missing | Cleanup Findings | Open PRs | Open Issues | Needs Response | Alert Warnings |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| {active_repos} | {destination_repos} | {rehab_repos} | {upstream_updates} | {ready_updates} | {triage_updates} | {blocked_updates} | {registry_failures} | {release_due} | {publish_missing} | {cleanup_findings} | {open_prs} | {open_issues} | {needs_response_issues} | {alert_warnings} |".format(
+            **{key: _cell(summary.get(key, 0)) for key in _summary_keys()}
+        ),
+        "",
+    ]
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        lines.extend(f"- {_cell(warning)}" for warning in warnings[:5])
+        lines.append("")
+    _render_controls(lines)
+    return lines
+
+
 def _encoded_dashboard_state(state: dict[str, Any]) -> str:
     raw = json.dumps(state, indent=2, sort_keys=True).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
@@ -502,6 +550,34 @@ def _minimal_dashboard_issue_state(state: dict[str, Any]) -> dict[str, Any]:
         "workflow": _compact_dashboard_value(dict(state.get("workflow", {}))),
     }
     return public_fleet_report_state(minimal)
+
+
+def _emergency_dashboard_issue_state(state: dict[str, Any]) -> dict[str, Any]:
+    emergency = {
+        "schema_version": state.get("schema_version"),
+        "generated_at": state.get("generated_at", ""),
+        "issue_repo": state.get("issue_repo", ""),
+        "warnings": [
+            _compact_dashboard_value(warning)
+            for warning in list(state.get("warnings", []))[:5]
+        ],
+        "summary": dict(state.get("summary", {})),
+        "rows": [],
+        "actions": [],
+        "failures": [],
+        "approvals": [],
+        "catalog": {},
+        "standards": {},
+        "candidates": {},
+        "activity": [],
+        "destination_repos": [],
+        "rehab_repos": [],
+        "registry": [],
+        "releases": [],
+        "cleanup": [],
+        "workflow": {},
+    }
+    return public_fleet_report_state(emergency)
 
 
 def _compact_dashboard_value(value: Any, *, depth: int = 0) -> Any:

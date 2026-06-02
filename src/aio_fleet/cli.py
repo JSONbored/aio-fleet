@@ -3045,6 +3045,7 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
             manifest,
             include_registry=args.registry,
             redact_private=True,
+            registry_verify_attempts=args.registry_verify_attempts,
         )
     else:
         repo = _repo_for_identifier(manifest, args.repo)
@@ -3053,11 +3054,18 @@ def cmd_release_plan(args: argparse.Namespace) -> int:
         if args.component:
             plans = [
                 release_plan_for_repo(
-                    repo, include_registry=args.registry, component=args.component
+                    repo,
+                    include_registry=args.registry,
+                    component=args.component,
+                    registry_verify_attempts=args.registry_verify_attempts,
                 )
             ]
         else:
-            plans = release_plan_rows_for_repo(repo, include_registry=args.registry)
+            plans = release_plan_rows_for_repo(
+                repo,
+                include_registry=args.registry,
+                registry_verify_attempts=args.registry_verify_attempts,
+            )
     report = {
         "repos": plans,
         "summary": {
@@ -6122,6 +6130,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_plan.add_argument("--repo-path")
     release_plan.add_argument("--all", action="store_true")
     release_plan.add_argument("--registry", action="store_true")
+    release_plan.add_argument("--registry-verify-attempts", type=int, default=8)
     release_plan.add_argument("--format", choices=["text", "json"], default="text")
     release_plan.set_defaults(func=cmd_release_plan)
     release_reconcile = release_sub.add_parser("reconcile")
