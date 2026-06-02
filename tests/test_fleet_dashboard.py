@@ -1531,6 +1531,50 @@ def test_dashboard_body_compacts_before_github_issue_limit() -> None:
     assert "x" * 1000 not in hidden  # nosec B101
 
 
+def test_dashboard_body_emergency_compacts_oversized_hidden_state() -> None:
+    state = {
+        "schema_version": 4,
+        "generated_at": "2026-05-05T00:00:00+00:00",
+        "issue_repo": "JSONbored/aio-fleet",
+        "summary": {
+            "posture": "action required",
+            "remote_posture": "action required",
+            "local_posture": "clean",
+            "active_repos": 10,
+            "upstream_updates": 3,
+            "triage_updates": 1,
+            "registry_failures": 2,
+        },
+        "warnings": [],
+        "rows": [],
+        "actions": [],
+        "failures": [],
+        "approvals": [],
+        "catalog": {},
+        "standards": {},
+        "candidates": {f"candidate-{index}": "x" * 2000 for index in range(200)},
+        "activity": [],
+        "destination_repos": [],
+        "rehab_repos": [],
+        "registry": [],
+        "releases": [],
+        "cleanup": [],
+        "workflow": {f"run-{index}": "y" * 2000 for index in range(200)},
+    }
+
+    body = fleet_dashboard.render_dashboard(state)
+    hidden = json.loads(_hidden_dashboard_state(body))
+
+    assert len(body) <= fleet_dashboard.GITHUB_ISSUE_BODY_SOFT_LIMIT  # nosec B101
+    assert "Dashboard detail was compacted" in body  # nosec B101
+    assert "## Controls" in body  # nosec B101
+    assert hidden["summary"]["active_repos"] == 10  # nosec B101
+    assert hidden["workflow"] == {}  # nosec B101
+    assert hidden["candidates"] == {}  # nosec B101
+    assert "x" * 1000 not in body  # nosec B101
+    assert "y" * 1000 not in body  # nosec B101
+
+
 def test_repo_activity_classifies_open_prs_and_issues(monkeypatch) -> None:
     def days_ago(days: int) -> str:
         value = datetime.now(UTC).replace(microsecond=0) - timedelta(days=days)

@@ -399,7 +399,7 @@ jobs:
               | tee release-plan-report.json
             exit 0
           fi
-          args=(release plan --all --registry --format json)
+          args=(release plan --all --registry --registry-verify-attempts 1 --format json)
           args=(--manifest fleet-dashboard.manifest.yml "${args[@]}")
           set +e
           python -m aio_fleet "${args[@]}" | tee release-plan-report.json

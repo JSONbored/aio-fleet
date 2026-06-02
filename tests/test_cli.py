@@ -1836,6 +1836,7 @@ def test_release_plan_outputs_all_repo_states(
             repo=None,
             repo_path=None,
             registry=False,
+            registry_verify_attempts=1,
             format="json",
         )
     )
@@ -1845,6 +1846,7 @@ def test_release_plan_outputs_all_repo_states(
     assert payload["summary"]["release_due"] == 1  # nosec B101
     assert payload["repos"][0]["state"] == "release-due"  # nosec B101
     assert captured["redact_private"] is True  # nosec B101
+    assert captured["registry_verify_attempts"] == 1  # nosec B101
 
 
 def test_release_reconcile_routes_publish_through_transaction(
