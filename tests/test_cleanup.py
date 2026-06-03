@@ -11,7 +11,9 @@ from aio_fleet.manifest import load_manifest
 def test_cleanup_findings_detect_retired_shared_files(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     (repo_path / ".github" / "workflows").mkdir(parents=True)
+    (repo_path / ".github" / "dependabot.yml").write_text("version: 2\n")
     (repo_path / ".trunk").mkdir()
+    (repo_path / "renovate.json").write_text("{}\n")
     (repo_path / "requirements-dev.txt").write_text("pytest\n")
     (repo_path / "scripts").mkdir()
     (repo_path / "scripts" / "release.py").write_text("")
@@ -35,7 +37,9 @@ repos:
         finding.path.relative_to(repo_path).as_posix() for finding in findings
     ] == [  # nosec B101
         ".github/workflows",
+        ".github/dependabot.yml",
         ".trunk",
+        "renovate.json",
         "requirements-dev.txt",
         "scripts/release.py",
     ]
