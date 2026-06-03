@@ -9,9 +9,14 @@ from aio_fleet.manifest import RepoConfig
 
 RETIRED_SHARED_PATHS: dict[str, str] = {
     ".github/workflows": "app workflows are replaced by aio-fleet check orchestration",
+    ".github/dependabot.yml": "dependency updates run from aio-fleet Renovate",
+    ".github/dependabot.yaml": "dependency updates run from aio-fleet Renovate",
+    ".github/renovate.json": "shared Renovate policy runs from aio-fleet",
+    ".github/renovate.json5": "shared Renovate policy runs from aio-fleet",
     ".trunk": "Trunk config runs from aio-fleet scratch checkouts",
     "cliff.toml": "git-cliff config is generated centrally",
-    "renovate.json": "shared dependency policy moves to aio-fleet",
+    "renovate.json": "shared Renovate policy runs from aio-fleet",
+    "renovate.json5": "shared Renovate policy runs from aio-fleet",
     "requirements-dev.txt": "shared test dependencies install from aio-fleet",
     "upstream.toml": "upstream provider state moves to .aio-fleet.yml",
     "components.toml": "component metadata moves to .aio-fleet.yml",
