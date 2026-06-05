@@ -36,7 +36,7 @@ It does not replace the existing source-of-truth repos:
   `<repo>:<sha>:<policy-hash>` so reruns update the matching policy result
   instead of creating duplicate required checks.
 - The end-state branch protection target is the required GitHub App check named
-  `aio-fleet / required` plus Superagent `Security scan` and `Contributor trust`.
+  `aio-fleet / required` plus `Superagent Security Scan` and `Contributor trust`.
   Detail checks can remain informational.
 - `registry verify/publish`, the scheduled `Registry Audit` workflow,
   `release status/prepare/publish`, central app test dependency installation,

@@ -78,7 +78,7 @@ calls are pinned.
 
 ## Required Check Source
 
-App repos should require `aio-fleet / required`, `Security scan`, and
+App repos should require `aio-fleet / required`, `Superagent Security Scan`, and
 `Contributor trust`. The policy records the GitHub App ID that must produce each
 check. `validate-github` checks `required_status_checks.checks[].app_id`, not
 only the context name, so a same-name workflow cannot satisfy branch protection

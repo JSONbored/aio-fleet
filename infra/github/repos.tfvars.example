@@ -16,7 +16,7 @@ repositories = {
       "infra",
       "Analyze (actions)",
       "Analyze (python)",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_ids = {
@@ -24,7 +24,7 @@ repositories = {
       "infra"             = 15368
       "Analyze (actions)" = 15368
       "Analyze (python)"  = 15368
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -51,14 +51,14 @@ repositories = {
       "validate-catalog",
       "CodeQL",
       "Analyze (actions)",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_ids = {
       "validate-catalog"  = 15368
       "CodeQL"            = 57789
       "Analyze (actions)" = 15368
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
     required_secrets = [
@@ -83,12 +83,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -119,12 +119,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -155,12 +155,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -191,12 +191,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -227,12 +227,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -263,12 +263,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -287,12 +287,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -323,12 +323,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -359,12 +359,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }
@@ -390,12 +390,12 @@ repositories = {
     ]
     required_checks = [
       "aio-fleet / required",
-      "Security scan",
+      "Superagent Security Scan",
       "Contributor trust",
     ]
     required_check_app_id = 3565017
     required_check_app_ids = {
-      "Security scan"     = 3287076
+      "Superagent Security Scan"     = 3287076
       "Contributor trust" = 3287076
     }
   }

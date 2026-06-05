@@ -7,7 +7,7 @@ Use these as the control-plane map for required checks.
 App repos should require:
 
 - `aio-fleet / required`
-- `Security scan`
+- `Superagent Security Scan`
 - `Contributor trust`
 
 `aio-fleet` may still post detail checks for validation, tests, registry, and
@@ -23,7 +23,7 @@ branch protection API should report `aio-fleet / required` with app ID
 `3565017`; `validate-github` treats any other app ID as drift.
 
 Superagent is a blocking fleet gate. The live PR check suite reports both
-`Security scan` and `Contributor trust` from the `Superagent Security` app, app
+`Superagent Security Scan` and `Contributor trust` from the `Superagent Security` app, app
 ID `3287076`; `validate-github` should pin those contexts to that producer.
 
 ## aio-fleet
@@ -34,7 +34,7 @@ Require:
 - `infra`
 - `Analyze (actions)`
 - `Analyze (python)`
-- `Security scan`
+- `Superagent Security Scan`
 - `Contributor trust`
 
 The GitHub Actions contexts should be pinned to app ID `15368`; the standalone
@@ -48,7 +48,7 @@ Require:
 - `validate-catalog`
 - `CodeQL`
 - `Analyze (actions)`
-- `Security scan`
+- `Superagent Security Scan`
 - `Contributor trust`
 
 The GitHub Actions contexts should be pinned to app ID `15368`. The Superagent
