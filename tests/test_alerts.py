@@ -118,6 +118,28 @@ def test_discord_webhook_uses_discord_payload(monkeypatch) -> None:
     )
 
 
+def test_discord_description_includes_failure_excerpt_annotation() -> None:
+    payload = alerts.alert_payload(
+        event="control-plane",
+        status="failure",
+        summary="dashboard failed",
+        details_url="https://github.com/JSONbored/aio-fleet/actions/runs/1",
+        annotations=[
+            "failure excerpt fleet-dashboard.err: OSError: [Errno 7] "
+            "Argument list too long: 'gh'"
+        ],
+    )
+
+    body = alerts._discord_body(payload)
+
+    description = body["embeds"][0]["description"]
+    assert (
+        "https://github.com/JSONbored/aio-fleet/actions/runs/1" in description
+    )  # nosec B101
+    assert "failure excerpt fleet-dashboard.err" in description  # nosec B101
+    assert "Argument list too long" in description  # nosec B101
+
+
 def test_success_webhook_is_skipped_unless_recovery_or_forced() -> None:
     payload = alerts.alert_payload(
         event="control-plane",

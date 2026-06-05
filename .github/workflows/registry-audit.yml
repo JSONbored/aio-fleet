@@ -82,13 +82,23 @@ jobs:
           python -m aio_fleet workflow registry-audit \
             --checkout-root registry-checkouts \
             --output registry-report.json \
-            --github-output "${GITHUB_OUTPUT}"
+            --github-output "${GITHUB_OUTPUT}" \
+            2> >(tee registry-audit.err >&2)
 
       - name: Publish registry summary
+        if: ${{ always() }}
         env:
           VERIFY_STATUS: ${{ steps.verify.outputs.status }}
         run: |
           set -euo pipefail
+          if [[ ! -f registry-report.json ]]; then
+            {
+              echo "## Registry Audit"
+              echo
+              echo "Registry audit did not produce a report."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           python -m aio_fleet workflow registry-summary \
             --input registry-report.json \
             --status "${VERIFY_STATUS}" \
@@ -106,6 +116,7 @@ jobs:
             python -m aio_fleet alert send \
               --event registry-audit \
               --report-json registry-report.json \
+              --failure-file registry-audit.err \
               --details-url "${DETAILS_URL}" \
               --format json
           else
@@ -113,6 +124,7 @@ jobs:
               --event registry-audit \
               --status failure \
               --summary "Registry audit did not produce a report" \
+              --failure-file registry-audit.err \
               --details-url "${DETAILS_URL}" \
               --format json
           fi

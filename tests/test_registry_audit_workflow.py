@@ -70,15 +70,21 @@ def test_registry_audit_manual_runs_require_default_branch_before_checkout() -> 
 def test_registry_audit_sanitizes_verify_subprocess_environment() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     verify = _step(workflow["jobs"]["registry-audit"], "Verify registry tags")
+    summary = _step(workflow["jobs"]["registry-audit"], "Publish registry summary")
+    alert = _step(workflow["jobs"]["registry-audit"], "Alert registry audit")
 
     assert "APP_TOKEN" not in verify.get("env", {})  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" in verify.get("env", {})  # nosec B101
     assert 'os.environ["APP_TOKEN"]' not in verify["run"]  # nosec B101
     assert "workflow registry-audit" in verify["run"]  # nosec B101
+    assert "registry-audit.err" in verify["run"]  # nosec B101
     assert "GIT_CONFIG_KEY_0" not in verify["run"]  # nosec B101
     assert "GIT_CONFIG_VALUE_0" not in verify["run"]  # nosec B101
     assert "extraheader=AUTHORIZATION" not in verify["run"]  # nosec B101
     assert "${{ steps.app-token.outputs.token }}" not in verify["run"]  # nosec B101
+    assert summary["if"] == "${{ always() }}"  # nosec B101
+    assert "did not produce a report" in summary["run"]  # nosec B101
+    assert "--failure-file registry-audit.err" in alert["run"]  # nosec B101
 
 
 def _step(job: dict[str, object], name: str) -> dict[str, object]:

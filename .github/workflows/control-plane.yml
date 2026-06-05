@@ -388,7 +388,9 @@ jobs:
           else
             args+=(--dry-run)
           fi
-          python -m aio_fleet "${args[@]}" | tee fleet-dashboard-report.json
+          python -m aio_fleet "${args[@]}" \
+            > >(tee fleet-dashboard-report.json) \
+            2> >(tee fleet-dashboard.err >&2)
 
       - name: Generate release plan report
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'upstream-monitor' || inputs.mode == 'fleet-dashboard')) || steps.dashboard-controls.outputs.rescan == 'true' || steps.dashboard-controls.outputs.upstream_monitor == 'true') }}
@@ -829,6 +831,7 @@ jobs:
       - name: Fail central control check bootstrap
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'control-check' && !inputs.dry_run && steps.start-central-control-check.outcome == 'failure' }}
         run: |
+          set -euo pipefail
           echo "central control check bootstrap failed before app checkout" >&2
           exit 1
 
@@ -847,6 +850,7 @@ jobs:
             --event control-plane \
             --status "${JOB_STATUS}" \
             --summary "AIO Fleet Control Plane ${mode} ${JOB_STATUS}" \
+            --failure-file fleet-dashboard.err \
             --details-url "${DETAILS_URL}" \
             --format json
           exit 0
@@ -1558,6 +1562,7 @@ jobs:
       - name: Fail central control check bootstrap
         if: ${{ always() && steps.start-poll-central-control-check.outcome == 'failure' }}
         run: |
+          set -euo pipefail
           echo "central control check bootstrap failed before app checkout" >&2
           exit 1
 

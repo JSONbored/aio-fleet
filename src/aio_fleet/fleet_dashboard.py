@@ -5,7 +5,6 @@ import json
 import os
 import re
 import subprocess  # nosec B404
-import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +13,7 @@ from typing import Any
 from aio_fleet.catalog import sync_catalog_assets
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.cleanup import cleanup_findings
+from aio_fleet.command_text import fleet_command
 from aio_fleet.failure_classifier import classify_workflow_state
 from aio_fleet.fleet_queue import enrich_command_center_state
 from aio_fleet.github_cli import github_cli_env
@@ -998,13 +998,11 @@ def _run_with_issue_body_file(
     body: str,
     cli_scope: str,
 ) -> subprocess.CompletedProcess[str]:
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
-        handle.write(body)
-        body_path = Path(handle.name)
-    try:
-        return _run([*command, "--body-file", str(body_path)], cli_scope=cli_scope)
-    finally:
-        body_path.unlink(missing_ok=True)
+    return _run(
+        [*command, "--body-file", "-"],
+        cli_scope=cli_scope,
+        input_text=body,
+    )
 
 
 def dashboard_commands_from_body(body: str) -> dict[str, bool]:
@@ -2570,25 +2568,50 @@ def _render_next_commands(
             component = row.get("component", "aio")
             sha = registry_detail.get("sha") or "<sha>"
             commands.append(
-                f"python -m aio_fleet registry verify --repo {repo} --component {component} --sha {sha} --verbose"
+                fleet_command(
+                    "registry",
+                    "verify",
+                    "--repo",
+                    repo,
+                    "--component",
+                    component,
+                    "--sha",
+                    sha,
+                    "--verbose",
+                )
             )
             commands.append(
-                f"python -m aio_fleet registry publish --repo {repo} --component {component}"
+                fleet_command(
+                    "registry", "publish", "--repo", repo, "--component", component
+                )
             )
         if row.get("update") and row.get("strategy") == "notify":
             commands.append(
-                f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"
+                fleet_command(
+                    "upstream", "assess", "--repo", row["repo"], "--format", "json"
+                )
             )
         elif row.get("update") and row.get("safety") in {"warn", "blocked"}:
             pr_url = _markdown_url(row.get("pr"))
             pr_number = pr_url.rstrip("/").rsplit("/", 1)[-1] if pr_url else ""
             if pr_number.isdigit():
                 commands.append(
-                    f"python -m aio_fleet upstream assess --repo {row['repo']} --pr {pr_number} --format json"
+                    fleet_command(
+                        "upstream",
+                        "assess",
+                        "--repo",
+                        row["repo"],
+                        "--pr",
+                        pr_number,
+                        "--format",
+                        "json",
+                    )
                 )
             else:
                 commands.append(
-                    f"python -m aio_fleet upstream assess --repo {row['repo']} --format json"
+                    fleet_command(
+                        "upstream", "assess", "--repo", row["repo"], "--format", "json"
+                    )
                 )
         elif _is_ready_update(row):
             pr_url = _markdown_url(row.get("pr"))
@@ -2596,11 +2619,11 @@ def _render_next_commands(
                 commands.append(f"gh pr view {pr_url}")
     if destination_rows:
         commands.append(
-            "python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid"
+            fleet_command("validate-catalog", "--catalog-path", "../awesome-unraid")
         )
     for row in rehab_rows:
         commands.append(
-            f"python -m aio_fleet onboard-repo --repo {row['repo']} --mode rehab"
+            fleet_command("onboard-repo", "--repo", row["repo"], "--mode", "rehab")
         )
     if not commands:
         lines.extend(["- no immediate commands", ""])
@@ -2744,6 +2767,7 @@ def _run(
     check: bool = True,
     cwd: Path | None = None,
     cli_scope: str = "activity",
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = _github_cli_env(cli_scope) if command and command[0] == "gh" else None
     result = subprocess.run(  # nosec B603
@@ -2753,6 +2777,7 @@ def _run(
         capture_output=True,
         check=False,
         env=env,
+        input=input_text,
     )
     if check and result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()

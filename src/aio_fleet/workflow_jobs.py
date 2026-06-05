@@ -709,6 +709,7 @@ def registry_audit_checkouts(
             report["repos"].append(
                 {
                     "repo": repo,
+                    "component": "repo",
                     "sha": sha,
                     "dockerhub": [],
                     "ghcr": [],
@@ -763,11 +764,11 @@ def registry_audit_checkouts(
                 )
                 continue
             report["repos"].extend(parsed.get("repos", []))
+    report["status"] = status
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if github_output:
         with github_output.open("a", encoding="utf-8") as output:
             output.write(f"status={status}\n")
-    report["status"] = status
     return report
 
 

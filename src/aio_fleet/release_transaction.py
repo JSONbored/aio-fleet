@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from aio_fleet.changelog import build_release_plan, component_config
+from aio_fleet.command_text import fleet_command
 from aio_fleet.control_plane import publish_components
 from aio_fleet.manifest import RepoConfig
 from aio_fleet.release_plan import (
@@ -453,10 +454,19 @@ def _operator_commands(
 ) -> dict[str, Any]:
     return {
         "preflight": [
-            (
-                f"python -m aio_fleet release preflight --repo {repo.name} "
-                f"--component {component} --sha {sha or '<sha>'} "
-                "--mode transaction --format json"
+            fleet_command(
+                "release",
+                "preflight",
+                "--repo",
+                repo.name,
+                "--component",
+                component,
+                "--sha",
+                sha or "<sha>",
+                "--mode",
+                "transaction",
+                "--format",
+                "json",
             )
             for component in components
         ],
@@ -479,9 +489,16 @@ def _operator_commands(
 
 def _registry_verify_command(repo: RepoConfig, *, component: str, sha: str) -> str:
     label_sha = sha if sha else "<sha>"
-    return (
-        f"python -m aio_fleet registry verify --repo {repo.name} "
-        f"--component {component} --sha {label_sha} --verbose"
+    return fleet_command(
+        "registry",
+        "verify",
+        "--repo",
+        repo.name,
+        "--component",
+        component,
+        "--sha",
+        label_sha,
+        "--verbose",
     )
 
 
