@@ -111,7 +111,7 @@ def registry_sha_tag_required(
 ) -> bool:
     if not _component_bool(repo, component, "include_sha_tag", True):
         return False
-    release_target_commit = _component_release_target_commit(repo, component)
+    release_target_commit = _registry_sha_release_target_commit(repo, component)
     if not release_target_commit:
         return True
     if release_target_commit == sha:
@@ -123,6 +123,10 @@ def registry_sha_tag_required(
     except (Exception, SystemExit):
         return True
     if not changed_paths:
+        return False
+    if _sha_tag_skip_paths_only(repo, changed_paths):
+        return False
+    if _component_change_unrelated(repo, component, changed_paths):
         return False
     return True
 
@@ -169,6 +173,18 @@ def _component_release_target_commit(repo: RepoConfig, component: str) -> str:
         return find_release_target_commit(repo.path, changelog_version)
     except (Exception, SystemExit):
         return ""
+
+
+def _registry_sha_release_target_commit(repo: RepoConfig, component: str) -> str:
+    config = component_config(repo, component)
+    if str(config.get("release_policy", "")).strip() != "registry_only":
+        return _component_release_target_commit(repo, component)
+    release_package_tag = component_registry_release_tag(repo, component)
+    if not release_package_tag:
+        return ""
+    return _registry_only_release_target_commit(
+        repo, component=component, release_package_tag=release_package_tag
+    )
 
 
 def _version_tags_allowed(
@@ -654,7 +670,9 @@ def _registry_only_release_target_commit(
         return find_release_target_commit(repo.path, release_package_tag)
     except (Exception, SystemExit):
         pass
-    if not _registry_only_prerelease_version_matches(
+    if str(
+        component_config(repo, component).get("release_history", "")
+    ).strip() == "github_prerelease" and not _registry_only_prerelease_version_matches(
         repo, component=component, release_package_tag=release_package_tag
     ):
         return ""
@@ -807,6 +825,90 @@ def _non_publish_patterns(repo: RepoConfig) -> set[str]:
     patterns = set(repo.list_value("non_release_paths"))
     patterns.update(RETIRED_SHARED_PATHS)
     return patterns
+
+
+def _sha_tag_skip_patterns(repo: RepoConfig) -> set[str]:
+    patterns = _non_publish_patterns(repo)
+    return {pattern for pattern in patterns if pattern}
+
+
+def _sha_tag_skip_paths_only(repo: RepoConfig, paths: list[str]) -> bool:
+    patterns = _sha_tag_skip_patterns(repo)
+    return (
+        bool(paths)
+        and bool(patterns)
+        and all(_matches_release_pattern(path, patterns) for path in paths)
+    )
+
+
+def _component_change_unrelated(
+    repo: RepoConfig, component: str, paths: list[str]
+) -> bool:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return False
+    relevant_paths = [
+        path
+        for path in paths
+        if not _matches_release_pattern(path, _sha_tag_skip_patterns(repo))
+    ]
+    if not relevant_paths:
+        return True
+    patterns = _component_specific_publish_patterns(repo, component)
+    if not patterns:
+        return False
+    return not any(_matches_release_pattern(path, patterns) for path in relevant_paths)
+
+
+def _component_specific_publish_patterns(repo: RepoConfig, component: str) -> set[str]:
+    components = repo.raw.get("components")
+    raw_config: dict[str, object] = {}
+    if isinstance(components, dict):
+        candidate = components.get(component)
+        if isinstance(candidate, dict):
+            raw_config = candidate
+
+    config = component_config(repo, component)
+    patterns: set[str] = set()
+    include_defaults = component == "aio"
+    for key, default in (
+        ("dockerfile", "Dockerfile"),
+        ("upstream_config", "upstream.toml"),
+        ("release_changelog", "CHANGELOG.md"),
+    ):
+        if include_defaults or key in raw_config:
+            value = str(config.get(key, default)).strip()
+            if value:
+                patterns.add(value)
+
+    if include_defaults:
+        patterns.update({"rootfs/**"})
+        if not isinstance(components, dict):
+            patterns.update(repo.list_value("xml_paths"))
+
+    context = str(raw_config.get("context", "") or "").strip()
+    if context:
+        patterns.add(context)
+        patterns.add(f"{context.rstrip('/')}/**")
+
+    patterns.update(_string_list(config.get("xml_paths", [])))
+    patterns.update(_string_list(config.get("publish_paths", [])))
+    for monitor in repo.raw.get("upstream_monitor", []):
+        if (
+            isinstance(monitor, dict)
+            and str(monitor.get("component", "aio")) == component
+            and monitor.get("dockerfile")
+        ):
+            patterns.add(str(monitor["dockerfile"]))
+    return {pattern for pattern in patterns if pattern}
+
+
+def _string_list(value: object) -> set[str]:
+    if isinstance(value, str):
+        return {value} if value.strip() else set()
+    if isinstance(value, list):
+        return {str(item) for item in value if str(item).strip()}
+    return set()
 
 
 def _matches_release_pattern(path: str, patterns: set[str]) -> bool:

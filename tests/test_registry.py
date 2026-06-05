@@ -215,10 +215,110 @@ def test_registry_sha_tag_required_for_non_publish_manifest_followup(
         repo, sha=publish_sha, component="aio", include_sha_tag=include_sha_tag
     )
 
-    assert include_sha_tag is True  # nosec B101
+    assert include_sha_tag is False  # nosec B101
     assert tags.release_package_tag == ""  # nosec B101
     assert "jsonbored/sure-aio:0.7.0-aio.2" not in tags.dockerhub  # nosec B101
-    assert f"jsonbored/sure-aio:sha-{publish_sha}" in tags.dockerhub  # nosec B101
+    assert f"jsonbored/sure-aio:sha-{publish_sha}" not in tags.dockerhub  # nosec B101
+
+
+def test_registry_sha_tag_skips_validation_only_followup(monkeypatch) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("simplelogin-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_component_release_target_commit", lambda *_args: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "tests/helpers.py"
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
+
+    assert (  # nosec B101
+        registry.registry_sha_tag_required(repo, component="aio", sha=publish_sha)
+        is False
+    )
+
+
+def test_registry_sha_tag_skips_other_component_release_followup(
+    monkeypatch,
+) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("sure-aio")
+    release_sha = "c" * 40
+    publish_sha = "d" * 40
+
+    monkeypatch.setattr(
+        registry, "_component_release_target_commit", lambda *_args: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "\n".join(
+                [
+                    "CHANGELOG.alpha.md",
+                    "Dockerfile.alpha",
+                    "sure-aio-alpha.xml",
+                    "tests/test_alpha_lane_assets.py",
+                ]
+            )
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
+
+    assert (  # nosec B101
+        registry.registry_sha_tag_required(repo, component="aio", sha=publish_sha)
+        is False
+    )
+
+
+def test_sidecar_sha_tag_skips_unrelated_aio_release_followup(
+    monkeypatch,
+) -> None:
+    repo = load_manifest(ROOT / "fleet.yml").repo("signoz-aio")
+    release_sha = "e" * 40
+    publish_sha = "f" * 40
+
+    monkeypatch.setattr(
+        registry, "_component_release_target_commit", lambda *_args: release_sha
+    )
+    monkeypatch.setattr(registry, "git_is_ancestor", lambda *_args: True)
+
+    def fake_git(_path: Path, command: str, *args: str) -> str:
+        if (command, *args[:2]) == (
+            "diff",
+            "--name-only",
+            f"{release_sha}..{publish_sha}",
+        ):
+            return "\n".join(
+                [
+                    ".aio-fleet.yml",
+                    "CHANGELOG.md",
+                    "Dockerfile",
+                    "signoz-aio.xml",
+                    "tests/helpers.py",
+                ]
+            )
+        raise AssertionError(f"unexpected git call: {(command, *args)}")
+
+    monkeypatch.setattr(registry, "git", fake_git)
+
+    assert (  # nosec B101
+        registry.registry_sha_tag_required(repo, component="agent", sha=publish_sha)
+        is False
+    )
 
 
 def test_release_tag_rejects_arbitrary_post_release_commit(monkeypatch) -> None:
@@ -466,6 +566,69 @@ def test_registry_only_component_keeps_tags_after_non_release_followup(
         "ghcr.io/jsonbored/sure-aio-alpha:latest-alpha",
         "ghcr.io/jsonbored/sure-aio-alpha:0.7.1-alpha.9-aio.2",
     ]
+
+
+def test_registry_only_component_sha_tag_skips_helper_followup_without_release_tag(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "nanoclaw-aio"
+    repo_path.mkdir()
+    _git(repo_path, "init", "-b", "main")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "config", "tag.gpgSign", "false")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "Tests")
+    agent = repo_path / "components" / "nanoclaw-agent"
+    agent.mkdir(parents=True)
+    (agent / "Dockerfile").write_text(
+        "ARG UPSTREAM_VERSION=v2.0.64\n" "ARG AGENT_REVISION=2\n"
+    )
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(sync): update nanoclaw agent")
+    release_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    helpers = repo_path / "tests" / "helpers.py"
+    helpers.parent.mkdir()
+    helpers.write_text("# shared helper update\n")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "test(smoke): use shared app test helpers")
+    publish_sha = subprocess.check_output(  # nosec B603 B607
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True
+    ).strip()
+    repo = RepoConfig(
+        name="nanoclaw-aio",
+        raw={
+            "path": str(repo_path),
+            "app_slug": "nanoclaw-aio",
+            "image_name": "jsonbored/nanoclaw-aio",
+            "docker_cache_scope": "nanoclaw-aio-image",
+            "pytest_image_tag": "nanoclaw-aio:pytest",
+            "publish_profile": "multi-component",
+            "components": {
+                "aio": {
+                    "image_name": "jsonbored/nanoclaw-aio",
+                    "dockerfile": "Dockerfile",
+                },
+                "agent": {
+                    "image_name": "jsonbored/nanoclaw-agent",
+                    "dockerfile": "components/nanoclaw-agent/Dockerfile",
+                    "release_policy": "registry_only",
+                    "release_suffix": "agent",
+                    "registry_revision_arg": "AGENT_REVISION",
+                },
+            },
+        },
+        defaults={"non_release_paths": ["tests/**"]},
+        owner="JSONbored",
+    )
+
+    include_sha_tag = registry.registry_sha_tag_required(
+        repo, component="agent", sha=publish_sha
+    )
+
+    assert release_sha != publish_sha  # nosec B101
+    assert include_sha_tag is False  # nosec B101
 
 
 def test_registry_only_component_release_tag_requires_allowed_sha(monkeypatch) -> None:
