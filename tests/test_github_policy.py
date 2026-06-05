@@ -32,8 +32,8 @@ def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
     for name in expected_repos:
         checks = set(repos[name]["required_checks"])
         app_ids = repos[name].get("required_check_app_ids", {})
-        assert {"Security scan", "Contributor trust"} <= checks  # nosec B101
-        assert app_ids["Security scan"] == 3287076  # nosec B101
+        assert {"Superagent Security Scan", "Contributor trust"} <= checks  # nosec B101
+        assert app_ids["Superagent Security Scan"] == 3287076  # nosec B101
         assert app_ids["Contributor trust"] == 3287076  # nosec B101
 
 
@@ -334,11 +334,11 @@ repositories:
   example-aio:
     required_checks:
       - aio-fleet / required
-      - Security scan
+      - Superagent Security Scan
       - Contributor trust
     required_check_app_id: 3565017
     required_check_app_ids:
-      Security scan: 3287076
+      Superagent Security Scan: 3287076
       Contributor trust: 3287076
 """)
 
@@ -351,12 +351,12 @@ repositories:
                 "required_status_checks": {
                     "contexts": [
                         "aio-fleet / required",
-                        "Security scan",
+                        "Superagent Security Scan",
                         "Contributor trust",
                     ],
                     "checks": [
                         {"context": "aio-fleet / required", "app_id": 3565017},
-                        {"context": "Security scan", "app_id": 3287076},
+                        {"context": "Superagent Security Scan", "app_id": 3287076},
                         {"context": "Contributor trust", "app_id": 3287076},
                     ],
                     "strict": True,
@@ -401,7 +401,7 @@ repositories:
       - aio-fleet / required
     required_check_app_id: 3565017
     required_check_app_ids:
-      Security scan: 3287076
+      Superagent Security Scan: 3287076
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -432,10 +432,8 @@ repositories:
     )
 
     assert failures == [  # nosec B101
-        "example-aio: required_check_app_ids declares unknown required check 'Security scan'"
+        "example-aio: required_check_app_ids declares unknown required check 'Superagent Security Scan'"
     ]
-
-
 
 
 def test_validate_github_policy_rejects_missing_per_check_app_id_coverage(
@@ -455,10 +453,10 @@ defaults:
 repositories:
   example-aio:
     required_checks:
-      - Security scan
+      - Superagent Security Scan
       - Contributor trust
     required_check_app_ids:
-      Security scan: 3287076
+      Superagent Security Scan: 3287076
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -468,9 +466,9 @@ repositories:
         if joined == "api repos/JSONbored/example-aio/branches/main/protection":
             return {
                 "required_status_checks": {
-                    "contexts": ["Security scan", "Contributor trust"],
+                    "contexts": ["Superagent Security Scan", "Contributor trust"],
                     "checks": [
-                        {"context": "Security scan", "app_id": 3287076},
+                        {"context": "Superagent Security Scan", "app_id": 3287076},
                         {"context": "Contributor trust", "app_id": 999999},
                     ],
                     "strict": True,
@@ -494,6 +492,8 @@ repositories:
     assert failures == [  # nosec B101
         "example-aio: required check 'Contributor trust' is missing required_check_app_id coverage"
     ]
+
+
 def test_validate_github_policy_rejects_same_context_wrong_app_id(
     tmp_path: Path,
     monkeypatch,
