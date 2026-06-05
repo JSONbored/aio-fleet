@@ -11,6 +11,7 @@ from typing import Any
 
 from aio_fleet.changelog import component_config
 from aio_fleet.cleanup import RETIRED_SHARED_PATHS
+from aio_fleet.command_text import fleet_command
 from aio_fleet.control_plane import publish_components
 from aio_fleet.github_cli import github_cli_env
 from aio_fleet.manifest import FleetManifest, RepoConfig
@@ -410,7 +411,9 @@ def _next_release_action(
     sha: str = "",
 ) -> str:
     if state == "blocked":
-        return f"python -m aio_fleet signing doctor --repo {repo.name} --format json"
+        return fleet_command(
+            "signing", "doctor", "--repo", repo.name, "--format", "json"
+        )
     if state == "current":
         return "none"
     if state == "publish-missing":
@@ -421,11 +424,18 @@ def _next_release_action(
             f"--component {component} --sha {sha or '<sha>'} --verbose"
         )
     if state == "catalog-sync-needed":
-        return f"python -m aio_fleet sync-catalog --repo {repo.name} --catalog-path ../awesome-unraid --dry-run"
+        return fleet_command(
+            "sync-catalog",
+            "--repo",
+            repo.name,
+            "--catalog-path",
+            "../awesome-unraid",
+            "--dry-run",
+        )
     if state == "release-due" and next_version:
         return release_transaction_command(repo, component=component, sha=sha)
-    return (
-        f"python -m aio_fleet release status --repo {repo.name} --component {component}"
+    return fleet_command(
+        "release", "status", "--repo", repo.name, "--component", component
     )
 
 
@@ -438,8 +448,20 @@ def _operator_commands(
     config = component_config(repo, component)
     registry_only = str(config.get("release_policy", "")).strip() == "registry_only"
     commands = {
-        "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {label_sha} --verbose",
-        "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
+        "registry_verify": fleet_command(
+            "registry",
+            "verify",
+            "--repo",
+            repo.name,
+            "--component",
+            component,
+            "--sha",
+            label_sha,
+            "--verbose",
+        ),
+        "registry_publish": fleet_command(
+            "registry", "publish", "--repo", repo.name, "--component", component
+        ),
         "control_check_publish": control_check_publish_command(
             repo, component=component, sha=sha
         ),
@@ -448,8 +470,8 @@ def _operator_commands(
         ),
     }
     if _component_uses_github_release(config, registry_only=registry_only):
-        commands["release_publish"] = (
-            f"python -m aio_fleet release publish --repo {repo.name} --component {component}"
+        commands["release_publish"] = fleet_command(
+            "release", "publish", "--repo", repo.name, "--component", component
         )
     return commands
 
@@ -489,9 +511,17 @@ def control_check_publish_command(
     repo: RepoConfig, *, component: str = "aio", sha: str = ""
 ) -> str:
     label_sha = sha if sha else "<sha>"
-    return (
-        f"python -m aio_fleet control-check --repo {repo.name} --sha {label_sha} "
-        f"--event push --publish --publish-component {component}"
+    return fleet_command(
+        "control-check",
+        "--repo",
+        repo.name,
+        "--sha",
+        label_sha,
+        "--event",
+        "push",
+        "--publish",
+        "--publish-component",
+        component,
     )
 
 
@@ -499,9 +529,16 @@ def release_transaction_command(
     repo: RepoConfig, *, component: str = "aio", sha: str = ""
 ) -> str:
     label_sha = sha if sha else "<sha>"
-    return (
-        f"python -m aio_fleet release transaction --repo {repo.name} "
-        f"--component {component} --sha {label_sha} --dry-run"
+    return fleet_command(
+        "release",
+        "transaction",
+        "--repo",
+        repo.name,
+        "--component",
+        component,
+        "--sha",
+        label_sha,
+        "--dry-run",
     )
 
 

@@ -6,6 +6,7 @@ import re
 import shlex
 from typing import Any
 
+from aio_fleet.command_text import fleet_command_args
 from aio_fleet.public_text import assert_public_text, public_text_safe_value
 
 ALLOWED_WORKFLOWS = {"control-plane.yml"}
@@ -510,10 +511,7 @@ def _gh_workflow_command(
 def _release_transaction_command(repo: str, component: str, sha: str) -> list[str]:
     if not sha:
         return []
-    return [
-        "python",
-        "-m",
-        "aio_fleet",
+    return fleet_command_args(
         "release",
         "transaction",
         "--repo",
@@ -523,41 +521,32 @@ def _release_transaction_command(repo: str, component: str, sha: str) -> list[st
         "--sha",
         sha,
         "--dry-run",
-    ]
+    )
 
 
 def _catalog_sync_command(repo: str) -> list[str]:
-    return [
-        "python",
-        "-m",
-        "aio_fleet",
+    return fleet_command_args(
         "sync-catalog",
         "--repo",
         repo,
         "--catalog-path",
         "../awesome-unraid",
         "--dry-run",
-    ]
+    )
 
 
 def _upstream_monitor_command(repo: str) -> list[str]:
-    return [
-        "python",
-        "-m",
-        "aio_fleet",
+    return fleet_command_args(
         "upstream",
         "monitor",
         "--repo",
         repo,
         "--dry-run",
-    ]
+    )
 
 
 def _standards_reconcile_command(repo: str) -> list[str]:
-    return [
-        "python",
-        "-m",
-        "aio_fleet",
+    return fleet_command_args(
         "standards",
         "reconcile",
         "--repo",
@@ -565,7 +554,7 @@ def _standards_reconcile_command(repo: str) -> list[str]:
         "--dry-run",
         "--format",
         "json",
-    ]
+    )
 
 
 def _dedupe_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:

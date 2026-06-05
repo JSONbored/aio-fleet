@@ -808,6 +808,9 @@ def test_prerelease_publish_resets_app_checkout_to_reviewed_sha() -> None:
 def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     dashboard = _step(workflow["jobs"]["control-plane"], "Update fleet dashboard issue")
+    status_alert = _step(
+        workflow["jobs"]["control-plane"], "Alert control-plane status"
+    )
     dashboard_env = dashboard["env"]
 
     assert (  # nosec B101
@@ -818,6 +821,8 @@ def test_dashboard_update_receives_alert_env_without_app_check_leakage() -> None
         dashboard_env["AIO_FLEET_ALERT_WEBHOOK_URL"]
         == "${{ secrets.AIO_FLEET_ALERT_WEBHOOK_URL }}"
     )
+    assert "fleet-dashboard.err" in dashboard["run"]  # nosec B101
+    assert "--failure-file fleet-dashboard.err" in status_alert["run"]  # nosec B101
 
     manual_run = _step(workflow["jobs"]["control-plane"], "Run central control check")
     poll_run = _step(workflow["jobs"]["poll-checks"], "Run central control check")

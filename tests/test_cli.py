@@ -13,8 +13,8 @@ import pytest
 from aio_fleet import cli
 from aio_fleet.change_scope import CHECK_MODE_FAST_CLEANUP, CHECK_MODE_FULL
 from aio_fleet.cli import (
-    _repo_python,
     cmd_alert_doctor,
+    cmd_alert_send,
     cmd_alert_test,
     cmd_check_run,
     cmd_control_check,
@@ -60,19 +60,6 @@ from aio_fleet.hooks import run_local_trunk_overlay
 from aio_fleet.manifest import load_manifest
 from aio_fleet.poll import PollTarget
 from aio_fleet.registry import RegistryTagSet
-
-
-def test_repo_python_prefers_repo_virtualenv(tmp_path: Path) -> None:
-    repo_python = tmp_path / ".venv" / "bin" / "python"
-    repo_python.parent.mkdir(parents=True)
-    repo_python.write_text("#!/usr/bin/env sh\n")
-    repo_python.chmod(0o755)
-
-    assert _repo_python(tmp_path) == str(repo_python)  # nosec B101
-
-
-def test_repo_python_falls_back_to_current_interpreter(tmp_path: Path) -> None:
-    assert _repo_python(tmp_path) == sys.executable  # nosec B101
 
 
 def test_trunk_audit_summarizes_repo_results(
@@ -1254,6 +1241,54 @@ def test_alert_test_forces_webhook(monkeypatch, capsys) -> None:
     assert report["webhook"] == "would-send"  # nosec B101
 
 
+def test_alert_send_adds_sanitized_failure_file_annotations(
+    tmp_path: Path, capsys
+) -> None:
+    failure_file = tmp_path / "fleet-dashboard.err"
+    failure_file.write_text(
+        "\x1b[31mTraceback line\x1b[0m\n"
+        "/Users/shadowbook/Documents/aio-fleet/.venv/bin/python failed\n"
+        "OSError: [Errno 7] Argument list too long: 'gh'\n"
+        "extra line 1\n"
+        "extra line 2\n"
+        "extra line 3\n"
+    )
+    missing_file = tmp_path / "missing.err"
+
+    result = cmd_alert_send(
+        Namespace(
+            event="control-plane",
+            status="failure",
+            summary="dashboard failed",
+            repo=None,
+            component=None,
+            dedupe_key=None,
+            details_url="https://github.com/JSONbored/aio-fleet/actions/runs/1",
+            annotation=None,
+            failure_file=[str(missing_file), str(failure_file)],
+            report_json=None,
+            kuma_url=None,
+            webhook_url=None,
+            webhook_format="json",
+            force_webhook=False,
+            dry_run=True,
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    report = json.loads(capsys.readouterr().out)
+    annotations = report["payload"]["annotations"]
+    assert len(annotations) == 1  # nosec B101
+    assert annotations[0].startswith(  # nosec B101
+        "failure excerpt fleet-dashboard.err: Traceback line"
+    )
+    assert "Argument list too long" in annotations[0]  # nosec B101
+    assert "/Users/shadowbook" not in annotations[0]  # nosec B101
+    assert "\x1b" not in annotations[0]  # nosec B101
+    assert "extra line 3" not in annotations[0]  # nosec B101
+
+
 def test_poll_missing_checks_only_skips_satisfied_targets(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -1516,7 +1551,7 @@ def test_fleet_report_closeout_splits_remote_and_local_posture(
     assert payload["local_posture"] == "hygiene"  # nosec B101
     assert payload["summary"]["remote_actions"] == 1  # nosec B101
     assert payload["local_hygiene"][0]["cleanup_command"] == (  # nosec B101
-        "python -m aio_fleet cleanup-repo --repo signoz-aio --fix --verify"
+        "uv run aio-fleet cleanup-repo --repo signoz-aio --fix --verify"
     )
 
 
@@ -1684,7 +1719,7 @@ def test_fleet_queue_generate_from_report_input(tmp_path: Path, capsys) -> None:
                         "registry_failures": ["jsonbored/sure-aio:latest: missing"],
                         "operator_commands": {
                             "release_transaction": (
-                                "python -m aio_fleet release transaction "
+                                "uv run aio-fleet release transaction "
                                 f"--repo sure-aio --component aio --sha {sha} --dry-run"
                             )
                         },
@@ -1821,7 +1856,7 @@ def test_release_plan_outputs_all_repo_states(
                 "repo": "example-aio",
                 "state": "release-due",
                 "next_version": "1.0.0-aio.2",
-                "next_action": "python -m aio_fleet release prepare --repo example-aio --dry-run",
+                "next_action": "uv run aio-fleet release prepare --repo example-aio --dry-run",
             }
         ]
 
@@ -1863,7 +1898,7 @@ def test_release_reconcile_routes_publish_through_transaction(
                         "component": "aio",
                         "state": "publish-missing",
                         "next_action": (
-                            "python -m aio_fleet release transaction "
+                            "uv run aio-fleet release transaction "
                             "--repo example-aio --component aio "
                             "--sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run"
                         ),
@@ -3544,19 +3579,19 @@ repos:
     output = capsys.readouterr().out
     assert "sure-aio:sure-alpha: release-readiness=ready" in output  # nosec B101
     assert (  # nosec B101
-        f"python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
+        f"uv run aio-fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
         in output
     )
     assert (  # nosec B101
-        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        "uv run aio-fleet registry publish --repo sure-aio --component sure-alpha"
         not in output
     )
     assert (  # nosec B101
-        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        "uv run aio-fleet release publish --repo sure-aio --component sure-alpha"
         in output
     )
     assert (  # nosec B101
-        f"python -m aio_fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
+        f"uv run aio-fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
         in output
     )
 
@@ -4574,7 +4609,7 @@ def test_onboard_repo_renders_manifest_skeleton(capsys) -> None:
     assert "example-aio:" in output  # nosec B101
     assert "path: <local-checkout-path>/example-aio" in output  # nosec B101
     assert (  # nosec B101
-        "python -m aio_fleet export-app-manifest --repo example-aio --write" in output
+        "uv run aio-fleet export-app-manifest --repo example-aio --write" in output
     )
 
 

@@ -190,7 +190,7 @@ repos:
     assert "manual triage; notify-only strategy" in body  # nosec B101
     assert "Safety Review" in body  # nosec B101
     assert (
-        "python -m aio_fleet upstream assess --repo mem0-aio --format json" in body
+        "uv run aio-fleet upstream assess --repo mem0-aio --format json" in body
     )  # nosec B101
     assert "AIO_FLEET_KUMA_PUSH_URL is not configured" not in body  # nosec B101
     assert "AIO_FLEET_ALERT_WEBHOOK_URL is not configured" in body  # nosec B101
@@ -653,15 +653,15 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
             "sha": "a" * 40,
             "state": "publish-missing",
             "operator_commands": {
-                "registry_verify": "python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha "
+                "registry_verify": "uv run aio-fleet registry verify --repo sure-aio --component sure-alpha --sha "
                 + "a" * 40
                 + " --verbose",
-                "registry_publish": "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha",
-                "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
-                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                "registry_publish": "uv run aio-fleet registry publish --repo sure-aio --component sure-alpha",
+                "release_publish": "uv run aio-fleet release publish --repo sure-aio --component sure-alpha",
+                "control_check_publish": "uv run aio-fleet control-check --repo sure-aio --sha "
                 + "a" * 40
                 + " --event push --publish --publish-component sure-alpha",
-                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+                "release_transaction": "uv run aio-fleet release transaction --repo sure-aio --component sure-alpha --sha "
                 + "a" * 40
                 + " --dry-run",
             },
@@ -707,19 +707,19 @@ def test_dashboard_next_commands_include_component_registry_actions() -> None:
     )
 
     assert (  # nosec B101
-        "python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha "
+        "uv run aio-fleet registry verify --repo sure-aio --component sure-alpha --sha "
         + "a" * 40
         + " --verbose"
         in body
     )
     assert (  # nosec B101
-        "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+        "uv run aio-fleet release transaction --repo sure-aio --component sure-alpha --sha "
         + "a" * 40
         + " --dry-run"
         in body
     )
     assert (  # nosec B101
-        "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+        "uv run aio-fleet registry publish --repo sure-aio --component sure-alpha"
         not in body
     )
     hidden = json.loads(_hidden_dashboard_state(body))
@@ -737,13 +737,13 @@ def test_dashboard_next_commands_include_transaction_for_release_due() -> None:
             "sha": "b" * 40,
             "state": "release-due",
             "operator_commands": {
-                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                "control_check_publish": "uv run aio-fleet control-check --repo sure-aio --sha "
                 + "b" * 40
                 + " --event push --publish --publish-component sure-alpha",
-                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+                "release_transaction": "uv run aio-fleet release transaction --repo sure-aio --component sure-alpha --sha "
                 + "b" * 40
                 + " --dry-run",
-                "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+                "release_publish": "uv run aio-fleet release publish --repo sure-aio --component sure-alpha",
             },
         },
     }
@@ -753,13 +753,13 @@ def test_dashboard_next_commands_include_transaction_for_release_due() -> None:
     body = "\n".join(lines)
 
     assert (  # nosec B101
-        "python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha "
+        "uv run aio-fleet release transaction --repo sure-aio --component sure-alpha --sha "
         + "b" * 40
         + " --dry-run"
         in body
     )
     assert (  # nosec B101
-        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        "uv run aio-fleet release publish --repo sure-aio --component sure-alpha"
         not in body
     )
 
@@ -774,12 +774,12 @@ def test_dashboard_next_commands_route_blocked_release_to_signing_doctor() -> No
             "component": "aio",
             "sha": "b" * 40,
             "state": "blocked",
-            "next_action": "python -m aio_fleet signing doctor --repo sure-aio --format json",
+            "next_action": "uv run aio-fleet signing doctor --repo sure-aio --format json",
             "operator_commands": {
-                "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                "control_check_publish": "uv run aio-fleet control-check --repo sure-aio --sha "
                 + "b" * 40
                 + " --event push --publish --publish-component aio",
-                "release_transaction": "python -m aio_fleet release transaction --repo sure-aio --component aio --sha "
+                "release_transaction": "uv run aio-fleet release transaction --repo sure-aio --component aio --sha "
                 + "b" * 40
                 + " --dry-run",
             },
@@ -791,7 +791,7 @@ def test_dashboard_next_commands_route_blocked_release_to_signing_doctor() -> No
     body = "\n".join(lines)
 
     assert (  # nosec B101
-        "python -m aio_fleet signing doctor --repo sure-aio --format json" in body
+        "uv run aio-fleet signing doctor --repo sure-aio --format json" in body
     )
     assert "control-check --repo sure-aio" not in body  # nosec B101
 
@@ -814,11 +814,11 @@ def test_dashboard_control_check_publish_requires_actionable_release() -> None:
                 "sha": sha,
                 "state": state,
                 "operator_commands": {
-                    "control_check_publish": "python -m aio_fleet control-check --repo sure-aio --sha "
+                    "control_check_publish": "uv run aio-fleet control-check --repo sure-aio --sha "
                     + (sha or "<sha>")
                     + " --event push --publish --publish-component sure-alpha",
-                    "registry_publish": "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha",
-                    "release_publish": "python -m aio_fleet release publish --repo sure-aio --component sure-alpha",
+                    "registry_publish": "uv run aio-fleet registry publish --repo sure-aio --component sure-alpha",
+                    "release_publish": "uv run aio-fleet release publish --repo sure-aio --component sure-alpha",
                 },
             },
         }
@@ -835,10 +835,10 @@ def test_dashboard_control_check_publish_requires_actionable_release() -> None:
         body = "\n".join(lines)
 
         assert (
-            "python -m aio_fleet control-check --repo sure-aio" not in body
+            "uv run aio-fleet control-check --repo sure-aio" not in body
         )  # nosec B101
         assert (
-            "python -m aio_fleet registry publish --repo sure-aio --component sure-alpha"
+            "uv run aio-fleet registry publish --repo sure-aio --component sure-alpha"
             not in body
         )  # nosec B101
 
@@ -1239,12 +1239,12 @@ repos:
                     }
                 ],
                 "next_action": (
-                    "python -m aio_fleet release transaction "
+                    "uv run aio-fleet release transaction "
                     "--repo example-aio --sha " + "a" * 40 + " --dry-run"
                 ),
                 "operator_commands": {
                     "release_transaction": (
-                        "python -m aio_fleet release transaction "
+                        "uv run aio-fleet release transaction "
                         "--repo example-aio --sha " + "a" * 40 + " --dry-run"
                     )
                 },
@@ -1885,23 +1885,25 @@ def test_dashboard_issue_by_number_uses_direct_view(monkeypatch) -> None:
     assert issue["number"] == 55  # nosec B101
 
 
-def test_upsert_dashboard_issue_updates_with_body_file(monkeypatch) -> None:
-    body = "Fleet dashboard\n" * 100
-    body_paths: list[Path] = []
+def test_upsert_dashboard_issue_updates_body_from_stdin(monkeypatch) -> None:
+    body = "# Dashboard\n" + ("row\n" * 5000)
+    calls: list[tuple[list[str], str | None]] = []
 
     monkeypatch.setattr(
         fleet_dashboard,
         "_dashboard_issue_by_number",
-        lambda issue_repo, issue_number: {
-            "number": issue_number,
-            "url": f"https://github.com/{issue_repo}/issues/{issue_number}",
+        lambda _repo, _number: {
+            "number": 55,
+            "url": "https://github.com/JSONbored/aio-fleet/issues/55",
         },
     )
     monkeypatch.setattr(
         fleet_dashboard, "_ensure_label", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
-        fleet_dashboard, "_add_dashboard_label", lambda *_args, **_kwargs: None
+        fleet_dashboard,
+        "_add_dashboard_label",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         fleet_dashboard,
@@ -1909,15 +1911,16 @@ def test_upsert_dashboard_issue_updates_with_body_file(monkeypatch) -> None:
         lambda *_args, **_kwargs: None,
     )
 
-    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
-        del check, cwd
-        assert cli_scope == "issue"  # nosec B101
-        assert "--body" not in command  # nosec B101
-        assert "--body-file" in command  # nosec B101
-        body_path = Path(command[command.index("--body-file") + 1])
-        body_paths.append(body_path)
-        assert body_path.read_text(encoding="utf-8") == body  # nosec B101
-        assert command[:4] == ["gh", "issue", "edit", "55"]  # nosec B101
+    def fake_run(
+        command: list[str],
+        *,
+        check=True,
+        cwd=None,
+        cli_scope="activity",
+        input_text=None,
+    ):
+        del check, cwd, cli_scope
+        calls.append((command, input_text))
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(fleet_dashboard, "_run", fake_run)
@@ -1930,12 +1933,17 @@ def test_upsert_dashboard_issue_updates_with_body_file(monkeypatch) -> None:
     )
 
     assert result.action == "updated"  # nosec B101
-    assert body_paths and not body_paths[0].exists()  # nosec B101
+    command, input_text = calls[0]
+    assert "--body-file" in command  # nosec B101
+    assert command[command.index("--body-file") + 1] == "-"  # nosec B101
+    assert "--body" not in command  # nosec B101
+    assert body not in command  # nosec B101
+    assert input_text == body  # nosec B101
 
 
-def test_upsert_dashboard_issue_creates_with_body_file(monkeypatch) -> None:
-    body = "Fleet dashboard\n" * 100
-    body_paths: list[Path] = []
+def test_upsert_dashboard_issue_creates_body_from_stdin(monkeypatch) -> None:
+    body = "# Dashboard\n" + ("row\n" * 5000)
+    calls: list[tuple[list[str], str | None]] = []
 
     monkeypatch.setattr(
         fleet_dashboard, "_find_dashboard_issue", lambda *_args, **_kwargs: None
@@ -1944,20 +1952,20 @@ def test_upsert_dashboard_issue_creates_with_body_file(monkeypatch) -> None:
         fleet_dashboard, "_ensure_label", lambda *_args, **_kwargs: None
     )
 
-    def fake_run(command: list[str], *, check=True, cwd=None, cli_scope="activity"):
-        del check, cwd
-        assert cli_scope == "issue"  # nosec B101
-        assert "--body" not in command  # nosec B101
-        assert "--body-file" in command  # nosec B101
-        body_path = Path(command[command.index("--body-file") + 1])
-        body_paths.append(body_path)
-        assert body_path.read_text(encoding="utf-8") == body  # nosec B101
-        assert command[:3] == ["gh", "issue", "create"]  # nosec B101
-        assert "--label" in command  # nosec B101
+    def fake_run(
+        command: list[str],
+        *,
+        check=True,
+        cwd=None,
+        cli_scope="activity",
+        input_text=None,
+    ):
+        del check, cwd, cli_scope
+        calls.append((command, input_text))
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout="https://github.com/JSONbored/aio-fleet/issues/55\n",
+            stdout="https://github.com/JSONbored/aio-fleet/issues/58\n",
             stderr="",
         )
 
@@ -1970,8 +1978,13 @@ def test_upsert_dashboard_issue_creates_with_body_file(monkeypatch) -> None:
     )
 
     assert result.action == "created"  # nosec B101
-    assert result.number == 55  # nosec B101
-    assert body_paths and not body_paths[0].exists()  # nosec B101
+    assert result.number == 58  # nosec B101
+    command, input_text = calls[0]
+    assert "--body-file" in command  # nosec B101
+    assert command[command.index("--body-file") + 1] == "-"  # nosec B101
+    assert "--body" not in command  # nosec B101
+    assert body not in command  # nosec B101
+    assert input_text == body  # nosec B101
 
 
 def test_dashboard_issue_commands_accepts_labeled_dashboard_issue(

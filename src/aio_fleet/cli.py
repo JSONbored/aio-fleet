@@ -14,6 +14,7 @@ import urllib.parse
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,7 @@ from aio_fleet.checks import (
     upsert_check_run,
 )
 from aio_fleet.cleanup import CleanupFinding, cleanup_findings, remove_cleanup_findings
+from aio_fleet.command_text import fleet_command
 from aio_fleet.control_plane import (
     _secret_environment_key,
     central_check_steps,
@@ -89,7 +91,7 @@ from aio_fleet.github_policy import load_policy, validate_github_policy
 from aio_fleet.hooks import install_local_hooks, run_local_trunk_overlay
 from aio_fleet.manifest import FleetManifest, ManifestError, RepoConfig, load_manifest
 from aio_fleet.poll import poll_targets, resolve_changed_files
-from aio_fleet.public_text import assert_public_text
+from aio_fleet.public_text import assert_public_text, redact_public_text
 from aio_fleet.registry import (
     component_registry_release_tag,
     compute_registry_tags,
@@ -187,16 +189,6 @@ def _run_streaming(
         check=False,
         text=True,
     )
-
-
-def _repo_python(repo_path: Path) -> str:
-    for candidate in (
-        repo_path / ".venv" / "bin" / "python",
-        repo_path / ".venv" / "bin" / "python3",
-    ):
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return sys.executable
 
 
 def _current_ref() -> str:
@@ -739,7 +731,9 @@ def _standards_manifest_actions(repo: RepoConfig) -> list[dict[str, object]]:
                 cls="manifest-drift",
                 severity="failure",
                 detail=failure,
-                command=f"python -m aio_fleet export-app-manifest --repo {repo.name} --write",
+                command=fleet_command(
+                    "export-app-manifest", "--repo", repo.name, "--write"
+                ),
                 can_write=True,
             )
         )
@@ -760,7 +754,9 @@ def _standards_cleanup_actions(
                 cls="retired-shared-path",
                 severity="info" if provenance == "local-only" else "failure",
                 detail=f"{relative}: {finding.reason}",
-                command=f"python -m aio_fleet cleanup-repo --repo {repo.name} --fix --verify",
+                command=fleet_command(
+                    "cleanup-repo", "--repo", repo.name, "--fix", "--verify"
+                ),
                 can_write=True,
                 provenance=provenance,
             )
@@ -784,7 +780,7 @@ def _standards_github_actions(
             cls="github-policy",
             severity="failure",
             detail=failure,
-            command=f"python -m aio_fleet validate-github --repo {repo.name}",
+            command=fleet_command("validate-github", "--repo", repo.name),
             can_write=False,
         )
         for failure in failures
@@ -1225,10 +1221,52 @@ def cmd_poll(args: argparse.Namespace) -> int:
     return 0
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CONTROL_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_FAILURE_EXCERPT_MAX_LINES = 5
+_FAILURE_EXCERPT_MAX_CHARS = 900
+
+
+def _failure_file_annotations(paths: list[str] | None) -> list[str]:
+    annotations: list[str] = []
+    for raw_path in paths or []:
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+        excerpt = _failure_excerpt(text)
+        if excerpt:
+            annotations.append(f"failure excerpt {path.name}: {excerpt}")
+    return annotations
+
+
+def _failure_excerpt(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = _ANSI_ESCAPE_RE.sub("", raw_line)
+        line = _CONTROL_TEXT_RE.sub("", line).strip()
+        if not line:
+            continue
+        lines.append(redact_public_text(line))
+        if len(lines) >= _FAILURE_EXCERPT_MAX_LINES:
+            break
+    excerpt = " | ".join(lines)
+    if len(excerpt) > _FAILURE_EXCERPT_MAX_CHARS:
+        excerpt = excerpt[: _FAILURE_EXCERPT_MAX_CHARS - 3].rstrip() + "..."
+    return excerpt
+
+
 def cmd_alert_send(args: argparse.Namespace) -> int:
     report = None
     if args.report_json:
         report = json.loads(Path(args.report_json).read_text())
+    annotations = list(getattr(args, "annotation", None) or [])
+    annotations.extend(_failure_file_annotations(getattr(args, "failure_file", None)))
 
     if report is not None:
         payload = payload_from_report(
@@ -1239,6 +1277,11 @@ def cmd_alert_send(args: argparse.Namespace) -> int:
             details_url=args.details_url or "",
             dedupe_key=args.dedupe_key or "",
         )
+        if annotations:
+            payload = replace(
+                payload,
+                annotations=[*payload.annotations, *annotations],
+            )
     else:
         status = "success" if args.status == "auto" else args.status
         payload = alert_payload(
@@ -1249,7 +1292,7 @@ def cmd_alert_send(args: argparse.Namespace) -> int:
             component=args.component or "",
             details_url=args.details_url or "",
             dedupe_key=args.dedupe_key or "",
-            annotations=args.annotation or [],
+            annotations=annotations,
         )
 
     result = emit_alert(
@@ -1461,9 +1504,12 @@ def _fleet_closeout_state(state: dict[str, object]) -> dict[str, object]:
             "state": "local-only",
             "findings_count": row.get("local_findings_count", 0),
             "findings": row.get("local_findings", []),
-            "cleanup_command": (
-                "python -m aio_fleet cleanup-repo --repo "
-                f"{row.get('repo', '')} --fix --verify"
+            "cleanup_command": fleet_command(
+                "cleanup-repo",
+                "--repo",
+                row.get("repo", ""),
+                "--fix",
+                "--verify",
             ),
         }
         for row in cleanup_rows
@@ -2884,9 +2930,23 @@ def cmd_release_readiness(args: argparse.Namespace) -> int:
 
     sha = _git_head(repo.path)
     operator_commands = {
-        "registry_verify": f"python -m aio_fleet registry verify --repo {repo.name} --component {component} --sha {sha or '<sha>'} --verbose",
-        "registry_publish": f"python -m aio_fleet registry publish --repo {repo.name} --component {component}",
-        "release_publish": f"python -m aio_fleet release publish --repo {repo.name} --component {component}",
+        "registry_verify": fleet_command(
+            "registry",
+            "verify",
+            "--repo",
+            repo.name,
+            "--component",
+            component,
+            "--sha",
+            sha or "<sha>",
+            "--verbose",
+        ),
+        "registry_publish": fleet_command(
+            "registry", "publish", "--repo", repo.name, "--component", component
+        ),
+        "release_publish": fleet_command(
+            "release", "publish", "--repo", repo.name, "--component", component
+        ),
         "control_check_publish": control_check_publish_command(
             repo, component=component, sha=sha
         ),
@@ -4333,9 +4393,27 @@ def cmd_promote_rehab(args: argparse.Namespace) -> int:
         "warnings": warnings,
         "acceptance_checklist": checklist,
         "next_commands": [
-            f"python -m aio_fleet cleanup-repo --repo {args.repo} --repo-path {path} --verify",
-            f"python -m aio_fleet export-app-manifest --repo {args.repo} --write",
-            f"python -m aio_fleet control-check --repo {args.repo} --repo-path {path} --sha <sha> --event pull_request --dry-run",
+            fleet_command(
+                "cleanup-repo",
+                "--repo",
+                args.repo,
+                "--repo-path",
+                path,
+                "--verify",
+            ),
+            fleet_command("export-app-manifest", "--repo", args.repo, "--write"),
+            fleet_command(
+                "control-check",
+                "--repo",
+                args.repo,
+                "--repo-path",
+                path,
+                "--sha",
+                "<sha>",
+                "--event",
+                "pull_request",
+                "--dry-run",
+            ),
         ],
     }
     if args.format == "json":
@@ -4444,7 +4522,7 @@ def cmd_workflow_registry_audit(args: argparse.Namespace) -> int:
         github_output=Path(args.github_output) if args.github_output else None,
     )
     print(stable_report_json(report))
-    return 0
+    return int(report.get("status", 0))
 
 
 def _workflow_token() -> str:
@@ -5338,7 +5416,15 @@ def _onboarding_first_commands(
         commands.extend(
             [
                 f"git -C ../{repo} fetch --prune origin",
-                f"python -m aio_fleet onboard-repo --repo {repo} --mode rehab --format json",
+                fleet_command(
+                    "onboard-repo",
+                    "--repo",
+                    repo,
+                    "--mode",
+                    "rehab",
+                    "--format",
+                    "json",
+                ),
                 "# after adding the repo to fleet.yml:",
             ]
         )
@@ -5346,30 +5432,59 @@ def _onboarding_first_commands(
         commands.append(f"git -C ../{repo} submodule update --init --recursive")
     if shape in {"destination-only", "rehab-only"} and mode != "rehab":
         return [
-            "python -m aio_fleet fleet-dashboard update --dry-run --include-activity",
-            "python -m aio_fleet fleet-report generate --include-activity --format json",
+            fleet_command(
+                "fleet-dashboard", "update", "--dry-run", "--include-activity"
+            ),
+            fleet_command(
+                "fleet-report", "generate", "--include-activity", "--format", "json"
+            ),
         ]
     commands.extend(
         [
-            f"python -m aio_fleet export-app-manifest --repo {repo} --write",
-            f"python -m aio_fleet validate-repo --repo {repo} --repo-path ../{repo}",
-            f"python -m aio_fleet sync-catalog --repo {repo} --catalog-path ../awesome-unraid --dry-run",
-            f"python -m aio_fleet upstream monitor --repo {repo} --dry-run",
+            fleet_command("export-app-manifest", "--repo", repo, "--write"),
+            fleet_command("validate-repo", "--repo", repo, "--repo-path", f"../{repo}"),
+            fleet_command(
+                "sync-catalog",
+                "--repo",
+                repo,
+                "--catalog-path",
+                "../awesome-unraid",
+                "--dry-run",
+            ),
+            fleet_command("upstream", "monitor", "--repo", repo, "--dry-run"),
         ]
     )
     publish_components = _onboarding_publish_components(component_publish or [])
     if shape == "multi-component" and publish_components:
         for component in publish_components:
             commands.append(
-                "python -m aio_fleet registry verify "
-                f"--repo {repo} --component {component} "
-                "--sha <commit-sha> --dry-run --verbose"
+                fleet_command(
+                    "registry",
+                    "verify",
+                    "--repo",
+                    repo,
+                    "--component",
+                    component,
+                    "--sha",
+                    "<commit-sha>",
+                    "--dry-run",
+                    "--verbose",
+                )
             )
     else:
         commands.append(
-            f"python -m aio_fleet registry verify --repo {repo} --sha <commit-sha> --dry-run --verbose"
+            fleet_command(
+                "registry",
+                "verify",
+                "--repo",
+                repo,
+                "--sha",
+                "<commit-sha>",
+                "--dry-run",
+                "--verbose",
+            )
         )
-    commands.append(f"python -m aio_fleet support-thread render --repo {repo}")
+    commands.append(fleet_command("support-thread", "render", "--repo", repo))
     if mode == "new-from-template":
         commands.insert(
             0,
@@ -5837,6 +5952,7 @@ def build_parser() -> argparse.ArgumentParser:
     alert_send.add_argument("--dedupe-key")
     alert_send.add_argument("--details-url")
     alert_send.add_argument("--annotation", action="append")
+    alert_send.add_argument("--failure-file", action="append")
     alert_send.add_argument("--report-json")
     alert_send.add_argument("--kuma-url")
     alert_send.add_argument("--webhook-url")

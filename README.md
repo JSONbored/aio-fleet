@@ -57,55 +57,55 @@ Dockerfile, Unraid template, docs, and tests. This repo owns the fleet contract.
 ## Commands
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m aio_fleet doctor
-python -m aio_fleet status --github --catalog-path ../awesome-unraid
-python -m aio_fleet debt-report --catalog-path ../awesome-unraid --format markdown
-python -m aio_fleet validate-template-common --all
-python -m aio_fleet catalog-audit --catalog-path ../awesome-unraid
-python -m aio_fleet catalog-workflow --catalog-path ../awesome-unraid --check
-python -m aio_fleet catalog-changelog --catalog-path ../awesome-unraid --check
-python -m aio_fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
-python -m aio_fleet poll --format json
-python -m aio_fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
-python -m aio_fleet upstream monitor --all --dry-run
-python -m aio_fleet upstream monitor --repo sure-aio --write --create-pr --post-check
-python -m aio_fleet fleet-dashboard update --dry-run --registry --include-activity
-python -m aio_fleet fleet-report generate --registry --include-activity --format json
-python -m aio_fleet fleet-report closeout --format json
-python -m aio_fleet fleet-report schema
-python -m aio_fleet fleet-report validate --input fleet-report.json
-python -m aio_fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
-python -m aio_fleet alert doctor
-python -m aio_fleet alert test --dry-run
-python -m aio_fleet alert send --event registry-audit --report-json registry-report.json --dry-run
-python -m aio_fleet release status --repo sure-aio
-python -m aio_fleet release plan --all --format json
-python -m aio_fleet release prepare --repo sure-aio --dry-run
-python -m aio_fleet release publish --repo sure-aio --dry-run
-python -m aio_fleet registry verify --all --format json
-python -m aio_fleet cleanup-repo --repo sure-aio --verify
-python -m aio_fleet cleanup-repo --repo sure-aio --fix --verify
-python -m aio_fleet security audit-workflows --format json
-python -m aio_fleet promote-rehab --repo nanoclaw-aio --dry-run --format json
-python -m aio_fleet trunk run --repo sure-aio --no-fix
-python -m aio_fleet trunk run --repo sure-aio --local --fix
-python -m aio_fleet hooks install --all --include-destinations
-python -m aio_fleet export-app-manifest --repo sure-aio
-python -m aio_fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml
-python -m aio_fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
-python -m aio_fleet infra doctor --skip-tofu
-python -m aio_fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
-python -m aio_fleet onboard-repo --repo nanoclaw-aio --shape multi-component --format json
-python -m aio_fleet onboard-repo --repo penpot-aio --shape multi-component --format json
-python -m aio_fleet support-thread render --repo sure-aio
-python -m aio_fleet validate --all
-python -m aio_fleet validate-derived --repo-path ../sure-aio
-python -m aio_fleet validate-repo --repo sure-aio --repo-path ../sure-aio
-python -m aio_fleet validate-catalog --catalog-path ../awesome-unraid
-python -m aio_fleet validate-github --check-secrets
-python -m aio_fleet trunk-audit
-python -m aio_fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run
+uv sync --extra dev
+uv run aio-fleet doctor
+uv run aio-fleet status --github --catalog-path ../awesome-unraid
+uv run aio-fleet debt-report --catalog-path ../awesome-unraid --format markdown
+uv run aio-fleet validate-template-common --all
+uv run aio-fleet catalog-audit --catalog-path ../awesome-unraid
+uv run aio-fleet catalog-workflow --catalog-path ../awesome-unraid --check
+uv run aio-fleet catalog-changelog --catalog-path ../awesome-unraid --check
+uv run aio-fleet release-readiness --repo sure-aio --catalog-path ../awesome-unraid
+uv run aio-fleet poll --format json
+uv run aio-fleet control-check --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
+uv run aio-fleet upstream monitor --all --dry-run
+uv run aio-fleet upstream monitor --repo sure-aio --write --create-pr --post-check
+uv run aio-fleet fleet-dashboard update --dry-run --registry --include-activity
+uv run aio-fleet fleet-report generate --registry --include-activity --format json
+uv run aio-fleet fleet-report closeout --format json
+uv run aio-fleet fleet-report schema
+uv run aio-fleet fleet-report validate --input fleet-report.json
+uv run aio-fleet registry verify --repo sure-aio --sha <commit-sha> --dry-run --verbose
+uv run aio-fleet alert doctor
+uv run aio-fleet alert test --dry-run
+uv run aio-fleet alert send --event registry-audit --report-json registry-report.json --dry-run
+uv run aio-fleet release status --repo sure-aio
+uv run aio-fleet release plan --all --format json
+uv run aio-fleet release prepare --repo sure-aio --dry-run
+uv run aio-fleet release publish --repo sure-aio --dry-run
+uv run aio-fleet registry verify --all --format json
+uv run aio-fleet cleanup-repo --repo sure-aio --verify
+uv run aio-fleet cleanup-repo --repo sure-aio --fix --verify
+uv run aio-fleet security audit-workflows --format json
+uv run aio-fleet promote-rehab --repo nanoclaw-aio --dry-run --format json
+uv run aio-fleet trunk run --repo sure-aio --no-fix
+uv run aio-fleet trunk run --repo sure-aio --local --fix
+uv run aio-fleet hooks install --all --include-destinations
+uv run aio-fleet export-app-manifest --repo sure-aio
+uv run aio-fleet import-app-manifest --path ../sure-aio/.aio-fleet.yml
+uv run aio-fleet check run --repo sure-aio --sha <commit-sha> --event pull_request --dry-run
+uv run aio-fleet infra doctor --skip-tofu
+uv run aio-fleet onboard-repo --repo example-aio --profile changelog-version --dry-run
+uv run aio-fleet onboard-repo --repo nanoclaw-aio --shape multi-component --format json
+uv run aio-fleet onboard-repo --repo penpot-aio --shape multi-component --format json
+uv run aio-fleet support-thread render --repo sure-aio
+uv run aio-fleet validate --all
+uv run aio-fleet validate-derived --repo-path ../sure-aio
+uv run aio-fleet validate-repo --repo sure-aio --repo-path ../sure-aio
+uv run aio-fleet validate-catalog --catalog-path ../awesome-unraid
+uv run aio-fleet validate-github --check-secrets
+uv run aio-fleet trunk-audit
+uv run aio-fleet sync-catalog --repo dify-aio --catalog-path ../awesome-unraid --dry-run
 ```
 
 ## Source model

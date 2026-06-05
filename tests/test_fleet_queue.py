@@ -45,7 +45,7 @@ def test_queue_generates_registry_publish_action_with_dispatch_context() -> None
         "jsonbored/sure-aio:latest: missing"
     ]
     assert action["next_command"] == (  # nosec B101
-        "python -m aio_fleet release transaction --repo sure-aio "
+        "uv run aio-fleet release transaction --repo sure-aio "
         f"--component aio --sha {sha} --dry-run"
     )
     assert action["workflow_dispatch"]["inputs"] == {  # nosec B101
@@ -174,7 +174,7 @@ def test_enriched_state_adds_command_center_sections() -> None:
                 "state": "catalog-sync-needed",
                 "sha": "b" * 40,
                 "catalog_sync_needed": True,
-                "next_action": "python -m aio_fleet sync-catalog --dry-run",
+                "next_action": "uv run aio-fleet sync-catalog --dry-run",
             }
         ],
         "cleanup": [

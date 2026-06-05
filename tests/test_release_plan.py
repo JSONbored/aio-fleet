@@ -72,7 +72,7 @@ def test_release_plan_classifies_publish_missing(tmp_path: Path, monkeypatch) ->
     ]
     assert plan["blockers"] == ["missing or unreachable registry tags"]  # nosec B101
     assert plan["next_action"] == (  # nosec B101
-        "python -m aio_fleet release transaction --repo sure-aio "
+        "uv run aio-fleet release transaction --repo sure-aio "
         f"--component aio --sha {'a' * 40} --dry-run"
     )
 
@@ -291,7 +291,7 @@ def test_release_plan_blocks_unsigned_generated_pr(tmp_path: Path, monkeypatch) 
         "generated PR #42 has unverified commits: unsigned"
     ]
     assert plan["next_action"] == (  # nosec B101
-        "python -m aio_fleet signing doctor --repo sure-aio --format json"
+        "uv run aio-fleet signing doctor --repo sure-aio --format json"
     )
 
 
@@ -1071,20 +1071,20 @@ def test_release_plan_outputs_component_specific_alpha_publish_action(
     assert plan["component"] == "sure-alpha"  # nosec B101
     assert plan["state"] == "publish-missing"  # nosec B101
     assert plan["next_action"] == (  # nosec B101
-        f"python -m aio_fleet release transaction --repo sure-aio "
+        f"uv run aio-fleet release transaction --repo sure-aio "
         f"--component sure-alpha --sha {sha} --dry-run"
     )
     assert plan["operator_commands"]["registry_verify"] == (  # nosec B101
-        f"python -m aio_fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
+        f"uv run aio-fleet registry verify --repo sure-aio --component sure-alpha --sha {sha} --verbose"
     )
     assert plan["operator_commands"]["release_publish"] == (  # nosec B101
-        "python -m aio_fleet release publish --repo sure-aio --component sure-alpha"
+        "uv run aio-fleet release publish --repo sure-aio --component sure-alpha"
     )
     assert plan["operator_commands"]["control_check_publish"] == (  # nosec B101
-        f"python -m aio_fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
+        f"uv run aio-fleet control-check --repo sure-aio --sha {sha} --event push --publish --publish-component sure-alpha"
     )
     assert plan["operator_commands"]["release_transaction"] == (  # nosec B101
-        f"python -m aio_fleet release transaction --repo sure-aio --component sure-alpha --sha {sha} --dry-run"
+        f"uv run aio-fleet release transaction --repo sure-aio --component sure-alpha --sha {sha} --dry-run"
     )
 
 
@@ -1163,7 +1163,7 @@ def test_release_plan_marks_missing_registry_only_prerelease_due(
     assert plan["release_due"] is True  # nosec B101
     assert plan["state"] == "release-due"  # nosec B101
     assert plan["next_action"] == (  # nosec B101
-        f"python -m aio_fleet release transaction --repo sure-aio "
+        f"uv run aio-fleet release transaction --repo sure-aio "
         f"--component sure-alpha --sha {sha} --dry-run"
     )
 
@@ -1296,7 +1296,7 @@ def test_release_plan_keeps_registry_only_helper_out_of_formal_release_lane(
     assert plan["state"] == "current"  # nosec B101
     assert "release_publish" not in plan["operator_commands"]  # nosec B101
     assert plan["operator_commands"]["registry_verify"] == (  # nosec B101
-        f"python -m aio_fleet registry verify --repo nanoclaw-aio --component agent --sha {sha} --verbose"
+        f"uv run aio-fleet registry verify --repo nanoclaw-aio --component agent --sha {sha} --verbose"
     )
 
 

@@ -5,8 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from aio_fleet.poll import PublishPathResolutionError
 from aio_fleet import workflow_jobs
+from aio_fleet.poll import PublishPathResolutionError
 from aio_fleet.workflow_jobs import (
     poll_outputs,
     registry_audit_checkouts,
@@ -302,6 +302,109 @@ repos:
     assert "sure-alpha" not in rows  # nosec B101
 
 
+def test_registry_audit_reports_publish_path_resolution_errors_and_continues(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "fleet.yml"
+    checkout_root = tmp_path / "checkouts"
+    output = tmp_path / "registry-report.json"
+    github_output = tmp_path / "github-output.txt"
+    manifest.write_text("""
+owner: JSONbored
+repos:
+  penpot-aio:
+    path: /tmp/penpot-aio
+    public: true
+    app_slug: penpot-aio
+    image_name: jsonbored/penpot-aio
+    docker_cache_scope: penpot-aio-image
+    pytest_image_tag: penpot-aio:pytest
+  sure-aio:
+    path: /tmp/sure-aio
+    public: true
+    app_slug: sure-aio
+    image_name: jsonbored/sure-aio
+    docker_cache_scope: sure-aio-image
+    pytest_image_tag: sure-aio:pytest
+""")
+
+    def fake_checkout_refs(refs, *, token: str, submodules: str):
+        del token
+        assert submodules == "none"  # nosec B101
+        results = []
+        for name, github_repo, path in refs:
+            path.mkdir(parents=True)
+            results.append(
+                {"repo": name, "github_repo": github_repo, "path": str(path)}
+            )
+        return results
+
+    def fake_publish_components_required(repo_config, *, sha: str, event: str):
+        assert sha == "a" * 40  # nosec B101
+        assert event == "push"  # nosec B101
+        if repo_config.name == "penpot-aio":
+            raise workflow_jobs.PublishPathResolutionError(
+                "penpot-aio: unable to resolve changed files for "
+                "1613d1732d8ad344325ea0e15defbce9f30f4a14"
+            )
+        return ["aio"]
+
+    verify_repos: list[str] = []
+
+    def fake_run(args, **_kwargs):
+        repo = args[args.index("--repo") + 1]
+        component = args[args.index("--component") + 1]
+        verify_repos.append(repo)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            json.dumps(
+                {
+                    "repos": [
+                        {
+                            "repo": repo,
+                            "component": component,
+                            "sha": "a" * 40,
+                            "dockerhub": [f"jsonbored/{repo}:latest"],
+                            "ghcr": [f"ghcr.io/jsonbored/{repo}:latest"],
+                            "failures": [],
+                        }
+                    ]
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(workflow_jobs, "_checkout_refs", fake_checkout_refs)
+    monkeypatch.setattr(
+        workflow_jobs, "publish_components_required", fake_publish_components_required
+    )
+    monkeypatch.setattr(
+        workflow_jobs.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: "a" * 40,
+    )
+    monkeypatch.setattr(workflow_jobs.subprocess, "run", fake_run)
+
+    report = registry_audit_checkouts(
+        manifest_path=manifest,
+        checkout_root=checkout_root,
+        output_path=output,
+        token="token",  # nosec B106
+        github_output=github_output,
+    )
+
+    assert report["status"] == 1  # nosec B101
+    assert verify_repos == ["sure-aio"]  # nosec B101
+    rows = {(row["repo"], row.get("component")): row for row in report["repos"]}
+    penpot = rows[("penpot-aio", "repo")]
+    assert penpot["sha"] == "a" * 40  # nosec B101
+    assert "unable to resolve changed files" in penpot["failures"][0]  # nosec B101
+    assert rows[("sure-aio", "aio")]["failures"] == []  # nosec B101
+    assert json.loads(output.read_text())["status"] == 1  # nosec B101
+    assert "status=1" in github_output.read_text()  # nosec B101
+
+
 def test_checkout_upstream_monitor_repos_writes_token_checkout_manifest(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -394,7 +497,9 @@ repos:
             PublishPathResolutionError("sure-aio: unable to resolve changed files")
         ),
     )
-    monkeypatch.setattr(workflow_jobs.subprocess, "check_output", lambda *_a, **_k: "a" * 40)
+    monkeypatch.setattr(
+        workflow_jobs.subprocess, "check_output", lambda *_a, **_k: "a" * 40
+    )
 
     report = registry_audit_checkouts(
         manifest_path=manifest,
@@ -408,6 +513,7 @@ repos:
     assert report["repos"] == [  # nosec B101
         {
             "repo": "sure-aio",
+            "component": "repo",
             "sha": "a" * 40,
             "dockerhub": [],
             "ghcr": [],
