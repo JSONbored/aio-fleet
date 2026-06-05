@@ -140,6 +140,68 @@ def test_release_plan_classifies_sha_tag_gap_separately(
     )
 
 
+def test_release_plan_stays_current_when_sha_tag_is_not_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sha = "a" * 40
+    repo = RepoConfig(
+        name="simplelogin-aio",
+        raw={
+            "path": str(tmp_path),
+            "app_slug": "simplelogin-aio",
+            "image_name": "jsonbored/simplelogin-aio",
+            "docker_cache_scope": "simplelogin-aio-image",
+            "pytest_image_tag": "simplelogin-aio:pytest",
+            "publish_profile": "upstream-aio-track",
+        },
+        defaults={},
+        owner="JSONbored",
+    )
+    monkeypatch.setattr("aio_fleet.release_plan._git_head", lambda _path: sha)
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_latest_aio_tag", lambda _repo: "5.0.0-aio.1"
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_next_aio", lambda _repo: "5.0.0-aio.2"
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_has_aio_changes", lambda _repo: False
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._safe_changelog_version",
+        lambda _repo, *, component="aio": "5.0.0-aio.1",
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan._latest_github_release",
+        lambda _repo, **_kwargs: {"state": "ok", "tag": "5.0.0-aio.1"},
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan.registry_sha_tag_required",
+        lambda *_args, **_kwargs: False,
+    )
+
+    def fake_compute_registry_tags(*_args, **kwargs):
+        assert kwargs["include_sha_tag"] is False  # nosec B101
+        return SimpleNamespace(
+            dockerhub=["jsonbored/simplelogin-aio:latest"],
+            ghcr=["ghcr.io/jsonbored/simplelogin-aio:latest"],
+            all_tags=["jsonbored/simplelogin-aio:latest"],
+        )
+
+    monkeypatch.setattr(
+        "aio_fleet.release_plan.compute_registry_tags", fake_compute_registry_tags
+    )
+    monkeypatch.setattr(
+        "aio_fleet.release_plan.verify_registry_tags", lambda _tags, **_kwargs: []
+    )
+
+    plan = release_plan_for_repo(repo, include_registry=True)
+
+    assert plan["state"] == "current"  # nosec B101
+    assert plan["registry_state"] == "ok"  # nosec B101
+    assert plan["warnings"] == []  # nosec B101
+
+
 def test_release_plan_classifies_catalog_sync_needed(
     tmp_path: Path, monkeypatch
 ) -> None:
