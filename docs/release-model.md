@@ -52,6 +52,15 @@ PRs; they appear in the fleet dashboard until a human decides whether the
 packaged app path is affected. After an upstream PR merges, normal
 control-plane validation and publish rules apply.
 
+The same control-plane run that opens or updates an upstream PR also queues it
+for central validation (a publish-disabled poll-check target via `aio-fleet
+workflow upstream-poll-targets`), so the `aio-fleet / required` check completes
+in that run instead of waiting for the best-effort hourly poll cron, which
+GitHub frequently delays or drops. Only the monitor's own trusted, signed PRs
+are queued this way and every queued target is publish-disabled, so the
+protected registry-publish gate is never reached automatically — publishing
+stays gated and operator-driven.
+
 `aio-fleet registry publish` and `aio-fleet registry verify` compute the tag set
 from `.aio-fleet.yml` and the release commit. Docker Hub tag verification uses
 the Docker Hub tag API so post-push checks do not consume manifest-pull quota;

@@ -85,9 +85,9 @@ jobs:
   control-plane:
     runs-on: ubuntu-latest
     outputs:
-      poll_targets: ${{ steps.poll.outputs.targets }}
-      poll_run_checks: ${{ steps.poll.outputs.run_checks }}
-      poll_has_targets: ${{ steps.poll.outputs.has_targets }}
+      poll_targets: ${{ steps.poll.outputs.targets || steps.upstream-poll-targets.outputs.targets }}
+      poll_run_checks: ${{ steps.poll.outputs.run_checks || steps.upstream-poll-targets.outputs.run_checks }}
+      poll_has_targets: ${{ steps.poll.outputs.has_targets || steps.upstream-poll-targets.outputs.has_targets }}
       poll_publish_targets: ${{ steps.poll.outputs.publish_targets }}
       poll_has_publish_targets: ${{ steps.poll.outputs.has_publish_targets }}
       manual_control_check_outcome: ${{ steps.central-control-check.outcome }}
@@ -344,6 +344,25 @@ jobs:
             --input "${handoff}/validated-report.json" \
             --output "${handoff}/report.with-actions.json"
           cp "${handoff}/report.with-actions.json" upstream-report.json
+
+      - name: Queue upstream PR validation targets
+        id: upstream-poll-targets
+        # Validate the bot PRs this run just opened in the same control-plane run
+        # (via the poll-checks job) instead of waiting for the best-effort hourly
+        # poll cron. Only the monitor's own trusted, signed PRs are emitted and
+        # every target is publish-disabled, so the registry-publish gate is never
+        # reached automatically. See docs/release-model.md.
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        run: |
+          set -euo pipefail
+          if [[ -f upstream-report.json ]]; then
+            python -m aio_fleet workflow upstream-poll-targets \
+              --manifest fleet.yml \
+              --input upstream-report.json \
+              --github-output "${GITHUB_OUTPUT}"
+          else
+            echo "no upstream-report.json; no freshly-opened upstream PRs to validate"
+          fi
 
       - name: Publish upstream summary
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}

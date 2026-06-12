@@ -6,12 +6,14 @@ import subprocess
 from pathlib import Path
 
 from aio_fleet import workflow_jobs
+from aio_fleet.change_scope import CHECK_MODE_FULL
 from aio_fleet.poll import PublishPathResolutionError
 from aio_fleet.workflow_jobs import (
     poll_outputs,
     registry_audit_checkouts,
     render_registry_summary,
     render_upstream_summary,
+    upstream_poll_targets,
 )
 
 
@@ -81,6 +83,80 @@ def test_poll_outputs_writes_github_matrix(tmp_path: Path) -> None:
     text = output.read_text()
     assert "run_checks=true" in text  # nosec B101
     assert "targets<<__AIO_FLEET_TARGETS__" in text  # nosec B101
+
+
+def test_upstream_poll_targets_emits_publish_disabled_pr_targets(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report = tmp_path / "upstream-report.json"
+    head_sha = "a" * 40
+    report.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "repo": "sure-aio",
+                        "action": "upserted-pr",
+                        "branch": "codex/upstream-sure-aio-1.0.1",
+                        "url": "https://github.com/JSONbored/sure-aio/pull/1",
+                        "sha": head_sha,
+                    }
+                ]
+            }
+        )
+    )
+    output = tmp_path / "github-output.txt"
+
+    payload = upstream_poll_targets(
+        report_path=report,
+        manifest_path=manifest,
+        github_output=output,
+    )
+
+    assert payload["run_checks"] is True  # nosec B101
+    assert payload["has_targets"] is True  # nosec B101
+    assert len(payload["targets"]) == 1  # nosec B101
+    target = payload["targets"][0]
+    assert target["repo"] == "sure-aio"  # nosec B101
+    assert target["sha"] == head_sha  # nosec B101
+    assert target["event"] == "pull_request"  # nosec B101
+    assert target["publish"] is False  # nosec B101
+    assert target["check_mode"] == CHECK_MODE_FULL  # nosec B101
+    assert target["source"] == "upstream-pr:codex/upstream-sure-aio-1.0.1"  # nosec B101
+    text = output.read_text()
+    assert "run_checks=true" in text  # nosec B101
+    assert "targets<<__AIO_FLEET_TARGETS__" in text  # nosec B101
+
+
+def test_upstream_poll_targets_skips_when_no_pr_opened(tmp_path: Path) -> None:
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    manifest = _write_upstream_workflow_manifest(tmp_path, checkout)
+    report = tmp_path / "upstream-report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {"repo": "sure-aio", "action": "skipped", "reason": "no-updates"}
+                ]
+            }
+        )
+    )
+    output = tmp_path / "github-output.txt"
+
+    payload = upstream_poll_targets(
+        report_path=report,
+        manifest_path=manifest,
+        github_output=output,
+    )
+
+    assert payload["run_checks"] is False  # nosec B101
+    assert payload["has_targets"] is False  # nosec B101
+    assert payload["targets"] == []  # nosec B101
+    assert "run_checks=false" in output.read_text()  # nosec B101
 
 
 def test_upstream_monitor_subprocess_env_uses_disposable_home(monkeypatch) -> None:
