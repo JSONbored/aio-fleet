@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from aio_fleet.change_scope import CHECK_MODE_FULL
 from aio_fleet.changelog import component_config
 from aio_fleet.control_plane import _secret_environment_key
 from aio_fleet.manifest import RepoConfig, load_manifest
@@ -72,6 +73,82 @@ def poll_outputs(
             handle.write(json.dumps(targets, sort_keys=True))
             handle.write("\n__AIO_FLEET_TARGETS__\n")
     return output
+
+
+def upstream_poll_targets(
+    *, report_path: Path, manifest_path: Path, github_output: Path | None
+) -> dict[str, Any]:
+    """Build poll-check targets for the bot PRs the upstream monitor just opened.
+
+    This lets the upstream-monitor run validate (and so complete the required
+    check on) its own freshly-created PRs in the same control-plane run, instead
+    of waiting for the best-effort hourly poll cron. Only the monitor's trusted,
+    signed bot PRs are emitted, and every target is publish-disabled so the
+    registry-publish gate is never reached automatically.
+    """
+
+    payload = _read_json(report_path, default={})
+    pairs: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("action") == "upserted-pr":
+                repo = str(node.get("repo") or "").strip()
+                sha = str(node.get("sha") or "").strip()
+                branch = str(node.get("branch") or "").strip()
+                key = (repo, sha)
+                if repo and _looks_like_sha(sha) and key not in seen:
+                    seen.add(key)
+                    pairs.append((repo, sha, branch))
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                _walk(value)
+
+    _walk(payload)
+
+    manifest = load_manifest(manifest_path)
+    targets: list[dict[str, Any]] = []
+    for repo_name, sha, branch in pairs:
+        repo = manifest.repos.get(repo_name)
+        if repo is None:
+            continue
+        targets.append(
+            {
+                "repo": repo.name,
+                "sha": sha,
+                "event": "pull_request",
+                "source": f"upstream-pr:{branch or repo.name}",
+                "checkout_submodules": bool(repo.raw.get("checkout_submodules")),
+                "publish": False,
+                "publish_components": [],
+                "check_mode": CHECK_MODE_FULL,
+                "changed_paths": [],
+                "changed_files": [],
+                "fast_path_reason": "",
+            }
+        )
+
+    run_checks = bool(targets)
+    output = {
+        "run_checks": run_checks,
+        "has_targets": bool(targets),
+        "targets": targets,
+    }
+    if github_output:
+        with github_output.open("a", encoding="utf-8") as handle:
+            handle.write(f"run_checks={'true' if run_checks else 'false'}\n")
+            handle.write(f"has_targets={'true' if targets else 'false'}\n")
+            handle.write("targets<<__AIO_FLEET_TARGETS__\n")
+            handle.write(json.dumps(targets, sort_keys=True))
+            handle.write("\n__AIO_FLEET_TARGETS__\n")
+    return output
+
+
+def _looks_like_sha(value: str) -> bool:
+    return len(value) == 40 and all(ch in "0123456789abcdef" for ch in value.lower())
 
 
 def render_upstream_summary(*, report_path: Path, output_path: Path | None) -> str:

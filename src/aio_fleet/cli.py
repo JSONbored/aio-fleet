@@ -156,6 +156,7 @@ from aio_fleet.workflow_jobs import (
     render_registry_summary,
     render_upstream_summary,
     upstream_monitor_checkouts,
+    upstream_poll_targets,
     validate_upstream_monitor_report,
 )
 from aio_fleet.workflow_security import audit_workflows
@@ -4438,6 +4439,16 @@ def cmd_workflow_poll_outputs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_workflow_upstream_poll_targets(args: argparse.Namespace) -> int:
+    report = upstream_poll_targets(
+        report_path=Path(args.input),
+        manifest_path=Path(args.manifest),
+        github_output=Path(args.github_output) if args.github_output else None,
+    )
+    print(stable_report_json(report))
+    return 0
+
+
 def cmd_workflow_upstream_summary(args: argparse.Namespace) -> int:
     text = render_upstream_summary(
         report_path=Path(args.input),
@@ -6500,6 +6511,11 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_poll.add_argument("--run-checks", action="store_true")
     workflow_poll.add_argument("--github-output")
     workflow_poll.set_defaults(func=cmd_workflow_poll_outputs)
+    workflow_upstream_poll = workflow_sub.add_parser("upstream-poll-targets")
+    workflow_upstream_poll.add_argument("--manifest", default="fleet.yml")
+    workflow_upstream_poll.add_argument("--input", default="upstream-report.json")
+    workflow_upstream_poll.add_argument("--github-output")
+    workflow_upstream_poll.set_defaults(func=cmd_workflow_upstream_poll_targets)
     workflow_upstream_summary = workflow_sub.add_parser("upstream-summary")
     workflow_upstream_summary.add_argument("--input", default="upstream-report.json")
     workflow_upstream_summary.add_argument("--output")
