@@ -20,6 +20,7 @@ on:
           - poll
           - control-check
           - upstream-monitor
+          - release-prepare
           - fleet-dashboard
           - standards-reconcile
           - catalog-changelog
@@ -85,9 +86,9 @@ jobs:
   control-plane:
     runs-on: ubuntu-latest
     outputs:
-      poll_targets: ${{ steps.poll.outputs.targets || steps.upstream-poll-targets.outputs.targets }}
-      poll_run_checks: ${{ steps.poll.outputs.run_checks || steps.upstream-poll-targets.outputs.run_checks }}
-      poll_has_targets: ${{ steps.poll.outputs.has_targets || steps.upstream-poll-targets.outputs.has_targets }}
+      poll_targets: ${{ steps.poll.outputs.targets || steps.upstream-poll-targets.outputs.targets || steps.release-poll-targets.outputs.targets }}
+      poll_run_checks: ${{ steps.poll.outputs.run_checks || steps.upstream-poll-targets.outputs.run_checks || steps.release-poll-targets.outputs.run_checks }}
+      poll_has_targets: ${{ steps.poll.outputs.has_targets || steps.upstream-poll-targets.outputs.has_targets || steps.release-poll-targets.outputs.has_targets }}
       poll_publish_targets: ${{ steps.poll.outputs.publish_targets }}
       poll_has_publish_targets: ${{ steps.poll.outputs.has_publish_targets }}
       manual_control_check_outcome: ${{ steps.central-control-check.outcome }}
@@ -363,6 +364,94 @@ jobs:
           else
             echo "no upstream-report.json; no freshly-opened upstream PRs to validate"
           fi
+
+      - name: Checkout app repo for release prepare
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/${{ inputs.repo }}
+          ref: main
+          path: release-prepare/app-repo
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Generate release changelog
+        id: release-prepare
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+        run: |
+          set -euo pipefail
+          # release prepare shells out to `git cliff`; install the git-cliff
+          # binary (PyPI wheel) so it is on PATH for git to resolve.
+          python -m pip install --quiet "git-cliff>=2,<3"
+          args=(release prepare --repo "${TARGET_REPO}" --repo-path release-prepare/app-repo)
+          if [[ -n "${PUBLISH_COMPONENT}" ]]; then
+            args+=(--component "${PUBLISH_COMPONENT}")
+          fi
+          python -m aio_fleet "${args[@]}"
+          version="$(grep -m1 -E '^## ' release-prepare/app-repo/CHANGELOG.md | awk '{print $2}')"
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+          if [[ -n "$(git -C release-prepare/app-repo status --porcelain)" ]]; then
+            printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'changed=false\n' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Open release PR
+        id: release-pr
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-prepare.outputs.changed == 'true' && !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: release-prepare/app-repo
+          base: main
+          branch: release/${{ steps.release-prepare.outputs.version }}
+          commit-message: "chore(release): ${{ steps.release-prepare.outputs.version }}"
+          title: "chore(release): ${{ steps.release-prepare.outputs.version }}"
+          body: |
+            Formal release of `${{ inputs.repo }}` ${{ steps.release-prepare.outputs.version }}.
+
+            Merge this to land the changelog on `main`, then dispatch a publish
+            (`mode=control-check`, `event=push`, `publish=true`) to create the
+            registry tags, GitHub Release, and catalog sync.
+
+      - name: Queue release PR validation targets
+        id: release-poll-targets
+        # Reuse the upstream-poll-targets machinery so the release PR validates in
+        # this run (publish-disabled target) instead of waiting on the poll cron.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-pr.outputs.pull-request-number != '' }}
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          RELEASE_BRANCH: release/${{ steps.release-prepare.outputs.version }}
+          RELEASE_PR_SHA: ${{ steps.release-pr.outputs.pull-request-head-sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > release-prepare-report.json
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "repos": [
+                          {
+                              "repo": os.environ["TARGET_REPO"],
+                              "action": "upserted-pr",
+                              "sha": os.environ["RELEASE_PR_SHA"],
+                              "branch": os.environ["RELEASE_BRANCH"],
+                          }
+                      ]
+                  }
+              )
+          )
+          PY
+          python -m aio_fleet workflow upstream-poll-targets \
+            --manifest fleet.yml \
+            --input release-prepare-report.json \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Publish upstream summary
         if: ${{ always() && (github.event.schedule == '43 10 * * *' || inputs.mode == 'upstream-monitor') }}
@@ -1117,6 +1206,73 @@ jobs:
           fi
           python -I -m aio_fleet "${args[@]}"
 
+      - name: Publish GitHub release
+        id: github-release
+        if: ${{ steps.registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Create the formal aio GitHub Release once its `chore(release): <ver>`
+          # changelog version is on main. Idempotent: release publish updates or
+          # skips an existing release, no-ops when no formal release is due, and
+          # github_prerelease components are handled by the prerelease step above.
+          python -I -m aio_fleet release publish \
+            --repo "${TARGET_REPO}" \
+            --repo-path app-repo \
+            --component "${PUBLISH_COMPONENT:-aio}"
+
+      - name: Checkout catalog for sync
+        id: catalog-checkout
+        if: ${{ steps.registry-publish.outcome == 'success' && !inputs.dry_run }}
+        continue-on-error: true
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: JSONbored/awesome-unraid
+          ref: main
+          path: catalog-sync/awesome-unraid
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Sync catalog
+        id: catalog-sync
+        if: ${{ steps.registry-publish.outcome == 'success' && steps.catalog-checkout.outcome == 'success' && !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          # Sync the published Community Apps XML into awesome-unraid. No-ops when
+          # the catalog is already current.
+          python -m aio_fleet sync-catalog \
+            --repo "${TARGET_REPO}" \
+            --repo-path app-repo \
+            --catalog-path catalog-sync/awesome-unraid
+          if [[ -n "$(git -C catalog-sync/awesome-unraid status --porcelain)" ]]; then
+            printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'changed=false\n' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create catalog sync PR
+        if: ${{ steps.catalog-sync.outputs.changed == 'true' && !inputs.dry_run }}
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: catalog-sync/awesome-unraid
+          base: main
+          branch: catalog/${{ inputs.repo }}-sync
+          commit-message: "catalog: sync ${{ inputs.repo }} release"
+          title: "catalog: sync ${{ inputs.repo }} release"
+          body: |
+            Automated Community Apps `<Changes>` sync for the latest
+            `${{ inputs.repo }}` formal release.
+
       - name: Complete central control check
         if: ${{ always() }}
         env:
@@ -1126,6 +1282,7 @@ jobs:
           PREFLIGHT_OUTCOME: ${{ steps.registry-preflight.outcome }}
           PUBLISH_OUTCOME: ${{ steps.registry-publish.outcome }}
           RELEASE_OUTCOME: ${{ steps.github-prereleases.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
@@ -1140,6 +1297,9 @@ jobs:
           elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
             conclusion=failure
             summary="aio-fleet GitHub prerelease publish failed"
+          elif [[ "${GITHUB_RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub release publish failed"
           fi
           python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
@@ -1924,6 +2084,40 @@ jobs:
           )
           python -I -m aio_fleet "${args[@]}"
 
+      - name: Publish GitHub release
+        id: poll-github-release
+        if: ${{ steps.poll-registry-publish.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          TARGET_REPO: ${{ matrix.target.repo }}
+          TARGET_PUBLISH_COMPONENTS: ${{ toJSON(matrix.target.publish_components) }}
+          AIO_FLEET_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Formal aio GitHub Release for each published component once its
+          # chore(release): <ver> changelog is on main. Idempotent; no-ops when no
+          # release is due; github_prerelease components are handled above.
+          while IFS= read -r component; do
+            [[ -n "${component}" ]] || continue
+            python -I -m aio_fleet release publish \
+              --repo "${TARGET_REPO}" \
+              --repo-path app-repo \
+              --component "${component}"
+          done < <(python - <<'PY'
+          import json
+          import os
+          import sys
+
+          value = os.environ.get("TARGET_PUBLISH_COMPONENTS") or "[]"
+          components = json.loads(value)
+          if not isinstance(components, list):
+              print("TARGET_PUBLISH_COMPONENTS must be a JSON array", file=sys.stderr)
+              raise SystemExit(1)
+          for component in components or ["aio"]:
+              print(component)
+          PY
+          )
+
       - name: Complete central control check
         if: ${{ always() }}
         env:
@@ -1934,6 +2128,7 @@ jobs:
           PREFLIGHT_OUTCOME: ${{ steps.registry-preflight.outcome }}
           PUBLISH_OUTCOME: ${{ steps.poll-registry-publish.outcome }}
           RELEASE_OUTCOME: ${{ steps.poll-github-prereleases.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.poll-github-release.outcome }}
           AIO_FLEET_CHECK_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
@@ -1951,6 +2146,9 @@ jobs:
           elif [[ "${RELEASE_OUTCOME}" == "failure" ]]; then
             conclusion=failure
             summary="aio-fleet GitHub prerelease publish failed"
+          elif [[ "${GITHUB_RELEASE_OUTCOME}" == "failure" ]]; then
+            conclusion=failure
+            summary="aio-fleet GitHub release publish failed"
           fi
           python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
