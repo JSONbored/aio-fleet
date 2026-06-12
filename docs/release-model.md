@@ -101,6 +101,30 @@ GitHub prerelease publishing is guarded by the same control-check attestation.
 matches the release SHA. The workflow still resets and cleans `app-repo` before
 this step, but the CLI guard is the release-token boundary.
 
+## Dispatch-driven formal releases
+
+A formal release is two control-plane dispatches plus the protected-environment
+approval — no hand-assembled `gh release create` or catalog PR:
+
+1. `mode=release-prepare` with `repo` (and optional `publish_component`) runs
+   `release prepare` and opens a correctly-subjected `chore(release): <ver>` PR.
+   The same run queues that PR for validation (publish-disabled poll-check
+   target), so it does not wait on the poll cron. Review and merge it.
+2. A publish dispatch (`mode=control-check`, `event=push`, `publish=true`) from
+   the merged `main` now completes the whole release inside the protected
+   `registry-publish` environment: `Publish registry images` pushes the floating
+   plus `vX`/`vX-aio.N` tags, `Publish GitHub release` runs `release publish`
+   (idempotent — updates or skips an existing release, no-ops when no formal
+   release is due, and `github_prerelease` components stay on the prerelease
+   step), and `Sync catalog` opens an `awesome-unraid` PR for the published
+   `<Changes>`.
+
+The aio GitHub Release and catalog sync are therefore part of the publish path,
+not separate manual steps. The release-transaction wrapper below remains the
+allowlist-gated planner for `--write` execution; the dispatch flow above runs the
+same underlying `release publish` / `sync-catalog` commands directly behind the
+protected environment.
+
 Release transactions are the operator-facing wrapper around planning,
 preflight, publish, and catalog sync. Use them before dispatching a publish:
 
