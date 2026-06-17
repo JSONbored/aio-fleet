@@ -3411,6 +3411,13 @@ def cmd_release_prepare(args: argparse.Namespace) -> int:
     if args.repo_path:
         repo = _repo_with_path(repo, Path(args.repo_path).resolve())
     plan = build_release_plan(repo, component=args.component)
+    # Emit the authoritative prepared version so the dispatch workflow does not
+    # have to guess it by grepping CHANGELOG.md, which is wrong for component
+    # lanes that maintain their own changelog (e.g. the alpha lane's
+    # CHANGELOG.alpha.md).
+    if getattr(args, "github_output", None):
+        with Path(args.github_output).open("a", encoding="utf-8") as handle:
+            handle.write(f"version={plan.version}\n")
     cliff_config = write_temp_git_cliff_config(
         repo,
         release_suffix=plan.release_suffix,
@@ -3677,7 +3684,8 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
     if notes.returncode != 0:
         print(notes.stderr or notes.stdout, file=sys.stderr, end="")
         return notes.returncode
-    command = [
+    body = notes.stdout.strip()
+    create_command = [
         "gh",
         "release",
         "create",
@@ -3689,12 +3697,47 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         "--title",
         release_tag,
         "--notes",
-        notes.stdout.strip(),
+        body,
     ]
     if args.dry_run:
-        print(" ".join(shlex.quote(part) for part in command))
+        print(" ".join(shlex.quote(part) for part in create_command))
         return 0
-    result = _run(command, cwd=repo.path)
+    env = _github_cli_env()
+    if env is None:
+        print(
+            "credential-gap: missing AIO_FLEET_RELEASE_TOKEN, GH_TOKEN, or "
+            "GITHUB_TOKEN for GitHub release publish",
+            file=sys.stderr,
+        )
+        return 1
+    # Idempotent per the dispatch-driven release contract: edit an existing
+    # release in place, otherwise create it, so a publish dispatch that already
+    # pushed registry tags (or a retried run) still completes the GitHub release
+    # instead of failing on "release already exists".
+    already_published = (
+        _run(
+            ["gh", "release", "view", release_tag, "--repo", repo.github_repo],
+            cwd=repo.path,
+            env=env,
+        ).returncode
+        == 0
+    )
+    if already_published:
+        command = [
+            "gh",
+            "release",
+            "edit",
+            release_tag,
+            "--repo",
+            repo.github_repo,
+            "--title",
+            release_tag,
+            "--notes",
+            body,
+        ]
+    else:
+        command = create_command
+    result = _run(command, cwd=repo.path, env=env)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -6363,6 +6406,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_prepare.add_argument("--component", default="aio")
     release_prepare.add_argument("--repo-path")
     release_prepare.add_argument("--dry-run", action="store_true")
+    release_prepare.add_argument("--github-output")
     release_prepare.set_defaults(func=cmd_release_prepare)
     release_publish = release_sub.add_parser("publish")
     release_publish.add_argument("--repo", required=True)

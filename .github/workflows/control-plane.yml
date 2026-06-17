@@ -391,9 +391,11 @@ jobs:
           if [[ -n "${PUBLISH_COMPONENT}" ]]; then
             args+=(--component "${PUBLISH_COMPONENT}")
           fi
+          # The CLI emits the authoritative prepared version (component-aware) to
+          # GITHUB_OUTPUT; do not grep CHANGELOG.md, which is wrong for component
+          # lanes (e.g. the alpha lane's CHANGELOG.alpha.md).
+          args+=(--github-output "${GITHUB_OUTPUT}")
           python -m aio_fleet "${args[@]}"
-          version="$(grep -m1 -E '^## ' release-prepare/app-repo/CHANGELOG.md | awk '{print $2}')"
-          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
           if [[ -n "$(git -C release-prepare/app-repo status --porcelain)" ]]; then
             printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
           else
@@ -406,6 +408,10 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
+          # Create a GitHub-signed (verified) commit via the API so the release
+          # PR satisfies the app repos' required-signatures branch protection and
+          # can merge without an operator admin bypass.
+          sign-commits: true
           path: release-prepare/app-repo
           base: main
           branch: release/${{ steps.release-prepare.outputs.version }}
@@ -1264,6 +1270,10 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
+          # GitHub-signed (verified) commit so the catalog PR satisfies
+          # awesome-unraid's required-signatures branch protection and merges
+          # without an operator admin bypass.
+          sign-commits: true
           path: catalog-sync/awesome-unraid
           base: main
           branch: catalog/${{ inputs.repo }}-sync
