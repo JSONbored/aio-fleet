@@ -2563,6 +2563,151 @@ repos:
     assert "--notes '- Update Penpot to 2.15.4.'" in output  # nosec B101
 
 
+def _changelog_version_release_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo_path = tmp_path / "penpot-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  penpot-aio:
+    path: {repo_path}
+    public: true
+    app_slug: penpot-aio
+    image_name: jsonbored/penpot-aio
+    docker_cache_scope: penpot-aio-image
+    pytest_image_tag: penpot-aio:pytest
+    github_repo: JSONbored/penpot-aio
+    publish_profile: changelog-version
+""")
+    (repo_path / "Dockerfile").write_text("ARG UPSTREAM_VERSION=2.15.4\n")
+    (repo_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## v2.15.4-aio.1 - 2026-06-02\n\n"
+        "- Update Penpot to 2.15.4.\n"
+    )
+    _git(repo_path, "init")
+    _git(repo_path, "config", "user.email", "tests@example.invalid")
+    _git(repo_path, "config", "user.name", "aio-fleet tests")
+    _git(repo_path, "config", "commit.gpgsign", "false")
+    _git(repo_path, "add", ".")
+    _git(repo_path, "commit", "-m", "chore(release): v2.15.4-aio.1")
+    return manifest, repo_path
+
+
+def test_release_publish_passes_release_token_to_gh(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _changelog_version_release_repo(tmp_path)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token-xyz")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def fake_run(
+        command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
+    ) -> SimpleNamespace:
+        calls.append((command, env))
+        if "extract-release-notes" in command:
+            return SimpleNamespace(
+                returncode=0, stdout="- Update Penpot to 2.15.4.\n", stderr=""
+            )
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="release not found")
+        if command[:3] == ["gh", "release", "create"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="penpot-aio",
+            component="aio",
+            repo_path=None,
+            dry_run=False,
+            report_json=None,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    create_calls = [
+        (cmd, env) for (cmd, env) in calls if cmd[:3] == ["gh", "release", "create"]
+    ]
+    assert create_calls  # nosec B101
+    _cmd, create_env = create_calls[0]
+    assert create_env is not None  # nosec B101
+    # gh must receive the release token as GH_TOKEN, not just AIO_FLEET_RELEASE_TOKEN.
+    assert create_env.get("GH_TOKEN") == "release-token-xyz"  # nosec B101
+
+
+def test_release_publish_edits_existing_release_idempotently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _repo_path = _changelog_version_release_repo(tmp_path)
+    monkeypatch.setenv("AIO_FLEET_RELEASE_TOKEN", "release-token-xyz")
+
+    actions: list[str] = []
+
+    def fake_run(
+        command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
+    ) -> SimpleNamespace:
+        if "extract-release-notes" in command:
+            return SimpleNamespace(
+                returncode=0, stdout="- Update Penpot to 2.15.4.\n", stderr=""
+            )
+        if command[:3] == ["gh", "release", "view"]:
+            # Release already exists.
+            return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        if command[:2] == ["gh", "release"] and command[2] in {"create", "edit"}:
+            actions.append(command[2])
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="penpot-aio",
+            component="aio",
+            repo_path=None,
+            dry_run=False,
+            report_json=None,
+            format="text",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    # An existing release is edited in place, never re-created.
+    assert actions == ["edit"]  # nosec B101
+
+
+def test_release_prepare_emits_authoritative_version_to_github_output(
+    tmp_path: Path,
+) -> None:
+    manifest, _repo_path = _changelog_version_release_repo(tmp_path)
+    output = tmp_path / "gh_output.txt"
+
+    result = cli.cmd_release_prepare(
+        Namespace(
+            manifest=str(manifest),
+            repo="penpot-aio",
+            component="aio",
+            repo_path=None,
+            dry_run=True,
+            github_output=str(output),
+        )
+    )
+
+    assert result == 0  # nosec B101
+    # The CLI emits the version so the workflow never has to grep CHANGELOG.md.
+    assert "version=2.15.4-aio.1" in output.read_text()  # nosec B101
+
+
 def test_release_publish_dry_run_creates_alpha_prerelease_command(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
