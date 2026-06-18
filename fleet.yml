@@ -1381,7 +1381,9 @@ repos:
     unit_pytest_args: tests/template
     integration_pytest_args: tests/integration -m integration
     publish_profile: multi-component
-    runtime_supervisor: tini
+    runtime_supervisor: s6
+    runtime_healthcheck_markers:
+      - 'pgrep -f "dist/index.js"'
     release_name: NanoClaw-AIO
     check_upstream_name: Check NanoClaw Upstream
     upstream_components:

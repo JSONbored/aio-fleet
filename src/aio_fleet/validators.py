@@ -1225,7 +1225,13 @@ def _dockerfile_runtime_contract_failures(
     if runtime_supervisor == "tini":
         markers.append('ENTRYPOINT ["/usr/bin/tini"')
     else:
-        markers.append("curl -fsS")
+        health_markers = repo.list_value("runtime_healthcheck_markers") or ["curl -fsS"]
+        if len(health_markers) == 1:
+            markers.append(health_markers[0])
+        elif not any(marker in text for marker in health_markers):
+            failures.append(
+                f"{repo.name}: {relative_dockerfile} missing runtime safety marker: one of {', '.join(health_markers)}"
+            )
     if relative_dockerfile == Path("Dockerfile") and runtime_supervisor != "tini":
         markers.extend(
             [

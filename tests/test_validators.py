@@ -860,6 +860,42 @@ def test_runtime_contract_allows_unpublished_optional_port(tmp_path: Path) -> No
     )  # nosec B101
 
 
+def test_runtime_contract_allows_manifest_healthcheck_marker(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "FROM ubuntu@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        'ENTRYPOINT ["/init"]\n'
+        "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=300000\n"
+        "S6_BEHAVIOUR_IF_STAGE2_FAILS=2\n"
+        'VOLUME ["/appdata"]\n'
+        'HEALTHCHECK CMD pgrep -f "dist/index.js" >/dev/null || exit 1\n'
+    )
+    (tmp_path / "example-aio.xml").write_text("""<?xml version="1.0"?>
+<Container version="2">
+  <Name>example-aio</Name>
+  <Repository>jsonbored/example-aio:latest</Repository>
+  <Registry>https://hub.docker.com/r/jsonbored/example-aio</Registry>
+  <Project>https://github.com/JSONbored/example-aio</Project>
+  <Support>https://github.com/JSONbored/example-aio/issues</Support>
+  <Overview>Example.</Overview>
+  <Category>Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/example-aio.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JSONbored/awesome-unraid/main/icons/example.png</Icon>
+  <Config Name="Appdata" Target="/appdata" Type="Path" Required="true">/mnt/user/appdata/example-aio</Config>
+</Container>
+""")
+
+    failures = runtime_contract_failures(
+        _repo(
+            tmp_path,
+            runtime_healthcheck_markers=['pgrep -f "dist/index.js"'],
+        )
+    )
+
+    assert not any(
+        "runtime safety marker" in failure for failure in failures
+    )  # nosec B101
+
+
 def test_template_metadata_validation_rejects_common_quality_drift(
     tmp_path: Path,
 ) -> None:

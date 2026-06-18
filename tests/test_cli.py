@@ -4827,6 +4827,10 @@ def test_onboard_repo_multi_component_shape_outputs_nanoclaw_pack(capsys) -> Non
     assert (
         payload["manifest_entry"]["publish_profile"] == "multi-component"
     )  # nosec B101
+    assert payload["manifest_entry"]["runtime_supervisor"] == "s6"  # nosec B101
+    assert payload["manifest_entry"]["runtime_healthcheck_markers"] == [  # nosec B101
+        'pgrep -f "dist/index.js"'
+    ]
     components = payload["manifest_entry"]["components"]
     assert components["agent"]["release_policy"] == "registry_only"  # nosec B101
     assert components["agent"]["dockerfile"] == (  # nosec B101

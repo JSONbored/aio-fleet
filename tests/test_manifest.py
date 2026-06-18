@@ -37,6 +37,10 @@ def test_manifest_records_known_fleet_exceptions() -> None:
     assert (
         manifest.repo("nanoclaw-aio").publish_profile == "multi-component"
     )  # nosec B101
+    assert manifest.repo("nanoclaw-aio").get("runtime_supervisor") == "s6"  # nosec B101
+    assert manifest.repo("nanoclaw-aio").list_value("runtime_healthcheck_markers") == [
+        'pgrep -f "dist/index.js"'
+    ]  # nosec B101
     assert manifest.repo("nanoclaw-aio").raw["validation"][
         "exact_category_tokens"
     ] == [  # nosec B101
