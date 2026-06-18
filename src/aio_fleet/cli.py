@@ -130,6 +130,7 @@ from aio_fleet.report import (
 )
 from aio_fleet.safety import assess_expected_update, assess_upstream_pr
 from aio_fleet.signing import signing_doctor_report
+from aio_fleet.smoke import smoke_published_images
 from aio_fleet.upstream import (
     create_or_update_upstream_pr,
     monitor_repo,
@@ -4579,6 +4580,17 @@ def cmd_workflow_registry_audit(args: argparse.Namespace) -> int:
     return int(report.get("status", 0))
 
 
+def cmd_workflow_smoke_test(args: argparse.Namespace) -> int:
+    report = smoke_published_images(
+        manifest_path=Path(args.manifest),
+        arch=args.arch,
+        output_path=Path(args.output) if args.output else None,
+        github_output=Path(args.github_output) if args.github_output else None,
+    )
+    print(stable_report_json(report))
+    return int(report.get("status", 0))
+
+
 def _workflow_token() -> str:
     return os.environ.get("AIO_FLEET_WORKFLOW_TOKEN", "") or os.environ.get(
         "APP_TOKEN", ""
@@ -6617,6 +6629,11 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_registry.add_argument("--token")
     workflow_registry.add_argument("--github-output")
     workflow_registry.set_defaults(func=cmd_workflow_registry_audit)
+    workflow_smoke = workflow_sub.add_parser("smoke-test")
+    workflow_smoke.add_argument("--arch", required=True, choices=["amd64", "arm64"])
+    workflow_smoke.add_argument("--output", default="smoke-report.json")
+    workflow_smoke.add_argument("--github-output")
+    workflow_smoke.set_defaults(func=cmd_workflow_smoke_test)
     workflow_control_report = workflow_sub.add_parser("control-report")
     workflow_control_report.add_argument("--repo", required=True)
     workflow_control_report.add_argument("--sha", required=True)
