@@ -5214,7 +5214,8 @@ def _nanoclaw_component_pack(repo: str, *, image_name: str) -> OnboardingPack:
     return {
         "manifest": {
             "publish_profile": "multi-component",
-            "runtime_supervisor": "tini",
+            "runtime_supervisor": "s6",
+            "runtime_healthcheck_markers": ['pgrep -f "dist/index.js"'],
             "check_upstream_name": "Check NanoClaw Upstream",
             "upstream_components": [repo, f"{slug}-agent"],
             "upstream_commit_paths": ["Dockerfile", agent_dockerfile],
