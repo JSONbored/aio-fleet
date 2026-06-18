@@ -424,6 +424,27 @@ jobs:
             (`mode=control-check`, `event=push`, `publish=true`) to create the
             registry tags, GitHub Release, and catalog sync.
 
+      - name: Enable auto-merge on the release PR
+        # The release PR is bot-generated, signed, and validated in this run, so
+        # let it merge itself once `aio-fleet / required` passes instead of
+        # waiting on a manual merge. continue-on-error keeps this non-regressive:
+        # if auto-merge is unavailable the operator merges manually as before.
+        # This does NOT auto-publish — the protected registry-publish gate still
+        # requires a publish dispatch + deployment approval.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release-prepare' && steps.release-pr.outputs.pull-request-number != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Pass the dispatch input + PR number through the environment so the
+          # shell receives them as data, never as command text (avoids
+          # workflow_dispatch script injection into this merge-capable step).
+          PR_NUMBER: ${{ steps.release-pr.outputs.pull-request-number }}
+          REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          gh pr merge "${PR_NUMBER}" \
+            --repo "JSONbored/${REPO}" --squash --auto
+
       - name: Queue release PR validation targets
         id: release-poll-targets
         # Reuse the upstream-poll-targets machinery so the release PR validates in

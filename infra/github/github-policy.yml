@@ -13,7 +13,11 @@ defaults:
     has_projects: false
     has_wiki: false
     delete_branch_on_merge: true
-    allow_auto_merge: false
+    # Enables GitHub native auto-merge so the release-prepare workflow can let a
+    # validated, signed `chore(release)` PR merge itself once `aio-fleet /
+    # required` passes — removing the manual release-PR merge. The protected
+    # registry-publish gate (the publish dispatch) is unaffected.
+    allow_auto_merge: true
     allow_merge_commit: true
     allow_rebase_merge: false
     allow_squash_merge: true
