@@ -2686,6 +2686,57 @@ def test_release_publish_edits_existing_release_idempotently(
     assert actions == ["edit"]  # nosec B101
 
 
+def test_release_publish_skips_registry_only_formal_release(
+    tmp_path: Path, capsys
+) -> None:
+    repo_path = tmp_path / "nanoclaw-aio"
+    repo_path.mkdir()
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  nanoclaw-aio:
+    path: {repo_path}
+    public: true
+    app_slug: nanoclaw-aio
+    image_name: jsonbored/nanoclaw-aio
+    docker_cache_scope: nanoclaw-aio-image
+    pytest_image_tag: nanoclaw-aio:pytest
+    github_repo: JSONbored/nanoclaw-aio
+    publish_profile: multi-component
+    components:
+      agent:
+        image_name: jsonbored/nanoclaw-agent
+        dockerfile: components/nanoclaw-agent/Dockerfile
+        release_policy: registry_only
+        release_suffix: agent
+""")
+    report_json = tmp_path / "release-report.json"
+
+    result = cmd_release_publish(
+        Namespace(
+            manifest=str(manifest),
+            repo="nanoclaw-aio",
+            component="agent",
+            repo_path=None,
+            dry_run=False,
+            report_json=str(report_json),
+            format="json",
+        )
+    )
+
+    assert result == 0  # nosec B101
+    output = json.loads(capsys.readouterr().out)
+    report = json.loads(report_json.read_text())
+    assert output == report  # nosec B101
+    assert report == {  # nosec B101
+        "component": "agent",
+        "reason": "registry_only",
+        "repo": "nanoclaw-aio",
+        "status": "skipped",
+    }
+
+
 def test_release_prepare_emits_authoritative_version_to_github_output(
     tmp_path: Path,
 ) -> None:
