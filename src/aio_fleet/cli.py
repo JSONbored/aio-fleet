@@ -3665,6 +3665,22 @@ def cmd_release_publish(args: argparse.Namespace) -> int:
         else:
             print("{repo}:{component}: prerelease={action} {tag}".format(**report))
         return 0
+    if str(config.get("release_policy", "")).strip() == "registry_only":
+        report = {
+            "repo": repo.name,
+            "component": args.component,
+            "status": "skipped",
+            "reason": "registry_only",
+        }
+        if args.report_json:
+            Path(args.report_json).write_text(
+                json.dumps(report, indent=2, sort_keys=True)
+            )
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(f"{repo.name}:{args.component}: github-release=skipped registry_only")
+        return 0
     latest_version = _component_release_version(repo, component=args.component)
     release_tag = _github_release_tag(repo, latest_version, component=args.component)
     release_target = find_release_publish_target_commit(repo.path, latest_version)
