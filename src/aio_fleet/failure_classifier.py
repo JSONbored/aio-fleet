@@ -345,17 +345,32 @@ def _workflow_recovered_after_failure(
 ) -> bool:
     latest = workflow.get("latest")
     latest = latest if isinstance(latest, dict) else {}
-    if latest.get("conclusion") != "success":
+    last_success = workflow.get("last_success")
+    last_success = last_success if isinstance(last_success, dict) else {}
+    candidates = [latest, last_success]
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_id = str(candidate.get("id") or "")
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        if _success_recovered_failure(candidate, last_failure):
+            return True
+    return False
+
+
+def _success_recovered_failure(
+    success: dict[str, Any], failure: dict[str, Any]
+) -> bool:
+    if success.get("conclusion") != "success":
         return False
-    if not _same_workflow_context(latest, last_failure):
+    if not _same_workflow_context(success, failure):
         return False
-    success_time = str(latest.get("updated_at") or latest.get("created_at") or "")
-    failure_time = str(
-        last_failure.get("updated_at") or last_failure.get("created_at") or ""
-    )
+    success_time = str(success.get("updated_at") or success.get("created_at") or "")
+    failure_time = str(failure.get("updated_at") or failure.get("created_at") or "")
     if success_time and failure_time:
         return success_time > failure_time
-    return latest.get("id") != last_failure.get("id")
+    return success.get("id") != failure.get("id")
 
 
 def _same_workflow_context(latest: dict[str, Any], failure: dict[str, Any]) -> bool:
