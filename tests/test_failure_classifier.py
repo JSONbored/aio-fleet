@@ -166,3 +166,39 @@ def test_workflow_classification_ignores_recovered_scheduled_failure() -> None:
     )
 
     assert failures == []  # nosec B101
+
+
+def test_workflow_classification_uses_last_success_during_dashboard_refresh() -> None:
+    failures = classify_workflow_state(
+        {
+            "repo": "JSONbored/aio-fleet",
+            "state": "in_progress",
+            "latest": {
+                "id": 300,
+                "status": "in_progress",
+                "conclusion": "",
+                "event": "workflow_dispatch",
+                "branch": "main",
+                "title": "AIO Fleet Control Plane",
+                "updated_at": "2026-06-18T22:04:46Z",
+            },
+            "last_success": {
+                "id": 200,
+                "conclusion": "success",
+                "event": "workflow_dispatch",
+                "branch": "main",
+                "title": "AIO Fleet Control Plane",
+                "updated_at": "2026-06-18T22:00:30Z",
+            },
+            "last_failure": {
+                "id": 100,
+                "conclusion": "failure",
+                "event": "workflow_dispatch",
+                "branch": "main",
+                "title": "AIO Fleet Control Plane",
+                "updated_at": "2026-06-18T21:48:43Z",
+            },
+        }
+    )
+
+    assert failures == []  # nosec B101
