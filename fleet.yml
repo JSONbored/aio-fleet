@@ -62,6 +62,10 @@ repos:
     publish_profile: upstream-aio-track
     release_name: Sure-AIO
     upstream_name: Sure
+    smoke_test:
+      env:
+        SECRET_KEY_BASE: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        SELF_HOSTED: "true"
     upstream_monitor:
       - component: aio
         name: Sure
@@ -147,6 +151,8 @@ repos:
           - Keep alpha passkey/WebAuthn template controls separate from stable.
         floating_tags:
           - latest-alpha
+        smoke_test:
+          enabled: true
         include_upstream_version_tag: false
         include_sha_tag: false
         preserve_tags:

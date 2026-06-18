@@ -23,6 +23,19 @@ repos:
     docker_cache_scope: sure-aio-image
     pytest_image_tag: sure-aio:pytest
     publish_platforms: linux/amd64,linux/arm64
+    smoke_test:
+      env:
+        SECRET_KEY_BASE: test-secret
+        SELF_HOSTED: "true"
+    components:
+      sure-alpha:
+        image_name: jsonbored/sure-aio-alpha
+        dockerfile: Dockerfile.alpha
+        publish_platforms: linux/amd64,linux/arm64
+        floating_tags:
+          - latest-alpha
+        smoke_test:
+          enabled: true
   amd-only-aio:
     path: {repo_path}
     public: true
@@ -40,9 +53,23 @@ def test_smoke_targets_respect_arch_and_platforms(tmp_path: Path) -> None:
     arm = smoke.smoke_targets(manifest, arch="arm64")
     # amd-only-aio does not publish arm64, so it is skipped for that arch.
     assert {t["repo"] for t in arm} == {"sure-aio"}  # nosec B101
+    assert {t["image"] for t in arm} == {  # nosec B101
+        "jsonbored/sure-aio:latest",
+        "jsonbored/sure-aio-alpha:latest-alpha",
+    }
     amd = smoke.smoke_targets(manifest, arch="amd64")
     assert {t["repo"] for t in amd} == {"sure-aio", "amd-only-aio"}  # nosec B101
-    assert all(t["image"].endswith(":latest") for t in amd)  # nosec B101
+    assert {t["image"] for t in amd} == {  # nosec B101
+        "jsonbored/sure-aio:latest",
+        "jsonbored/sure-aio-alpha:latest-alpha",
+        "jsonbored/amd-only-aio:latest",
+    }
+    sure_env = [t["env"] for t in amd if t["image"] == "jsonbored/sure-aio:latest"][0]
+    alpha_env = [
+        t["env"] for t in amd if t["image"] == "jsonbored/sure-aio-alpha:latest-alpha"
+    ][0]
+    assert sure_env["SECRET_KEY_BASE"] == "test-secret"  # nosec B101
+    assert alpha_env["SECRET_KEY_BASE"] == "test-secret"  # nosec B101
 
 
 def test_smoke_one_passes_on_healthy(monkeypatch) -> None:
@@ -145,6 +172,6 @@ def test_smoke_published_images_writes_report(tmp_path: Path, monkeypatch) -> No
         manifest_path=manifest, arch="amd64", output_path=out, github_output=gh
     )
     assert report["status"] == 0  # nosec B101
-    assert report["passed"] == report["total"] == 2  # nosec B101
+    assert report["passed"] == report["total"] == 3  # nosec B101
     assert json.loads(out.read_text())["arch"] == "amd64"  # nosec B101
     assert "status=0" in gh.read_text()  # nosec B101
