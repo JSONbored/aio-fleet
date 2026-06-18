@@ -67,6 +67,10 @@ class UpstreamMonitorResult:
     version_key: str
     digest_key: str
     release_notes_url: str
+    commit_key: str = ""
+    current_commit: str = ""
+    latest_commit: str = ""
+    commit_update: bool = False
     submodule_path: str = ""
     submodule_ref: str = ""
     skipped_versions: tuple[dict[str, str], ...] = ()
@@ -75,7 +79,7 @@ class UpstreamMonitorResult:
 
     @property
     def updates_available(self) -> bool:
-        return self.version_update or self.digest_update
+        return self.version_update or self.digest_update or self.commit_update
 
     @property
     def blocked(self) -> bool:
@@ -106,6 +110,8 @@ def _write_monitor_results(
             write_arg(result.dockerfile, result.version_key, result.latest_version)
             if result.digest_key and result.latest_digest:
                 write_arg(result.dockerfile, result.digest_key, result.latest_digest)
+            if result.commit_key and result.latest_commit:
+                write_arg(result.dockerfile, result.commit_key, result.latest_commit)
             _reset_registry_revision(repo, result)
             _update_release_history_changelog(repo, result)
             if result.version_update:
@@ -401,6 +407,22 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
                 prefix=str(config.get("digest_tag_prefix", "")),
             )
 
+    commit_key = str(config.get("commit_key", "")).strip()
+    current_commit = read_arg(dockerfile, commit_key) if commit_key else ""
+    latest_commit = current_commit
+    if (
+        commit_key
+        and latest_version != current_version
+        and source in {"github-releases", "github-tags"}
+    ):
+        selected_tag = next(
+            (c.tag for c in release_candidates if c.version == latest_version),
+            latest_version,
+        )
+        latest_commit = (
+            resolve_github_commit(str(config["repo"]), selected_tag) or current_commit
+        )
+
     return UpstreamMonitorResult(
         repo=repo.name,
         component=str(config.get("component", "aio")),
@@ -416,6 +438,10 @@ def evaluate_monitor(repo: RepoConfig, config: dict[str, Any]) -> UpstreamMonito
         dockerfile=dockerfile,
         version_key=version_key,
         digest_key=digest_key,
+        commit_key=commit_key,
+        current_commit=current_commit,
+        latest_commit=latest_commit,
+        commit_update=bool(commit_key) and latest_commit != current_commit,
         release_notes_url=str(config.get("release_notes_url", "")).strip()
         or default_release_notes_url(config),
         submodule_path=str(config.get("submodule_path", "")).strip(),
@@ -599,6 +625,36 @@ def latest_github_tag(repo: str, *, stable_only: bool, strip_prefix: str = "") -
         sorted(filter_versions(tags, stable_only), key=version_sort_key)[-1],
         strip_prefix=strip_prefix,
     )
+
+
+def resolve_github_commit(repo: str, tag: str) -> str:
+    """Resolve a release/tag name to its commit SHA.
+
+    Source-built app repos pin both an upstream version *label* and the upstream
+    *commit* the build actually checks out, so the monitor must move the commit
+    with the version or the wrapper builds stale code under a new label.
+    Annotated tags are dereferenced to the underlying commit. Returns an empty
+    string on any lookup failure so the caller keeps the current pin.
+    """
+    if not tag:
+        return ""
+    try:
+        ref = http_json(f"https://api.github.com/repos/{repo}/git/ref/tags/{tag}")
+    except Exception:  # noqa: BLE001 - a failed lookup must not break the monitor
+        return ""
+    if not isinstance(ref, dict) or not isinstance(ref.get("object"), dict):
+        return ""
+    obj = ref["object"]
+    sha = str(obj.get("sha", "")).strip()
+    if obj.get("type") == "tag" and sha:
+        try:
+            annotated = http_json(f"https://api.github.com/repos/{repo}/git/tags/{sha}")
+        except Exception:  # noqa: BLE001 - fall back to the tag-object sha
+            return sha
+        inner = annotated.get("object") if isinstance(annotated, dict) else None
+        if isinstance(inner, dict) and inner.get("sha"):
+            return str(inner["sha"]).strip()
+    return sha
 
 
 def latest_github_release(
