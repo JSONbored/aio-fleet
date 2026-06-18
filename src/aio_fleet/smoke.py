@@ -48,18 +48,16 @@ def smoke_targets(manifest: FleetManifest, *, arch: str) -> list[dict[str, Any]]
         platforms = str(repo.get("publish_platforms", "linux/amd64,linux/arm64"))
         if f"linux/{arch}" not in platforms:
             continue
-        for tag in _smoke_tags(repo, config):
-            targets.append(
-                {
-                    "repo": repo.name,
-                    "image": f"{repo.image_name}:{tag}",
-                    "tag": tag,
-                    "arch": arch,
-                    "env": dict(config.get("env", {})),
-                    "start_period": int(config.get("start_period_s", 180)),
-                    "timeout": int(config.get("timeout_s", 300)),
-                }
+        targets.extend(
+            _targets_for_image(
+                repo=repo.name,
+                image=str(repo.image_name),
+                arch=arch,
+                config=config,
+                default_tags=["latest"],
             )
+        )
+        targets.extend(_component_smoke_targets(repo, base_config=config, arch=arch))
     return targets
 
 
@@ -68,11 +66,83 @@ def _smoke_config(repo: RepoConfig) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _smoke_tags(repo: RepoConfig, config: dict[str, Any]) -> list[str]:
+def _component_smoke_targets(
+    repo: RepoConfig, *, base_config: dict[str, Any], arch: str
+) -> list[dict[str, Any]]:
+    components = repo.raw.get("components")
+    if not isinstance(components, dict):
+        return []
+
+    targets: list[dict[str, Any]] = []
+    for component_config in components.values():
+        if not isinstance(component_config, dict):
+            continue
+        raw_config = component_config.get("smoke_test")
+        if not isinstance(raw_config, dict) or raw_config.get("enabled") is not True:
+            continue
+        image = str(component_config.get("image_name", "")).strip()
+        if not image:
+            continue
+        platforms = str(
+            component_config.get(
+                "publish_platforms",
+                repo.get("publish_platforms", "linux/amd64,linux/arm64"),
+            )
+        )
+        if f"linux/{arch}" not in platforms:
+            continue
+        config = _merge_smoke_config(base_config, raw_config)
+        default_tags = [
+            str(tag) for tag in component_config.get("floating_tags", []) if str(tag)
+        ] or ["latest"]
+        targets.extend(
+            _targets_for_image(
+                repo=repo.name,
+                image=image,
+                arch=arch,
+                config=config,
+                default_tags=default_tags,
+            )
+        )
+    return targets
+
+
+def _merge_smoke_config(
+    base_config: dict[str, Any], override_config: dict[str, Any]
+) -> dict[str, Any]:
+    merged = dict(base_config)
+    merged.update(override_config)
+    merged["env"] = {
+        **dict(base_config.get("env", {})),
+        **dict(override_config.get("env", {})),
+    }
+    return merged
+
+
+def _targets_for_image(
+    *,
+    repo: str,
+    image: str,
+    arch: str,
+    config: dict[str, Any],
+    default_tags: list[str],
+) -> list[dict[str, Any]]:
     tags = config.get("tags")
-    if isinstance(tags, list) and tags:
-        return [str(tag) for tag in tags]
-    return ["latest"]
+    smoke_tags = (
+        [str(tag) for tag in tags] if isinstance(tags, list) and tags else default_tags
+    )
+    return [
+        {
+            "repo": repo,
+            "image": f"{image}:{tag}",
+            "tag": tag,
+            "arch": arch,
+            "env": dict(config.get("env", {})),
+            "start_period": int(config.get("start_period_s", 180)),
+            "timeout": int(config.get("timeout_s", 300)),
+        }
+        for tag in smoke_tags
+    ]
 
 
 def smoke_one(target: dict[str, Any]) -> dict[str, Any]:
