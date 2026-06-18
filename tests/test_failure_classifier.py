@@ -25,6 +25,23 @@ from aio_fleet.failure_classifier import classify_failure_text, classify_workflo
             "required-check-missing: aio-fleet / required did not pass",
             "required-check-missing",
         ),
+        (
+            "fmt Incorrect formatting, autoformat by running 'trunk fmt' prettier",
+            "formatting",
+        ),
+        (
+            "Command '['docker', 'build', '-f', 'Dockerfile', '.']' "
+            "returned non-zero exit status 1.",
+            "image-build",
+        ),
+        ("error: patch failed: src/container-runner.ts:22", "image-build"),
+        ("unexpected upstream gem versions: {'addressable': '2.8.7'}", "upstream-pin"),
+        (
+            "gh: To use GitHub CLI in a GitHub Actions workflow, set the "
+            "GH_TOKEN environment variable",
+            "release-publish-token",
+        ),
+        ("base branch policy prohibits the merge", "signed-commit"),
         ("pytest failed in tests/integration/test_runtime.py", "integration-test"),
         ("catalog-sync-needed for awesome-unraid XML", "catalog-drift"),
         ("Resource not accessible by integration", "github-app-permission"),

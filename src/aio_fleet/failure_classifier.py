@@ -11,6 +11,11 @@ FAILURE_CLASSES = (
     "registry-tags-missing",
     "release-history-incomplete",
     "required-check-missing",
+    "formatting",
+    "image-build",
+    "upstream-pin",
+    "release-publish-token",
+    "signed-commit",
     "integration-test",
     "catalog-drift",
     "github-app-permission",
@@ -89,6 +94,82 @@ _RULES: tuple[dict[str, Any], ...] = (
         "next_action": (
             "rerun the central required check and verify the GitHub App can post "
             "the aio-fleet / required check"
+        ),
+    },
+    {
+        "class": "formatting",
+        "patterns": (
+            r"incorrect formatting",
+            r"trunk\s+fmt",
+            r"autoformat by running",
+            r"\bprettier\b",
+            r"trunk=failed",
+        ),
+        "confidence": 0.9,
+        "next_action": (
+            "run `trunk fmt` on the changed files (the central overlay flags "
+            "unformatted app changes) and push the formatted result"
+        ),
+    },
+    {
+        "class": "image-build",
+        "patterns": (
+            r"returned non-zero exit status",
+            r"docker build.*(failed|non-zero)",
+            r"failed to solve",
+            r"patch (failed|does not apply)",
+            r"=>\s*error",
+            r"executor failed running",
+        ),
+        "confidence": 0.85,
+        "next_action": (
+            "reproduce the image build locally (OrbStack/Docker), fix the "
+            "Dockerfile/patch/dependency break, and rerun the central check"
+        ),
+    },
+    {
+        "class": "upstream-pin",
+        "patterns": (
+            r"unexpected upstream gem versions",
+            r"unable to find arg upstream",
+            r"test_dockerfiles_pin_upstream",
+            r"assert .*upstream_version",
+            r"pin .*(mismatch|stale)",
+        ),
+        "confidence": 0.85,
+        "next_action": (
+            "the upstream bump changed a pinned version/commit; update the "
+            "Dockerfile pins (and the pin-policy test) to the reviewed upstream "
+            "values, then rerun the central check"
+        ),
+    },
+    {
+        "class": "release-publish-token",
+        "patterns": (
+            r"set the gh_token",
+            r"github release publish failed",
+            r"credential-gap.*gh_token",
+            r"gh: to use github cli",
+        ),
+        "confidence": 0.88,
+        "next_action": (
+            "ensure the protected publish step exports a gh token "
+            "(AIO_FLEET_RELEASE_TOKEN -> GH_TOKEN) for the release publish CLI, "
+            "then rerun the protected publish"
+        ),
+    },
+    {
+        "class": "signed-commit",
+        "patterns": (
+            r"required.*signature",
+            r"commits must have verified signatures",
+            r"base branch policy prohibits",
+            r"unsigned commit",
+        ),
+        "confidence": 0.83,
+        "next_action": (
+            "recreate the branch commit as a GitHub-signed (verified) commit "
+            "(create-pull-request sign-commits, or the createCommitOnBranch API)"
         ),
     },
     {
