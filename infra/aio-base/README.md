@@ -1,6 +1,6 @@
 # aio-base — shared s6-overlay + hardening stage
 
-`jsonbored/aio-base` centralizes the pieces that 8 of the 9 fleet app images
+`jsonbored/aio-base` centralizes the pieces that fleet app runtime images
 otherwise copy-paste into their own Dockerfiles:
 
 - the pinned, SHA-verified **s6-overlay** install (today three repos pin three
@@ -42,6 +42,7 @@ new overlay on their next build once they reference the new tag.
 
 ## Rollout
 
-Migrate one repo at a time, validating each builds and boots, starting with the
-s6 repos: sure-aio, mem0-aio, infisical-aio, penpot-aio, dify-aio, signoz-aio,
-simplelogin-aio, khoj-aio. nanoclaw-aio does not use s6 and is out of scope.
+Migrate one repo at a time, validating each builds and boots. Current app
+runtime wrappers should consume this overlay from their Dockerfiles. Small helper
+or agent images can remain deliberately lightweight when they do not need s6
+supervision or the shared apt hardening.
