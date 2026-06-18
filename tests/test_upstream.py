@@ -264,6 +264,58 @@ repos:
     )  # nosec B101
 
 
+def test_upstream_monitor_write_moves_commit_pin_with_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    dockerfile = repo_path / "Dockerfile"
+    old_commit = "a" * 40
+    new_commit = "b" * 40
+    dockerfile.write_text(
+        f"ARG UPSTREAM_VERSION=v1.0.0\nARG UPSTREAM_COMMIT={old_commit}\n"
+    )
+    manifest = tmp_path / "fleet.yml"
+    manifest.write_text(f"""
+owner: JSONbored
+repos:
+  example-aio:
+    path: {repo_path}
+    public: true
+    app_slug: example-aio
+    image_name: jsonbored/example-aio
+    docker_cache_scope: example-aio-image
+    pytest_image_tag: example-aio:pytest
+    upstream_monitor:
+      - source: github-releases
+        repo: example/app
+        dockerfile: Dockerfile
+        version_key: UPSTREAM_VERSION
+        commit_key: UPSTREAM_COMMIT
+        strategy: pr
+""")
+
+    monkeypatch.setattr(
+        upstream, "latest_github_release_result", lambda *_a, **_k: ("v1.1.0", ())
+    )
+    seen: dict[str, str] = {}
+
+    def fake_commit(repo: str, tag: str) -> str:
+        seen["repo"] = repo
+        seen["tag"] = tag
+        return new_commit
+
+    monkeypatch.setattr(upstream, "resolve_github_commit", fake_commit)
+
+    upstream.monitor_repo(load_manifest(manifest).repo("example-aio"), write=True)
+
+    text = dockerfile.read_text()
+    # The commit pin moves with the version instead of going stale.
+    assert "ARG UPSTREAM_VERSION=v1.1.0" in text  # nosec B101
+    assert f"ARG UPSTREAM_COMMIT={new_commit}" in text  # nosec B101
+    assert seen == {"repo": "example/app", "tag": "v1.1.0"}  # nosec B101
+
+
 def test_upstream_monitor_write_updates_alpha_release_history(
     tmp_path: Path, monkeypatch
 ) -> None:
