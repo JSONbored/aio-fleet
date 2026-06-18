@@ -42,6 +42,8 @@ repos:
     docker_cache_scope: unraid-aio-template-image
     pytest_image_tag: aio-template:pytest
     publish_profile: template
+    runtime_healthcheck_markers:
+      - "urllib.request.urlopen"
     release_name: Template
     previous_tag_command: latest-release-tag
     upstream_name: AIO Template
