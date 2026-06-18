@@ -435,10 +435,15 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Pass the dispatch input + PR number through the environment so the
+          # shell receives them as data, never as command text (avoids
+          # workflow_dispatch script injection into this merge-capable step).
+          PR_NUMBER: ${{ steps.release-pr.outputs.pull-request-number }}
+          REPO: ${{ inputs.repo }}
         run: |
           set -euo pipefail
-          gh pr merge "${{ steps.release-pr.outputs.pull-request-number }}" \
-            --repo "JSONbored/${{ inputs.repo }}" --squash --auto
+          gh pr merge "${PR_NUMBER}" \
+            --repo "JSONbored/${REPO}" --squash --auto
 
       - name: Queue release PR validation targets
         id: release-poll-targets
