@@ -106,9 +106,10 @@ def test_upstream_monitor_scopes_git_auth_without_standard_tokens() -> None:
     assert "${RUNNER_TEMP}/upstream-monitor" in checkout["run"]  # nosec B101
     assert "AIO_FLEET_WORKFLOW_TOKEN" not in monitor.get("env", {})  # nosec B101
     assert "AIO_FLEET_CHECK_TOKEN" not in monitor.get("env", {})  # nosec B101
-    assert "GH_TOKEN" not in monitor["env"]  # nosec B101
-    assert "GITHUB_TOKEN" not in monitor["env"]  # nosec B101
-    assert "workflow upstream-monitor" in monitor["run"]  # nosec B101
+    assert "GH_TOKEN" not in monitor.get("env", {})  # nosec B101
+    assert "GITHUB_TOKEN" not in monitor.get("env", {})  # nosec B101
+    assert "workflow upstream-monitor --mutate" in monitor["run"]  # nosec B101
+    assert "!inputs.dry_run" in apply["if"]  # nosec B101
     assert "${RUNNER_TEMP}/upstream-monitor" in monitor["run"]  # nosec B101
     assert "env -i" in monitor["run"]  # nosec B101
     assert 'HOME="${monitor_home}"' in monitor["run"]  # nosec B101
