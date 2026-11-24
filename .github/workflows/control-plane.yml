@@ -267,6 +267,16 @@ jobs:
           print("__AIO_FLEET_PUBLISH_TARGETS__")
           PY
 
+      - name: Fetch trusted GitHub release metadata
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          mkdir -p "${handoff}"
+          python -m aio_fleet.upstream_snapshot --manifest fleet.yml --output "${handoff}/github-metadata.json"
+
       - name: Checkout upstream monitor repos
         if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         env:
@@ -287,22 +297,16 @@ jobs:
 
       - name: Monitor upstream releases
         if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
-        env:
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-          MUTATE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         run: |
           set -euo pipefail
           handoff="${RUNNER_TEMP}/upstream-monitor"
           monitor_home="$(mktemp -d "${RUNNER_TEMP}/upstream-monitor-home.XXXXXX")"
-          args=(workflow upstream-monitor --manifest "${handoff}/manifest.yml" --output "${handoff}/report.json")
-          if [[ "${MUTATE}" == "true" ]]; then
-            args+=(--mutate)
-          fi
-          if [[ "${DRY_RUN}" == "true" ]]; then
-            args+=(--dry-run)
-          fi
+          # Generate in disposable checkouts for validation, including previews.
+          # Only the later apply stage may write to GitHub, and it excludes dry runs.
+          args=(workflow upstream-monitor --mutate --manifest "${handoff}/manifest.yml" --output "${handoff}/report.json")
           env -i \
             HOME="${monitor_home}" \
+            AIO_FLEET_GITHUB_METADATA="${handoff}/github-metadata.json" \
             PATH="${PATH}" \
             python -m aio_fleet "${args[@]}"
 
