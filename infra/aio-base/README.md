@@ -18,7 +18,7 @@ Replace the inline s6 download/verify/extract block and the apt-hardening
 preamble with:
 
 ```dockerfile
-FROM jsonbored/aio-base:s6-3.2.1.0 AS aio-base
+FROM jsonbored/aio-base:s6-3.2.3.2 AS aio-base
 
 FROM <upstream-image>
 COPY --from=aio-base /aio-overlay/ /

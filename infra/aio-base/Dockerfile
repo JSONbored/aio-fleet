@@ -8,7 +8,7 @@
 # being copy-pasted (on three different versions) into every app Dockerfile. App
 # images consume it as a build stage:
 #
-#   FROM jsonbored/aio-base:s6-3.2.1.0 AS aio-base
+#   FROM jsonbored/aio-base:s6-3.2.3.2 AS aio-base
 #   FROM <upstream>
 #   COPY --from=aio-base /aio-overlay/ /
 #   RUN aio-harden pre && apt-get update && apt-get -y dist-upgrade \
@@ -17,10 +17,10 @@
 #
 # `/aio-overlay` is the extracted, arch-matched s6-overlay rootfs (/init,
 # /package, /command, /etc/s6-overlay, ...) plus /usr/local/bin/aio-harden.
-ARG S6_OVERLAY_VERSION=3.2.1.0
-ARG S6_NOARCH_SHA256=42e038a9a00fc0fef70bf0bc42f625a9c14f8ecdfe77d4ad93281edf717e10c5
-ARG S6_X86_64_SHA256=8bcbc2cada58426f976b159dcc4e06cbb1454d5f39252b3bb0c778ccf71c9435
-ARG S6_AARCH64_SHA256=c8fd6b1f0380d399422fc986a1e6799f6a287e2cfa24813ad0b6a4fb4fa755cc
+ARG S6_OVERLAY_VERSION=3.2.3.2
+ARG S6_NOARCH_SHA256=5379750ed30a84bbd2e2dd74847ba6b5bd29cd0b2e3ea2ec58049b57eb2eda12
+ARG S6_X86_64_SHA256=e6befcc96a437a3831386ecfc51808c5d3e939dc5fe3c02ae9284599e8aa2408
+ARG S6_AARCH64_SHA256=b17f17a82e7a515c682a91edaf2ffdabb73f891981b6c1fd712115693a2f8b4c
 
 FROM debian:trixie-slim AS build
 ARG S6_OVERLAY_VERSION

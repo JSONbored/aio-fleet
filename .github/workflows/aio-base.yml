@@ -22,7 +22,7 @@ concurrency:
 
 env:
   IMAGE: jsonbored/aio-base
-  TAG: s6-3.2.1.0
+  TAG: s6-3.2.3.2
 
 jobs:
   publish-aio-base:
