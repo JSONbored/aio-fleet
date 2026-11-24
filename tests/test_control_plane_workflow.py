@@ -255,6 +255,16 @@ def test_app_code_checkouts_keep_manual_and_publish_pr_submodule_guards() -> Non
     )  # nosec B101
     assert "inputs.event == 'pull_request'" in manual_trusted["if"]  # nosec B101
     assert "matrix.target.event == 'pull_request'" in poll_trusted["if"]  # nosec B101
+    fleet = yaml.safe_load((ROOT / "fleet.yml").read_text())
+    mem0 = fleet["repos"]["mem0-aio"]
+    assert mem0["trusted_submodules"] == [  # nosec B101
+        {"submodule_path": "openmemory", "repo": "mem0ai/mem0"}
+    ]
+    assert all(  # nosec B101
+        "submodule_path" not in item for item in mem0["upstream_monitor"]
+    )
+    for step in (manual_trusted, poll_trusted):
+        assert 'repo.raw.get("trusted_submodules",' in step["run"]  # nosec B101
     assert "gitmodules" in manual_trusted["run"]  # nosec B101
     assert 'record.partition("\\n")' in manual_trusted["run"]  # nosec B101
     assert "range(0, len(matches) - 1, 2)" not in manual_trusted["run"]  # nosec B101
