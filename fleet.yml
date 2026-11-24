@@ -692,6 +692,9 @@ repos:
         release_notes_url: https://github.com/mem0ai/mem0/releases
     image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
     checkout_submodules: true
+    trusted_submodules:
+      - submodule_path: openmemory
+        repo: mem0ai/mem0
     release_transaction:
       checkout_policy: trusted-submodules
       publish_policy: central-control

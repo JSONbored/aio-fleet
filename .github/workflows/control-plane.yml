@@ -764,7 +764,7 @@ jobs:
           repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
           app_repo = Path("app-repo")
           trusted = 0
-          for config in repo.raw.get("upstream_monitor") or []:
+          for config in repo.raw.get("trusted_submodules", repo.raw.get("upstream_monitor")) or []:
               if not isinstance(config, dict):
                   continue
               path = str(config.get("submodule_path") or "").strip()
@@ -1571,7 +1571,7 @@ jobs:
           repo = load_manifest(Path("fleet.yml")).repo(os.environ["TARGET_REPO"])
           app_repo = Path("app-repo")
           trusted = 0
-          for config in repo.raw.get("upstream_monitor") or []:
+          for config in repo.raw.get("trusted_submodules", repo.raw.get("upstream_monitor")) or []:
               if not isinstance(config, dict):
                   continue
               path = str(config.get("submodule_path") or "").strip()
