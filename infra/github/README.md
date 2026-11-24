@@ -78,8 +78,7 @@ calls are pinned.
 
 ## Required Check Source
 
-App repos should require `aio-fleet / required`, `Superagent Security Scan`, and
-`Contributor trust`. The policy records the GitHub App ID that must produce each
+App repos should require `aio-fleet / required`. The policy records the GitHub App ID that must produce each
 check. `validate-github` checks `required_status_checks.checks[].app_id`, not
 only the context name, so a same-name workflow cannot satisfy branch protection
 by accident.
@@ -89,7 +88,6 @@ Known required-check producers:
 - GitHub Actions: `15368`
 - CodeQL: `57789`
 - JSONbored AIO Fleet: `3565017`
-- Superagent Security: `3287076`
 
 The `github_branch_protection` provider resource only supports name-based
 contexts, so app-bound required checks are enforced through the
