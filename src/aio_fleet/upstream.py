@@ -612,8 +612,20 @@ def submodule_ref_for_version(
     return template.format(version=latest_version, current_version=current_version)
 
 
+def _github_list(repo: str, resource: str) -> object:
+    snapshot = os.environ.get("AIO_FLEET_GITHUB_METADATA")
+    if snapshot:
+        return _load_github_metadata(snapshot)[repo][resource]
+    return http_json(f"https://api.github.com/repos/{repo}/{resource}?per_page=100")
+
+
+@lru_cache(maxsize=1)
+def _load_github_metadata(path: str) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def latest_github_tag(repo: str, *, stable_only: bool, strip_prefix: str = "") -> str:
-    data = http_json(f"https://api.github.com/repos/{repo}/tags?per_page=100")
+    data = _github_list(repo, "tags")
     if not isinstance(data, list):
         raise ValueError(f"unexpected GitHub tag response for {repo}")
     tags = [
@@ -638,6 +650,12 @@ def resolve_github_commit(repo: str, tag: str) -> str:
     """
     if not tag:
         return ""
+    snapshot = os.environ.get("AIO_FLEET_GITHUB_METADATA")
+    if snapshot:
+        try:
+            return str(_load_github_metadata(snapshot)[repo]["commits"][tag])
+        except KeyError as exc:
+            raise ValueError(f"no commit recorded for {repo} tag {tag}") from exc
     try:
         ref = http_json(f"https://api.github.com/repos/{repo}/git/ref/tags/{tag}")
     except Exception:  # noqa: BLE001 - a failed lookup must not break the monitor
@@ -699,7 +717,7 @@ def github_release_candidates_result(
     prerelease_channel: str = "",
     strip_prefix: str = "",
 ) -> tuple[tuple[GitHubReleaseCandidate, ...], tuple[dict[str, str], ...]]:
-    data = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=100")
+    data = _github_list(repo, "releases")
     if not isinstance(data, list):
         raise ValueError(f"unexpected GitHub release response for {repo}")
     candidates: list[GitHubReleaseCandidate] = []

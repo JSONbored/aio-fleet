@@ -267,6 +267,16 @@ jobs:
           print("__AIO_FLEET_PUBLISH_TARGETS__")
           PY
 
+      - name: Fetch trusted GitHub release metadata
+        if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          handoff="${RUNNER_TEMP}/upstream-monitor"
+          mkdir -p "${handoff}"
+          python -m aio_fleet.upstream_snapshot --manifest fleet.yml --output "${handoff}/github-metadata.json"
+
       - name: Checkout upstream monitor repos
         if: ${{ github.event.schedule == '43 10 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'upstream-monitor') || steps.dashboard-controls.outputs.upstream_monitor == 'true' }}
         env:
@@ -303,6 +313,7 @@ jobs:
           fi
           env -i \
             HOME="${monitor_home}" \
+            AIO_FLEET_GITHUB_METADATA="${handoff}/github-metadata.json" \
             PATH="${PATH}" \
             python -m aio_fleet "${args[@]}"
 
