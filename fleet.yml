@@ -1078,6 +1078,7 @@ repos:
     docker_cache_scope: signoz-aio-image
     pytest_image_tag: signoz-aio:pytest
     unit_pytest_args: tests/template
+    integration_pytest_args: tests/integration tests/integration_agent -m integration
     publish_profile: signoz-suite
     release_name: SigNoz-AIO
     check_upstream_name: Check SigNoz Upstream
@@ -1310,6 +1311,7 @@ repos:
         image_name: jsonbored/signoz-agent
         docker_cache_scope: signoz-agent-image
         pytest_image_tag: signoz-agent:pytest
+        pytest_prebuilt_env: SIGNOZ_AGENT_PYTEST_USE_PREBUILT_IMAGE
         pytest_build_context: components/signoz-agent
         integration_pytest_args: tests/integration_agent -m integration
         context: components/signoz-agent
