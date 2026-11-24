@@ -6,7 +6,7 @@ from typing import Any
 from aio_fleet import github_policy
 
 
-def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
+def test_github_policy_requires_active_checks_from_trusted_producers() -> None:
     root = Path(__file__).resolve().parents[1]
     manifest = github_policy.load_policy(root / "infra/github/github-policy.yml")
     repos = manifest["repositories"]
@@ -29,12 +29,26 @@ def test_github_policy_declares_superagent_for_all_fleet_repos() -> None:
     template = repos["unraid-aio-template"]
     assert template["repository"]["visibility"] == "public"  # nosec B101
     assert "branch_protection" not in template  # nosec B101
-    for name in expected_repos:
-        checks = set(repos[name]["required_checks"])
-        app_ids = repos[name].get("required_check_app_ids", {})
-        assert {"Superagent Security Scan", "Contributor trust"} <= checks  # nosec B101
-        assert app_ids["Superagent Security Scan"] == 3287076  # nosec B101
-        assert app_ids["Contributor trust"] == 3287076  # nosec B101
+    expected_checks = {
+        "aio-fleet": {
+            "test": 15368,
+            "infra": 15368,
+            "Analyze (actions)": 15368,
+            "Analyze (python)": 15368,
+        },
+        "awesome-unraid": {
+            "validate-catalog": 15368,
+            "CodeQL": 57789,
+            "Analyze (actions)": 15368,
+        },
+    }
+    for name, repo in repos.items():
+        app_ids = repo.get("required_check_app_ids", {})
+        actual = {
+            check: app_ids.get(check, repo.get("required_check_app_id"))
+            for check in repo["required_checks"]
+        }
+        assert actual == expected_checks.get(name, {"aio-fleet / required": 3565017})  # nosec B101
 
 
 def test_validate_github_policy_detects_required_check_and_action_drift(
@@ -334,12 +348,12 @@ repositories:
   example-aio:
     required_checks:
       - aio-fleet / required
-      - Superagent Security Scan
-      - Contributor trust
+      - CodeQL
+      - Analyze (actions)
     required_check_app_id: 3565017
     required_check_app_ids:
-      Superagent Security Scan: 3287076
-      Contributor trust: 3287076
+      CodeQL: 57789
+      Analyze (actions): 15368
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -351,13 +365,13 @@ repositories:
                 "required_status_checks": {
                     "contexts": [
                         "aio-fleet / required",
-                        "Superagent Security Scan",
-                        "Contributor trust",
+                        "CodeQL",
+                        "Analyze (actions)",
                     ],
                     "checks": [
                         {"context": "aio-fleet / required", "app_id": 3565017},
-                        {"context": "Superagent Security Scan", "app_id": 3287076},
-                        {"context": "Contributor trust", "app_id": 3287076},
+                        {"context": "CodeQL", "app_id": 57789},
+                        {"context": "Analyze (actions)", "app_id": 15368},
                     ],
                     "strict": True,
                 }
@@ -401,7 +415,7 @@ repositories:
       - aio-fleet / required
     required_check_app_id: 3565017
     required_check_app_ids:
-      Superagent Security Scan: 3287076
+      CodeQL: 57789
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -432,7 +446,7 @@ repositories:
     )
 
     assert failures == [  # nosec B101
-        "example-aio: required_check_app_ids declares unknown required check 'Superagent Security Scan'"
+        "example-aio: required_check_app_ids declares unknown required check 'CodeQL'"
     ]
 
 
@@ -453,10 +467,10 @@ defaults:
 repositories:
   example-aio:
     required_checks:
-      - Superagent Security Scan
-      - Contributor trust
+      - CodeQL
+      - Analyze (actions)
     required_check_app_ids:
-      Superagent Security Scan: 3287076
+      CodeQL: 57789
 """)
 
     def fake_gh_json(args: list[str]) -> Any:
@@ -466,10 +480,10 @@ repositories:
         if joined == "api repos/JSONbored/example-aio/branches/main/protection":
             return {
                 "required_status_checks": {
-                    "contexts": ["Superagent Security Scan", "Contributor trust"],
+                    "contexts": ["CodeQL", "Analyze (actions)"],
                     "checks": [
-                        {"context": "Superagent Security Scan", "app_id": 3287076},
-                        {"context": "Contributor trust", "app_id": 999999},
+                        {"context": "CodeQL", "app_id": 57789},
+                        {"context": "Analyze (actions)", "app_id": 999999},
                     ],
                     "strict": True,
                 }
@@ -490,7 +504,7 @@ repositories:
     )
 
     assert failures == [  # nosec B101
-        "example-aio: required check 'Contributor trust' is missing required_check_app_id coverage"
+        "example-aio: required check 'Analyze (actions)' is missing required_check_app_id coverage"
     ]
 
 
