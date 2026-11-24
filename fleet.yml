@@ -61,6 +61,7 @@ repos:
     image_name: jsonbored/sure-aio
     docker_cache_scope: sure-aio-image
     pytest_image_tag: sure-aio:pytest
+    unit_pytest_args: tests/test_alpha_lane_assets.py
     publish_profile: upstream-aio-track
     release_name: Sure-AIO
     upstream_name: Sure
