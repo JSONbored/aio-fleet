@@ -166,7 +166,7 @@ def ensure_pytest_image(
     if dockerfile:
         command.extend(["-f", dockerfile])
     command.append(context)
-    run_command(command)
+    run_command(command, capture_output=False)
 
 
 def ensure_image(

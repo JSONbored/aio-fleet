@@ -323,8 +323,7 @@ the heartbeat without sending a separate webhook digest.
   use local `AIO_FLEET_UPSTREAM_COMMIT_MODE=git-signed` only when a trusted
   signing key is available, then verify with the commit API.
 - Required check spoof/drift: run `python -m aio_fleet validate-github`; app
-  repos should require `aio-fleet / required` from the configured GitHub App
-  app ID plus `Superagent Security Scan` and `Contributor trust` from Superagent Security.
+  repos should require `aio-fleet / required` from the configured GitHub App ID.
 - Signed-commit merge failure: do not use GitHub rebase-merge. Use squash,
   merge commit, or a local signed merge from an authorized maintainer.
 - Stale upstream PR: rerun upstream monitor; older generated upstream PRs are
