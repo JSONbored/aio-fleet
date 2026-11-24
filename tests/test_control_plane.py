@@ -32,6 +32,7 @@ def test_central_check_steps_for_pr_include_policy_and_integration(
         "validate-repo",
         "verify-caller",
         "install-test-deps",
+        "unit-tests",
         "integration-tests",
     ]  # nosec B101
     assert steps[0].cwd == ROOT  # nosec B101
