@@ -341,6 +341,50 @@ def test_control_check_steps_gate_publish_explicitly() -> None:
     assert "args+=(--no-integration)" not in poll["run"]  # nosec B101
 
 
+def test_template_release_uses_the_qualified_sha_and_protected_publisher() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    control = workflow["jobs"]["control-plane"]
+    publish = workflow["jobs"]["manual-registry-publish"]
+    profile = _step(control, "Resolve control-check checkout policy")
+
+    assert "repo.publish_profile" in profile["run"]  # nosec B101
+    assert "steps.control-check-policy.outputs.publish_profile" in (  # nosec B101
+        control["outputs"]["manual_publish_profile"]
+    )
+    assert "needs.control-plane.outputs.manual_publish_profile" in (  # nosec B101
+        publish["env"]["PUBLISH_PROFILE"]
+    )
+    assert "manual_control_check_outcome == 'success'" in publish["if"]  # nosec B101
+    assert publish["environment"]["name"] == "registry-publish"  # nosec B101
+    for name in (
+        "Prepare Docker auth config",
+        "Log in to Docker Hub",
+        "Log in to GHCR",
+        "Validate publish credentials",
+    ):
+        condition = _step(publish, name)["if"]
+        assert "env.PUBLISH_PROFILE != 'template'" in condition  # nosec B101
+    for name in ("Set up QEMU", "Set up Docker Buildx", "Publish registry images"):
+        condition = _step(publish, name)["if"]
+        assert "registry-preflight.outcome == 'success'" in condition  # nosec B101
+    for name in (
+        "Publish GitHub prereleases", "Checkout catalog for sync", "Sync catalog"
+    ):
+        condition = _step(publish, name)["if"]
+        assert "registry-publish.outcome == 'success'" in condition  # nosec B101
+    target = _step(publish, "Verify template release target")
+    assert "steps.reset-app-checkout.outcome == 'success'" in target["if"]  # nosec B101
+    assert (  # nosec B101
+        "find_release_publish_target_commit(repo, version) != sha" in target["run"]
+    )
+    assert '"ls-remote", "--exit-code", "origin", "HEAD"' in target["run"]  # nosec B101
+    release = _step(publish, "Publish GitHub release")
+    assert "template-release-target.outcome == 'success'" in release["if"]  # nosec B101
+    complete = _step(publish, "Complete central control check")
+    assert '"${GITHUB_RELEASE_OUTCOME}" != "success"' in complete["run"]  # nosec B101
+    assert "workflow control-report" in complete["run"]  # nosec B101
+
+
 def test_registry_publish_action_validates_component_json_array() -> None:
     text = PUBLISH_ACTION.read_text()
 

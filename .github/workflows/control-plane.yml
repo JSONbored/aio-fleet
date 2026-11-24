@@ -92,6 +92,7 @@ jobs:
       poll_publish_targets: ${{ steps.poll.outputs.publish_targets }}
       poll_has_publish_targets: ${{ steps.poll.outputs.has_publish_targets }}
       manual_control_check_outcome: ${{ steps.central-control-check.outcome }}
+      manual_publish_profile: ${{ steps.control-check-policy.outputs.publish_profile }}
       manual_start_check_outcome: ${{ steps.start-central-control-check.outcome }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -680,6 +681,7 @@ jobs:
           checkout_submodules = str(bool(repo.raw.get("checkout_submodules"))).lower()
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"checkout_submodules={checkout_submodules}\n")
+              handle.write(f"publish_profile={repo.publish_profile}\n")
           PY
 
       - name: Start central control check
@@ -1027,6 +1029,7 @@ jobs:
       packages: write # publish GHCR images from the protected registry environment
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      PUBLISH_PROFILE: ${{ needs.control-plane.outputs.manual_publish_profile }}
     steps:
       - name: Checkout aio-fleet
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1063,12 +1066,14 @@ jobs:
           printf 'token=%s\n' "${token}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare Docker auth config
+        if: ${{ env.PUBLISH_PROFILE != 'template' }}
         run: |
           set -euo pipefail
           install -d -m 700 "${RUNNER_TEMP}/aio-fleet-docker-config"
           printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/aio-fleet-docker-config" >> "${GITHUB_ENV}"
 
       - name: Log in to Docker Hub
+        if: ${{ env.PUBLISH_PROFILE != 'template' }}
         id: dockerhub-login
         continue-on-error: true
         env:
@@ -1088,6 +1093,7 @@ jobs:
                 --password-stdin
 
       - name: Log in to GHCR
+        if: ${{ env.PUBLISH_PROFILE != 'template' }}
         id: ghcr-login
         continue-on-error: true
         env:
@@ -1107,6 +1113,7 @@ jobs:
                 --password-stdin
 
       - name: Validate publish credentials
+        if: ${{ env.PUBLISH_PROFILE != 'template' }}
         id: registry-preflight
         continue-on-error: true
         env:
@@ -1158,7 +1165,7 @@ jobs:
 
       - name: Resolve control-check checkout policy
         id: control-check-policy
-        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        if: ${{ env.PUBLISH_PROFILE == 'template' || steps.registry-preflight.outcome == 'success' }}
         env:
           TARGET_REPO: ${{ inputs.repo }}
         run: |
@@ -1176,7 +1183,7 @@ jobs:
           PY
 
       - name: Checkout app repo
-        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        if: ${{ env.PUBLISH_PROFILE == 'template' || steps.registry-preflight.outcome == 'success' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: JSONbored/${{ inputs.repo }}
@@ -1188,13 +1195,51 @@ jobs:
           persist-credentials: false
 
       - name: Reset app checkout before prerelease publish
-        if: ${{ steps.registry-preflight.outcome == 'success' }}
+        id: reset-app-checkout
+        if: ${{ env.PUBLISH_PROFILE == 'template' || steps.registry-preflight.outcome == 'success' }}
         env:
           TARGET_SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
           git -C app-repo reset --hard "${TARGET_SHA}"
           git -C app-repo clean -ffd
+
+      - name: Verify template release target
+        id: template-release-target
+        if: ${{ env.PUBLISH_PROFILE == 'template' && steps.reset-app-checkout.outcome == 'success' }}
+        env:
+          TARGET_SHA: ${{ inputs.sha }}
+          TARGET_EVENT: ${{ inputs.event }}
+          PUBLISH_COMPONENT: ${{ inputs.publish_component }}
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import os
+          from pathlib import Path
+
+          from aio_fleet.release import (
+              find_release_publish_target_commit,
+              git,
+              git_completed,
+              latest_changelog_version,
+          )
+
+          repo = Path("app-repo")
+          sha = os.environ["TARGET_SHA"]
+          if os.environ["TARGET_EVENT"] not in {"push", "release"}:
+              raise SystemExit("A template release requires a push or release event")
+          if os.environ["PUBLISH_COMPONENT"] not in {"", "aio"}:
+              raise SystemExit("A template release uses the default component")
+          remote_head = git(repo, "ls-remote", "--exit-code", "origin", "HEAD").split()[0]
+          if git(repo, "rev-parse", "HEAD") != sha or remote_head != sha:
+              raise SystemExit("The template release must target the current default branch SHA")
+          version = latest_changelog_version(repo / "CHANGELOG.md", semver=True)
+          if find_release_publish_target_commit(repo, version) != sha:
+              raise SystemExit(f"The requested SHA is not the formal release commit for {version}")
+          tag = git_completed(repo, "rev-parse", "--verify", f"refs/tags/{version}^{{commit}}")
+          if tag.returncode == 0 and tag.stdout.strip() != sha:
+              raise SystemExit(f"The existing {version} tag points to a different commit")
+          PY
 
       - name: Publish registry images
         id: registry-publish
@@ -1239,7 +1284,7 @@ jobs:
 
       - name: Publish GitHub release
         id: github-release
-        if: ${{ steps.registry-publish.outcome == 'success' }}
+        if: ${{ steps.registry-publish.outcome == 'success' || steps.template-release-target.outcome == 'success' }}
         continue-on-error: true
         env:
           TARGET_REPO: ${{ inputs.repo }}
@@ -1323,7 +1368,10 @@ jobs:
           set -euo pipefail
           conclusion=success
           summary="aio-fleet central check passed"
-          if [[ "${PREFLIGHT_OUTCOME}" == "failure" ]]; then
+          if [[ "${PUBLISH_PROFILE}" == "template" && "${GITHUB_RELEASE_OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            summary="aio-fleet template GitHub release did not complete"
+          elif [[ "${PREFLIGHT_OUTCOME}" == "failure" ]]; then
             conclusion=failure
             summary="aio-fleet registry preflight failed"
           elif [[ "${PUBLISH_OUTCOME}" == "failure" ]]; then
@@ -1335,6 +1383,18 @@ jobs:
           elif [[ "${GITHUB_RELEASE_OUTCOME}" == "failure" ]]; then
             conclusion=failure
             summary="aio-fleet GitHub release publish failed"
+          fi
+          if [[ "${PUBLISH_PROFILE}" == "template" ]]; then
+            report_args=(workflow control-report --repo "${TARGET_REPO}" --sha "${TARGET_SHA}"
+              --event "${TARGET_EVENT}" --source workflow_dispatch --publish --status "${conclusion}"
+              --output "${RUNNER_TEMP}/central-control-report.json" --format json)
+            if [[ "${conclusion}" != "success" ]]; then
+              report_args+=(--failure "${summary}")
+            fi
+            # A failure report returns 1 so still complete the required check.
+            python -I -m aio_fleet "${report_args[@]}" || {
+              [[ "${conclusion}" == "failure" && -s "${RUNNER_TEMP}/central-control-report.json" ]] || exit 1
+            }
           fi
           python -I -m aio_fleet check run \
             --repo "${TARGET_REPO}" \
