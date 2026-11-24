@@ -410,6 +410,13 @@ repos:
     publish_platforms: linux/amd64
     release_name: SimpleLogin-AIO
     upstream_name: SimpleLogin
+    smoke_test:
+      env:
+        URL: http://127.0.0.1:7777
+        EMAIL_DOMAIN: example.com
+        SUPPORT_EMAIL: support@example.com
+        FLASK_SECRET: 0123456789abcdef0123456789abcdef
+        NOT_SEND_EMAIL: "true"
     upstream_monitor:
       - component: aio
         name: SimpleLogin
@@ -682,8 +689,6 @@ repos:
         stable_only: true
         strategy: pr
         release_notes_url: https://github.com/mem0ai/mem0/releases
-        submodule_path: openmemory
-        submodule_remote: origin
     image_description: Unraid-first AIO wrapper image for Mem0 and OpenMemory
     checkout_submodules: true
     release_transaction:
@@ -692,7 +697,6 @@ repos:
     upstream_commit_paths:
       - .aio-fleet.yml
       - Dockerfile
-      - openmemory
     extra_publish_paths:
       - openmemory
       - openmemory/**
