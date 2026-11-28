@@ -14,6 +14,7 @@ from typing import Any
 
 import defusedxml.ElementTree as ET
 
+from aio_fleet.changelog import component_config
 from aio_fleet.checks import CHECK_NAME
 from aio_fleet.manifest import RepoConfig
 
@@ -240,18 +241,23 @@ def _assessment(
 
 
 def _expected_paths(repo: RepoConfig, result: Any | None) -> set[str]:
-    configured = set(repo.list_value("upstream_commit_paths"))
-    if configured:
-        return configured
+    """Files an upstream PR may change: the commit allowlist (else the pinned
+    Dockerfile) plus the component release changelog that the monitor commits
+    beside the pin, as upstream._upstream_commit_paths does."""
+    paths = set(repo.list_value("upstream_commit_paths"))
     if result is None:
-        return set()
+        return paths
     dockerfile = getattr(result, "dockerfile", None)
-    if isinstance(dockerfile, Path):
+    if not paths and isinstance(dockerfile, Path):
         try:
-            return {str(dockerfile.relative_to(repo.path))}
+            paths.add(str(dockerfile.relative_to(repo.path)))
         except ValueError:
-            return {str(dockerfile)}
-    return set()
+            paths.add(str(dockerfile))
+    config = component_config(repo, str(getattr(result, "component", "") or "aio"))
+    changelog = str(config.get("release_changelog", "") or "").strip()
+    if changelog:
+        paths.add(changelog)
+    return paths
 
 
 def _template_assessment(
