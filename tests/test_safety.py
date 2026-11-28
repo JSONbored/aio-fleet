@@ -252,6 +252,45 @@ def test_unexpected_file_blocks(tmp_path: Path, monkeypatch) -> None:
     )  # nosec B101
 
 
+def test_component_release_changelog_is_expected(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(tmp_path)
+    manifest.write_text(
+        manifest.read_text()
+        + "    components:\n"
+        + "      aio:\n"
+        + "        release_changelog: CHANGELOG.alpha.md\n"
+    )
+    repo = load_manifest(manifest).repo("example-aio")
+    _write_xml(tmp_path / "example-aio.xml", targets=["8080"])
+    monkeypatch.setattr(safety, "release_notes_text", lambda _result: "Bug fixes")
+
+    assessment = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(files=["Dockerfile", "CHANGELOG.alpha.md"]),
+        signed_state="verified",
+        check_state="success",
+    )
+
+    assert assessment.safety_level == "ok"  # nosec B101
+    assert not any(  # nosec B101
+        "unexpected upstream PR file" in item for item in assessment.failures
+    )
+
+    other = safety.assess_upstream_pr(
+        repo,
+        result=_result(tmp_path),
+        pr=_pr(files=["Dockerfile", "CHANGELOG.alpha.md", "CHANGELOG.md"]),
+        signed_state="verified",
+        check_state="success",
+    )
+
+    assert other.safety_level == "blocked"  # nosec B101
+    assert (  # nosec B101
+        "unexpected upstream PR file(s): CHANGELOG.md" in other.failures
+    )
+
+
 def test_notify_only_update_is_manual(tmp_path: Path) -> None:
     repo = load_manifest(_manifest(tmp_path)).repo("example-aio")
 
